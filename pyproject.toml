@@ -1,0 +1,12 @@
+[project]
+name = "chat-with-books"
+version = "0.0.0"
+requires-python = ">=3.11"
+description = "Farsi Q&A over a fixed Book set through Cognee on Postgres."
+
+[dependency-groups]
+dev = ["pytest>=8", "pyyaml>=6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-p", "no:cacheprovider"]
