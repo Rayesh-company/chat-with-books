@@ -1,0 +1,18 @@
+{
+  "adapter": "github",
+  "canonical_phase_issue": 2,
+  "canonical_phase_url": "https://github.com/aubed9/chat-with-books/issues/2",
+  "canonical_project_issue": 1,
+  "canonical_project_url": "https://github.com/aubed9/chat-with-books/issues/1",
+  "canonical_wayfinder_map": 3,
+  "canonical_wayfinder_url": "https://github.com/aubed9/chat-with-books/issues/3",
+  "project_number": 3,
+  "project_owner": "aubed9",
+  "project_title": "chat-with-books Product Delivery",
+  "project_url": "https://github.com/users/aubed9/projects/3",
+  "projects_enabled": true,
+  "project_field_sync_warning": "gh project item-edit CLI flags in this environment do not match the adapter (unknown flag --owner). Issue labels/bodies remain canonical; Project field values may be incomplete until adapter/CLI are aligned.",
+  "repo": "aubed9/chat-with-books",
+  "repo_name": "chat-with-books",
+  "repo_url": "https://github.com/aubed9/chat-with-books"
+}
