@@ -37,6 +37,18 @@ def test_compose_pins_postgres_demo_for_the_graph():
     assert graph in {"postgres_demo", "${GRAPH_DATABASE_PROVIDER:-postgres_demo}"}
 
 
+def test_compose_pins_avalai_for_chat_and_embeddings():
+    compose = _load_compose()
+    env = compose["services"]["cognee"]["environment"]
+    assert env["LLM_PROVIDER"] == "custom"
+    assert env["LLM_ENDPOINT"] == "https://api.avalai.ir/v1"
+    assert env["LLM_MODEL"] == "openai/gpt-5.4-mini"
+    assert env["EMBEDDING_PROVIDER"] == "openai_compatible"
+    assert env["EMBEDDING_ENDPOINT"] == "https://api.avalai.ir/v1"
+    assert env["EMBEDDING_MODEL"] == "text-embedding-3-small"
+    assert env["EMBEDDING_API_KEY"] == "${LLM_API_KEY}"
+
+
 def test_compose_healthcheck_hits_cognee_health():
     compose = _load_compose()
     probe = compose["services"]["cognee"]["healthcheck"]["test"]

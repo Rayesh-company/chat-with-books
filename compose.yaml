@@ -36,6 +36,14 @@ services:
       GRAPH_DATABASE_PROVIDER: postgres_demo
       CACHE_BACKEND: postgres
       ENABLE_BACKEND_ACCESS_CONTROL: "false"
+      LLM_PROVIDER: custom
+      LLM_MODEL: openai/gpt-5.4-mini
+      LLM_ENDPOINT: https://api.avalai.ir/v1
+      EMBEDDING_PROVIDER: openai_compatible
+      EMBEDDING_MODEL: text-embedding-3-small
+      EMBEDDING_ENDPOINT: https://api.avalai.ir/v1
+      EMBEDDING_DIMENSIONS: "1536"
+      EMBEDDING_API_KEY: ${LLM_API_KEY}
     volumes:
       - cognee_data:/cognee-storage/data
       - cognee_system:/cognee-storage/system
