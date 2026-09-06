@@ -47,6 +47,10 @@ services:
       EMBEDDING_MODEL: text-embedding-3-small
       EMBEDDING_ENDPOINT: https://api.avalai.ir/v1
       EMBEDDING_DIMENSIONS: "1536"
+      EMBEDDING_BATCH_SIZE: "8"
+      EMBEDDING_RATE_LIMIT_ENABLED: "true"
+      EMBEDDING_RATE_LIMIT_REQUESTS: "8"
+      EMBEDDING_RATE_LIMIT_INTERVAL: "60"
     volumes:
       - cognee_data:/cognee-storage/data
       - cognee_system:/cognee-storage/system

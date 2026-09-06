@@ -49,6 +49,15 @@ def test_compose_pins_avalai_for_chat_and_embeddings():
     assert "EMBEDDING_API_KEY" not in env
 
 
+def test_compose_caps_embedding_throughput_for_avalai():
+    compose = _load_compose()
+    env = compose["services"]["cognee"]["environment"]
+    assert int(env["EMBEDDING_BATCH_SIZE"]) <= 8
+    assert env["EMBEDDING_RATE_LIMIT_ENABLED"] == "true"
+    assert int(env["EMBEDDING_RATE_LIMIT_REQUESTS"]) <= 12
+    assert str(env["EMBEDDING_RATE_LIMIT_INTERVAL"]) == "60"
+
+
 def test_compose_pins_postgres_connection_on_cognee():
     compose = _load_compose()
     env = compose["services"]["cognee"]["environment"]

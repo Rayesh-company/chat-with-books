@@ -34,3 +34,11 @@ def test_env_example_does_not_ship_a_real_api_key():
         assert value in {"", "your_avalai_api_key"}
         assert not value.startswith("aa-")
         assert not value.startswith("sk-")
+
+
+def test_env_example_caps_embedding_throughput_for_avalai():
+    env = parse_dotenv(ENV_EXAMPLE)
+    assert int(env["EMBEDDING_BATCH_SIZE"]) <= 8
+    assert env["EMBEDDING_RATE_LIMIT_ENABLED"].lower() == "true"
+    assert int(env["EMBEDDING_RATE_LIMIT_REQUESTS"]) <= 12
+    assert env["EMBEDDING_RATE_LIMIT_INTERVAL"] == "60"
