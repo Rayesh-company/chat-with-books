@@ -18,3 +18,11 @@ def test_readme_documents_chunk_retrieval_smoke():
     assert "CHUNKS" in text
     assert '"datasets":["tarhe-kolli"]' in text
     assert "tarhe-kolli.pdf" in text
+
+
+def test_readme_ingests_only_this_book():
+    text = README.read_text(encoding="utf-8")
+    assert text.count("datasetName=") == 1
+    assert "datasetName=tarhe-kolli" in text
+    assert text.count("data=@") == 1
+    assert "data=@tarhe-kolli.pdf" in text
