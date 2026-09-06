@@ -37,6 +37,12 @@ curl.exe -sS http://localhost:8000/api/v1/datasets/status
 
 Poll `/api/v1/datasets/status` until the dataset is `completed` (or `DATASET_PROCESSING_COMPLETED`). Graph build on `postgres_demo` can take hours.
 
+Retrieval smoke. `CHUNKS` should return Evidence that names `tarhe-kolli.pdf`, not an empty index:
+
+```powershell
+curl.exe -sS -X POST http://localhost:8000/api/v1/search -H "Content-Type: application/json" --data-raw '{"searchType":"CHUNKS","query":"اندیشه اسلامی","datasets":["tarhe-kolli"],"topK":5}'
+```
+
 ## Tests
 
 ```powershell
