@@ -17,7 +17,8 @@ def test_readme_documents_chunk_retrieval_smoke():
     assert "/api/v1/search" in text
     assert "CHUNKS" in text
     assert '"datasets":["tarhe-kolli"]' in text
-    assert "tarhe-kolli.pdf" in text
+    assert "document_name" in text
+    assert "tarhe-kolli" in text
 
 
 def test_readme_ingests_only_this_book():
