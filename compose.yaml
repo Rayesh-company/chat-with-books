@@ -47,7 +47,6 @@ services:
       EMBEDDING_MODEL: text-embedding-3-small
       EMBEDDING_ENDPOINT: https://api.avalai.ir/v1
       EMBEDDING_DIMENSIONS: "1536"
-      EMBEDDING_API_KEY: ${LLM_API_KEY}
     volumes:
       - cognee_data:/cognee-storage/data
       - cognee_system:/cognee-storage/system

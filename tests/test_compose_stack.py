@@ -46,7 +46,7 @@ def test_compose_pins_avalai_for_chat_and_embeddings():
     assert env["EMBEDDING_PROVIDER"] == "openai_compatible"
     assert env["EMBEDDING_ENDPOINT"] == "https://api.avalai.ir/v1"
     assert env["EMBEDDING_MODEL"] == "text-embedding-3-small"
-    assert env["EMBEDDING_API_KEY"] == "${LLM_API_KEY}"
+    assert "EMBEDDING_API_KEY" not in env
 
 
 def test_compose_pins_postgres_connection_on_cognee():

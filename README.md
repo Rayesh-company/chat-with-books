@@ -21,9 +21,8 @@ UI (optional):
 
 ```powershell
 docker compose --profile ui up -d
+curl.exe -f http://localhost:3000
 ```
-
-Then open `http://localhost:3000`.
 
 Trial chat model is `gpt-5.4-mini`. Embeddings are `text-embedding-3-small`. Change `LLM_MODEL` in `.env` only after `GET https://api.avalai.ir/v1/models` shows a different ID on this account.
 

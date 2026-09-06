@@ -8,4 +8,4 @@ def test_readme_documents_compose_up_and_health():
     assert "docker compose up -d" in text
     assert "http://localhost:8000/health" in text
     assert "docker compose --profile ui up -d" in text
-    assert "http://localhost:3000" in text
+    assert "curl.exe -f http://localhost:3000" in text
