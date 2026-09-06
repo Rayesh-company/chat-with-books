@@ -2,7 +2,7 @@
 
 Farsi Q&A over a fixed Book set through Cognee. The whole memory layer stays on Postgres (ADR-0001). Chat and embeddings go to AvalAI at `https://api.avalai.ir/v1`.
 
-This ticket only brings the local runtime up. Book ingest is a later step.
+The Book set is one PDF: `tarhe-kolli.pdf` (طرح کلی اندیشۀ اسلامی در قرآن). Keep it at the repo root. It is not committed.
 
 ## Local stack
 
@@ -25,6 +25,17 @@ curl.exe -f http://localhost:3000
 ```
 
 Trial chat model is `gpt-5.4-mini`. Embeddings are `text-embedding-3-small`. Change `LLM_MODEL` in `.env` only after `GET https://api.avalai.ir/v1/models` shows a different ID on this account.
+
+## Book ingest
+
+Dataset name: `tarhe-kolli`. Upload only this Book.
+
+```powershell
+curl.exe -f -X POST http://localhost:8000/api/v1/remember -F "data=@tarhe-kolli.pdf" -F "datasetName=tarhe-kolli" -F "run_in_background=true"
+curl.exe -sS http://localhost:8000/api/v1/datasets/status
+```
+
+Poll `/api/v1/datasets/status` until the dataset is `completed` (or `DATASET_PROCESSING_COMPLETED`). Graph build on `postgres_demo` can take hours.
 
 ## Tests
 
