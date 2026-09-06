@@ -49,6 +49,16 @@ def test_compose_pins_avalai_for_chat_and_embeddings():
     assert env["EMBEDDING_API_KEY"] == "${LLM_API_KEY}"
 
 
+def test_compose_pins_postgres_connection_on_cognee():
+    compose = _load_compose()
+    env = compose["services"]["cognee"]["environment"]
+    assert env["DB_HOST"] == "postgres"
+    assert str(env["DB_PORT"]) == "5432"
+    assert env["DB_USERNAME"] == "cognee"
+    assert env["DB_PASSWORD"] == "cognee"
+    assert env["DB_NAME"] == "cognee_db"
+
+
 def test_compose_healthcheck_hits_cognee_health():
     compose = _load_compose()
     probe = compose["services"]["cognee"]["healthcheck"]["test"]

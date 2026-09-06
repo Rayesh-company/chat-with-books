@@ -31,6 +31,10 @@ services:
       - .env
     environment:
       DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USERNAME: cognee
+      DB_PASSWORD: cognee
+      DB_NAME: cognee_db
       DB_PROVIDER: postgres
       VECTOR_DB_PROVIDER: pgvector
       GRAPH_DATABASE_PROVIDER: postgres_demo
