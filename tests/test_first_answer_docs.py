@@ -11,11 +11,14 @@ def test_readme_records_recall_hybrid_first_answer_contract():
     assert '"datasets":["tarhe-kolli"]' in text
 
 
-def test_readme_records_farsi_citation_from_chunk_document_name():
+def test_readme_records_farsi_citation_as_cognee_evidence():
     text = README.read_text(encoding="utf-8")
-    assert "Do not invent a citation formatter" in text
-    assert "document_name" in text
-    assert "omitted for Farsi" in text
+    section = text.split("## First answer", 1)[1].split("## Tests", 1)[0]
+    assert "Evidence:" in section
+    assert "Do not invent a citation formatter" in section
+    assert "omitted for Farsi" not in section
+    assert "CHUNKS payload" not in section
+    assert "enable_farsi_evidence.py" in section
 
 
 def test_readme_new_question_starts_a_new_first_answer():
