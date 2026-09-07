@@ -2,7 +2,7 @@
 
 Farsi Q&A over a fixed Book set through Cognee. The whole memory layer stays on Postgres (ADR-0001). Chat and embeddings go to AvalAI at `https://api.avalai.ir/v1`.
 
-The Book set is one PDF: `tarhe-kolli.pdf` (طرح کلی اندیشۀ اسلامی در قرآن). Keep it at the repo root. It is not committed.
+The Book set is one Book: طرح کلی اندیشۀ اسلامی در قرآن (`tarhe-kolli.pdf`). Keep it at the repo root. It is not committed.
 
 ## Local stack
 
@@ -39,7 +39,7 @@ Poll `/api/v1/datasets/status` until the dataset is `completed` (or `DATASET_PRO
 
 Pytest locks this recorded ingest contract. A green suite does not mean remember has run or that CHUNKS returned hits.
 
-Operator smoke on a live host: POST `CHUNKS` and check `document_name` is `tarhe-kolli`. First search can sit several minutes on session analysis before chunks return.
+Session operator smoke on a live host: POST `CHUNKS` and check Book (`document_name`) is `tarhe-kolli`. First search can sit several minutes on Cognee's pre-search step before chunks return.
 
 ```powershell
 curl.exe -sS -X POST http://localhost:8000/api/v1/search -H "Content-Type: application/json" --data-raw '{"searchType":"CHUNKS","query":"اندیشه اسلامی","datasets":["tarhe-kolli"],"topK":5}'
