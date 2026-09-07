@@ -9,6 +9,14 @@ def _load_compose() -> dict:
     return yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
 
 
+def test_compose_widens_cognee_evidence_tokens_for_farsi():
+    compose = _load_compose()
+    cognee = compose["services"]["cognee"]
+    volumes = [str(item) for item in cognee.get("volumes", [])]
+    assert any("enable_farsi_evidence.py" in item for item in volumes)
+    assert cognee.get("entrypoint") == ["python", "/enable_farsi_evidence.py"]
+
+
 def test_compose_runs_cognee_and_postgres_without_another_graph_store():
     compose = _load_compose()
     services = compose["services"]

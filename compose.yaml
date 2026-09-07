@@ -54,6 +54,8 @@ services:
     volumes:
       - cognee_data:/cognee-storage/data
       - cognee_system:/cognee-storage/system
+      - ./docker/enable_farsi_evidence.py:/enable_farsi_evidence.py:ro
+    entrypoint: ["python", "/enable_farsi_evidence.py"]
     ports:
       - "8000:8000"
     extra_hosts:
