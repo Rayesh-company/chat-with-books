@@ -47,7 +47,7 @@ curl.exe -sS -X POST http://localhost:8000/api/v1/search -H "Content-Type: appli
 
 ## First answer
 
-A Session operator asks a Farsi question against the ingested Book. First answer is Cognee `recall()` with `HYBRID_COMPLETION`. It is not Next-tier search. Pin `searchType`. Do not pass `null` (that auto-routes and can pick `GRAPH_COMPLETION_COT`). Cognee's HTTP `includeReferences` default is false. Pass `true` so Evidence is appended. The Evidence block is the Citation: Book identity plus a quoted passage. That snippet is the short summary. Do not add a second précis. Omit `sessionId` so a new question is a new first answer.
+A Session operator asks a Farsi question against the ingested Book. First answer is Cognee `recall()` with `HYBRID_COMPLETION`. It is not Next-tier search. Pin `searchType`. Do not pass `null` (that auto-routes and can pick `GRAPH_COMPLETION_COT`). Cognee's HTTP `includeReferences` default is false. Still pass `true`. Cognee's `Evidence:` header is omitted for Farsi answers: its overlap filter only keeps Latin `[a-z0-9]` terms. `document_name` is present on the chunk payload (`tarhe-kolli`). Do not invent a citation formatter. Citation is Book identity plus a quoted passage from that CHUNKS payload. The snippet is the short summary. Do not add a second précis. Omit `sessionId` so a new question is a new first answer.
 
 Trial chat model for this path is `gpt-5.4-mini` (already in `.env` / compose).
 
