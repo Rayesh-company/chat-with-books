@@ -97,7 +97,7 @@ def test_compose_runs_next_tier_cot_on_its_own_cognee_service():
 
     env = next_tier["environment"]
     assert env["LLM_PROVIDER"] == "custom"
-    assert env["LLM_MODEL"] == "openai/gpt-5.5"
+    assert env["LLM_MODEL"] == "openai/glm-5.3"
     assert env["LLM_ENDPOINT"] == "https://api.avalai.ir/v1"
 
     volumes = [str(item) for item in next_tier.get("volumes", [])]

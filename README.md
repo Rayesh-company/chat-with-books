@@ -83,7 +83,7 @@ In the same Session, on the same question, the Session operator can run a Next-t
 
 It is Cognee `SearchType.GRAPH_COMPLETION_COT` (default `max_iter=4`). Not `FEELING_LUCKY`, not `AGENTIC_COMPLETION`. If live latency is ever unusable, the fallback is `GRAPH_COMPLETION_DECOMPOSITION` — switch only after recording that choice.
 
-It runs on the second Cognee service (`cognee-next-tier`, port `8001`) with the stronger AvalAI chat model `gpt-5.5` (confirmed on `/v1/models`). The first-answer service on port `8000` keeps `gpt-5.4-mini`. Cognee's per-stage `LLM_QUERY_MODEL` override cannot separate the two paths — every search completion, first answer included, runs in the `query` pipeline stage — so the stronger model gets its own service reading the same Postgres memory.
+It runs on the second Cognee service (`cognee-next-tier`, port `8001`) with the stronger AvalAI chat model `glm-5.3` (confirmed on `/v1/models`). The first-answer service on port `8000` keeps `gpt-5.4-mini`. Cognee's per-stage `LLM_QUERY_MODEL` override cannot separate the two paths — every search completion, first answer included, runs in the `query` pipeline stage — so the stronger model gets its own service reading the same Postgres memory.
 
 ```powershell
 curl.exe -sS -X POST http://localhost:8001/api/v1/recall -H "Content-Type: application/json" --data-raw '{"searchType":"GRAPH_COMPLETION_COT","query":"اندیشه اسلامی در قرآن چه طرحی دارد؟","datasets":["tarhe-kolli"],"includeReferences":true}'

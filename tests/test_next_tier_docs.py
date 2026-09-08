@@ -27,7 +27,7 @@ def test_readme_keeps_next_tier_off_the_first_answer_path():
 
 def test_readme_pins_the_next_tier_model_and_its_reason():
     section = _next_tier_section()
-    assert "gpt-5.5" in section
+    assert "glm-5.3" in section
     assert "/v1/models" in section
     assert "LLM_QUERY_MODEL" in section
     assert "gpt-5.4-mini" in section
