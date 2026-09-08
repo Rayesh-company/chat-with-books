@@ -70,6 +70,57 @@ services:
     networks:
       - cognee-network
 
+  cognee-next-tier:
+    image: cognee/cognee:main
+    container_name: chat-with-books-cognee-next-tier
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      cognee:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USERNAME: cognee
+      DB_PASSWORD: cognee
+      DB_NAME: cognee_db
+      DB_PROVIDER: postgres
+      VECTOR_DB_PROVIDER: pgvector
+      GRAPH_DATABASE_PROVIDER: postgres_demo
+      CACHE_BACKEND: postgres
+      ENABLE_BACKEND_ACCESS_CONTROL: "false"
+      LLM_PROVIDER: custom
+      LLM_MODEL: openai/gpt-5.5
+      LLM_ENDPOINT: https://api.avalai.ir/v1
+      EMBEDDING_PROVIDER: openai_compatible
+      EMBEDDING_MODEL: text-embedding-3-small
+      EMBEDDING_ENDPOINT: https://api.avalai.ir/v1
+      EMBEDDING_DIMENSIONS: "1536"
+      EMBEDDING_BATCH_SIZE: "8"
+      EMBEDDING_RATE_LIMIT_ENABLED: "true"
+      EMBEDDING_RATE_LIMIT_REQUESTS: "8"
+      EMBEDDING_RATE_LIMIT_INTERVAL: "60"
+    volumes:
+      - cognee_data:/cognee-storage/data
+      - cognee_system:/cognee-storage/system
+      - ./docker/enable_farsi_evidence.py:/enable_farsi_evidence.py:ro
+    entrypoint: ["python", "/enable_farsi_evidence.py"]
+    ports:
+      - "8001:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - cognee-network
+
   frontend:
     image: cognee/cognee-ui:latest
     container_name: chat-with-books-ui

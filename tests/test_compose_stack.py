@@ -88,3 +88,41 @@ def test_ui_is_an_optional_profile_on_port_3000():
     assert "ui" in frontend["profiles"]
     assert "3000:3000" in frontend["ports"]
     assert frontend["image"].startswith("cognee/cognee-ui")
+
+
+def test_compose_runs_next_tier_cot_on_its_own_cognee_service():
+    compose = _load_compose()
+    next_tier = compose["services"]["cognee-next-tier"]
+    assert next_tier["image"] == compose["services"]["cognee"]["image"]
+
+    env = next_tier["environment"]
+    assert env["LLM_PROVIDER"] == "custom"
+    assert env["LLM_MODEL"] == "openai/gpt-5.5"
+    assert env["LLM_ENDPOINT"] == "https://api.avalai.ir/v1"
+
+    volumes = [str(item) for item in next_tier.get("volumes", [])]
+    assert any("enable_farsi_evidence.py" in item for item in volumes)
+    assert next_tier.get("entrypoint") == ["python", "/enable_farsi_evidence.py"]
+
+    assert env["DB_PROVIDER"] == "postgres"
+    assert env["VECTOR_DB_PROVIDER"] == "pgvector"
+    assert env["GRAPH_DATABASE_PROVIDER"] == "postgres_demo"
+
+
+def test_compose_keeps_next_tier_off_the_first_answer_path():
+    compose = _load_compose()
+    first = compose["services"]["cognee"]
+    next_tier = compose["services"]["cognee-next-tier"]
+
+    assert first["environment"]["LLM_MODEL"] == "openai/gpt-5.4-mini"
+    assert next_tier["environment"]["LLM_MODEL"] != first["environment"]["LLM_MODEL"]
+
+    first_ports = [str(item) for item in first["ports"]]
+    next_tier_ports = [str(item) for item in next_tier["ports"]]
+    assert "8001:8000" in next_tier_ports
+    assert not (set(next_tier_ports) & set(first_ports))
+
+    for service in (first, next_tier):
+        assert "LLM_QUERY_MODEL" not in service["environment"]
+
+    assert next_tier["depends_on"]["cognee"]["condition"] == "service_healthy"
