@@ -17,7 +17,19 @@ curl.exe -f http://localhost:8000/health
 
 API docs: `http://localhost:8000/docs`.
 
-UI (optional):
+## Session UI
+
+A Farsi-first sheet for first answers. It proxies `recall()` to Cognee on this machine. It is not Next-tier search, and it is not Cognee `--profile ui`.
+
+```powershell
+python ui/serve.py
+```
+
+Open `http://localhost:8765`. Cognee must already be up on port 8000 with `tarhe-kolli` ingested.
+
+The sheet asks recall() with `stream: true` and renders the answer as it arrives. `delta` frames paint a live preview; `final` is the only authoritative render and the preview is discarded. `reset` clears the preview after an LLM retry. An `error` frame is not terminal: the sheet keeps reading and prefers `final`. `ui/serve.py` relays `text/event-stream` unbuffered (HTTP/1.0, connection-close delimited). «نخستین توکن» is TTFT: submit to first token rendered; with no deltas it falls back to the first render from `final`.
+
+UI (optional Cognee chrome):
 
 ```powershell
 docker compose --profile ui up -d
@@ -49,12 +61,20 @@ curl.exe -sS -X POST http://localhost:8000/api/v1/search -H "Content-Type: appli
 
 A Session operator asks a Farsi question against the ingested Book. First answer is Cognee `recall()` with `HYBRID_COMPLETION`. It is not Next-tier search. Pin `searchType`. Do not pass `null` (that auto-routes and can pick `GRAPH_COMPLETION_COT`). Cognee's HTTP `includeReferences` default is false. Still pass `true`. Citation is Cognee's `Evidence:` block (Book identity plus a quoted passage). Compose starts Cognee through `enable_farsi_evidence.py` so that overlap keeps Farsi terms, not only Latin `[a-z0-9]`. Do not invent a citation formatter. Do not treat CHUNKS as the product Citation. The snippet is the short summary. Do not add a second précis. A new question starts a new first answer, not a Next-tier search. Omit `sessionId` on this path.
 
+This path streams: pass `stream: true`. Deltas are preview only and never contain the `Evidence:` block; the `final` frame carries the same JSON array as the non-streaming reply, and citation splitting runs on `final`'s `[0].text`. Token deltas need `LLM_ANSWER_STREAMING: "true"` in compose (Cognee env). With the flag off the stream still works with zero deltas, and TTFT measures submit to first render from `final`.
+
 Trial chat model for this path is `gpt-5.4-mini` (already in `.env` / compose).
 
 Pytest locks this recorded first-answer contract. A green suite does not mean recall returned an answer or Evidence.
 
 ```powershell
 curl.exe -sS -X POST http://localhost:8000/api/v1/recall -H "Content-Type: application/json" --data-raw '{"searchType":"HYBRID_COMPLETION","query":"اندیشه اسلامی در قرآن چه طرحی دارد؟","datasets":["tarhe-kolli"],"includeReferences":true}'
+```
+
+Streamed variant (`-N` so frames print live):
+
+```powershell
+curl.exe -N -sS -X POST http://localhost:8000/api/v1/recall -H "Content-Type: application/json" --data-raw '{"searchType":"HYBRID_COMPLETION","query":"اندیشه اسلامی در قرآن چه طرحی دارد؟","datasets":["tarhe-kolli"],"includeReferences":true,"stream":true}'
 ```
 
 ## Tests

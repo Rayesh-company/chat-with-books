@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>نشست · طرح کلی اندیشۀ اسلامی در قرآن</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --table: #1b2a2e;
+        --sheet: #e7eadf;
+        --rule: #c9cfc0;
+        --ink: #1a1f1c;
+        --mute: #4d5852;
+        --clay: #c45c26;
+        --ok: #2f6f4e;
+        --bad: #8f2d2d;
+        --focus: #1f4d63;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+      }
+
+      body {
+        font-family: Vazirmatn, Tahoma, "Segoe UI", sans-serif;
+        background: var(--table);
+        color: var(--ink);
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 2.5rem 1rem 4rem;
+      }
+
+      main {
+        width: min(42rem, 100%);
+        background: var(--sheet);
+        padding: 2rem 1.75rem 2.25rem;
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+      }
+
+      header {
+        border-bottom: 1px solid var(--rule);
+        padding-bottom: 1rem;
+        margin-bottom: 1.25rem;
+      }
+
+      p.kicker {
+        margin: 0 0 0.35rem;
+        color: var(--clay);
+        font-size: 0.8rem;
+        letter-spacing: 0.08em;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 1.45rem;
+        font-weight: 700;
+        line-height: 1.7;
+      }
+
+      .status {
+        margin: 0.6rem 0 0;
+        font-size: 0.85rem;
+        color: var(--mute);
+      }
+
+      .status[data-state="up"] {
+        color: var(--ok);
+      }
+
+      .status[data-state="down"] {
+        color: var(--bad);
+      }
+
+      label {
+        display: block;
+        font-size: 0.9rem;
+        margin-bottom: 0.4rem;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 8.5rem;
+        resize: vertical;
+        border: 0;
+        border-bottom: 1px solid var(--ink);
+        background: repeating-linear-gradient(
+          to bottom,
+          transparent,
+          transparent 1.7rem,
+          var(--rule) 1.7rem,
+          var(--rule) 1.75rem
+        );
+        color: var(--ink);
+        font: inherit;
+        line-height: 1.75rem;
+        padding: 0.15rem 0.1rem 0.6rem;
+      }
+
+      textarea:focus {
+        outline: 2px solid var(--focus);
+        outline-offset: 4px;
+      }
+
+      .actions {
+        display: flex;
+        justify-content: flex-start;
+        gap: 0.75rem;
+        margin: 1rem 0 0;
+      }
+
+      button {
+        font: inherit;
+        font-weight: 700;
+        color: var(--sheet);
+        background: var(--ink);
+        border: 0;
+        padding: 0.55rem 1.4rem;
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled) {
+        background: var(--clay);
+      }
+
+      button:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 3px;
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: wait;
+      }
+
+      .elapsed {
+        align-self: center;
+        color: var(--mute);
+        font-size: 0.85rem;
+      }
+
+      section.out {
+        margin-top: 1.75rem;
+      }
+
+      h2 {
+        margin: 0 0 0.5rem;
+        font-size: 0.95rem;
+        font-weight: 700;
+      }
+
+      .answer,
+      .cite,
+      .empty,
+      .error {
+        white-space: pre-wrap;
+        line-height: 1.85;
+      }
+
+      .cite {
+        margin: 0 0 0.85rem;
+        padding: 0 0.9rem 0 0;
+        border-right: 3px solid var(--clay);
+        color: var(--mute);
+      }
+
+      .empty {
+        color: var(--mute);
+      }
+
+      .error {
+        color: var(--bad);
+      }
+
+      @media (max-width: 640px) {
+        body {
+          padding: 0;
+        }
+
+        main {
+          min-height: 100vh;
+          box-shadow: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        button {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="kicker">نشست · پاسخ اول</p>
+        <h1>طرح کلی اندیشۀ اسلامی در قرآن</h1>
+        <p class="status" id="status" data-state="unknown">در حال بررسی سرویس…</p>
+      </header>
+
+      <form id="ask">
+        <label for="question">پرسش</label>
+        <textarea
+          id="question"
+          name="question"
+          required
+          maxlength="2000"
+          placeholder="پرسش خود را بنویسید"
+        ></textarea>
+        <div class="actions">
+          <button type="submit" id="ask-btn">بپرس</button>
+          <span class="elapsed" id="elapsed" hidden></span>
+          <span class="elapsed" id="ttft" hidden></span>
+        </div>
+      </form>
+
+      <section class="out" aria-live="polite">
+        <h2>پاسخ</h2>
+        <p class="empty" id="answer">هنوز پرسشی نپرسیده‌اید.</p>
+        <h2>استناد</h2>
+        <div id="citations">
+          <p class="empty">پس از پاسخ، استناد اینجا می‌آید: هویت کتاب و عبارت نقل‌شده.</p>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("ask");
+      const questionEl = document.getElementById("question");
+      const buttonEl = document.getElementById("ask-btn");
+      const elapsedEl = document.getElementById("elapsed");
+      const ttftEl = document.getElementById("ttft");
+      const answerEl = document.getElementById("answer");
+      const citationsEl = document.getElementById("citations");
+      const statusEl = document.getElementById("status");
+
+      function setText(el, text, className) {
+        el.className = className;
+        el.textContent = text;
+      }
+
+      function splitCitation(text) {
+        const marker = "Evidence:";
+        const at = text.indexOf(marker);
+        if (at === -1) {
+          return { answer: text.trim(), citations: [] };
+        }
+        const answer = text.slice(0, at).trim();
+        const rest = text.slice(at + marker.length).trim();
+        const citations = rest
+          .split(/\n-\s+/)
+          .map((item) => item.replace(/^[-\s]+/, "").trim())
+          .filter(Boolean);
+        return { answer, citations };
+      }
+
+      async function readSse(res, onEvent) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        const dispatch = (frame) => {
+          let name = "message";
+          let data = "";
+          for (const line of frame.split("\n")) {
+            if (!line || line.startsWith(":")) continue;
+            if (line.startsWith("event:")) name = line.slice(6).trim();
+            else if (line.startsWith("data:")) data += line.slice(5).trim();
+          }
+          if (data) onEvent(name, data);
+        };
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let at;
+          while ((at = buffer.indexOf("\n\n")) !== -1) {
+            dispatch(buffer.slice(0, at));
+            buffer = buffer.slice(at + 2);
+          }
+        }
+        buffer += decoder.decode();
+        if (buffer.trim()) dispatch(buffer);
+      }
+
+      async function ping() {
+        try {
+          const res = await fetch("/health", { cache: "no-store" });
+          if (!res.ok) throw new Error("down");
+          statusEl.dataset.state = "up";
+          statusEl.textContent = "سرویس آماده است.";
+        } catch {
+          statusEl.dataset.state = "down";
+          statusEl.textContent = "سرویس پاسخ در دسترس نیست. اول Cognee را روشن کنید.";
+        }
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const query = questionEl.value.trim();
+        if (!query) {
+          questionEl.focus();
+          return;
+        }
+
+        buttonEl.disabled = true;
+        elapsedEl.hidden = false;
+        ttftEl.hidden = false;
+        ttftEl.textContent = "نخستین توکن: …";
+        const started = Date.now();
+        let firstTokenAt = null;
+        const markFirstToken = () => {
+          if (firstTokenAt !== null) return;
+          firstTokenAt = Date.now();
+          ttftEl.textContent = `نخستین توکن: ${((firstTokenAt - started) / 1000).toFixed(1)} ثانیه`;
+        };
+        const tick = setInterval(() => {
+          const seconds = Math.round((Date.now() - started) / 1000);
+          elapsedEl.textContent = `${seconds} ثانیه`;
+        }, 250);
+        setText(answerEl, "در حال پرسیدن…", "empty");
+        citationsEl.replaceChildren();
+        const waiting = document.createElement("p");
+        waiting.className = "empty";
+        waiting.textContent = "استناد پس از پاسخ می‌آید.";
+        citationsEl.append(waiting);
+
+        const textOf = (payload) =>
+          Array.isArray(payload) ? payload[0]?.text || "" : payload.text || "";
+
+        const renderFinal = (text) => {
+          if (!text) {
+            throw new Error("پاسخ خالی برگشت.");
+          }
+          const { answer, citations } = splitCitation(text);
+          setText(answerEl, answer || text, "answer");
+          markFirstToken();
+          citationsEl.replaceChildren();
+          if (!citations.length) {
+            const missing = document.createElement("p");
+            missing.className = "error";
+            missing.textContent = "استناد در پاسخ نبود.";
+            citationsEl.append(missing);
+          } else {
+            for (const item of citations) {
+              const p = document.createElement("p");
+              p.className = "cite";
+              p.textContent = item;
+              citationsEl.append(p);
+            }
+          }
+        };
+
+        try {
+          const res = await fetch("/api/v1/recall", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({
+              searchType: "HYBRID_COMPLETION",
+              query,
+              datasets: ["tarhe-kolli"],
+              includeReferences: true,
+              stream: true,
+            }),
+          });
+          const ctype = res.headers.get("Content-Type") || "";
+          if (ctype.includes("text/event-stream")) {
+            let preview = "";
+            let streamError = null;
+            let gotFinal = false;
+            await readSse(res, (name, data) => {
+              if (name === "stage") {
+                setText(
+                  answerEl,
+                  JSON.parse(data).stage === "generating"
+                    ? "در حال تولید پاسخ…"
+                    : "در حال بازیابی…",
+                  "empty"
+                );
+              } else if (name === "delta") {
+                preview += JSON.parse(data).text;
+                setText(answerEl, preview, "answer");
+                markFirstToken();
+              } else if (name === "reset") {
+                preview = "";
+                setText(answerEl, "در حال تولید پاسخ…", "empty");
+              } else if (name === "error") {
+                streamError = new Error(JSON.parse(data).message || "خطا در جریان پاسخ.");
+              } else if (name === "final") {
+                gotFinal = true;
+                renderFinal(textOf(JSON.parse(data).results));
+              }
+            });
+            if (!gotFinal) {
+              throw streamError || new Error("پاسخ نیامد.");
+            }
+          } else {
+            const payload = await res.json();
+            if (!res.ok) {
+              const detail = Array.isArray(payload.detail)
+                ? payload.detail.join(" ")
+                : payload.detail;
+              throw new Error(detail || "پاسخ نیامد.");
+            }
+            renderFinal(textOf(payload));
+          }
+        } catch (err) {
+          setText(
+            answerEl,
+            err.message === "Failed to fetch"
+              ? "ارتباط با سرویس پاسخ قطع شد."
+              : String(err.message || err),
+            "error"
+          );
+          citationsEl.replaceChildren();
+          const missing = document.createElement("p");
+          missing.className = "empty";
+          missing.textContent = "بدون استناد.";
+          citationsEl.append(missing);
+        } finally {
+          clearInterval(tick);
+          const seconds = Math.round((Date.now() - started) / 1000);
+          elapsedEl.textContent = `${seconds} ثانیه`;
+          if (firstTokenAt === null) {
+            ttftEl.hidden = true;
+          }
+          buttonEl.disabled = false;
+        }
+      });
+
+      ping();
+    </script>
+  </body>
+</html>
