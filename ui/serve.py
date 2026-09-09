@@ -26,7 +26,9 @@ COMPOSER_URL = (
     os.environ.get("LLM_ENDPOINT", "https://api.z.ai/api/coding/paas/v4").rstrip("/")
     + "/chat/completions"
 )
-COMPOSER_TIMEOUT = int(os.environ.get("COMPOSER_TIMEOUT", "60"))
+# Measured 2026-09-09: glm-5.3-flash needs ~190s on a 5-passage prompt
+# (the coding endpoint queues); below that the paragraph never lands.
+COMPOSER_TIMEOUT = int(os.environ.get("COMPOSER_TIMEOUT", "240"))
 
 _ARABIC_TO_FARSI = str.maketrans({"ي": "ی", "ك": "ک"})
 # Tashkeel, superscript alef, tatweel/kashida.
