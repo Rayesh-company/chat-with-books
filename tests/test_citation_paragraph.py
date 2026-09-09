@@ -131,3 +131,26 @@ def test_serve_pins_the_composer_endpoint_and_model():
     assert "glm-5.3-flash" in text
     assert "api.z.ai/api/coding/paas/v4" in text
     assert "LLM_API_KEY" in text
+
+
+def test_session_ui_renders_the_hover_citation_paragraph():
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert "/citation-paragraph" in html
+    assert "renderCitationParagraph" in html
+    assert "evidenceSources" in html
+    assert 'className = "cite-para"' in html
+    assert 'className = "cite-sent"' in html
+
+
+def test_session_ui_sentences_are_focusable_with_farsi_tooltip():
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert "tabIndex = 0" in html
+    assert "attr(data-ref)" in html
+    assert "طرح کلی اندیشۀ اسلامی در قرآن" in html
+    assert ".cite-sent:hover" in html
+    assert ".cite-sent:focus-visible" in html
+
+
+def test_session_ui_keeps_the_llm_key_off_the_sheet():
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert "LLM_API_KEY" not in html

@@ -176,6 +176,47 @@
         color: var(--mute);
       }
 
+      .cite-para {
+        margin: 0 0 0.85rem;
+        padding: 0 0.9rem 0 0;
+        border-right: 3px solid var(--clay);
+        color: var(--mute);
+        line-height: 2.2;
+      }
+
+      .cite-sent {
+        position: relative;
+        cursor: help;
+        border-bottom: 1px dotted var(--clay);
+      }
+
+      .cite-sent:hover,
+      .cite-sent:focus-visible {
+        background: rgba(196, 92, 38, 0.18);
+        outline: none;
+      }
+
+      .cite-sent:hover::after,
+      .cite-sent:focus-visible::after {
+        content: attr(data-ref);
+        position: absolute;
+        bottom: calc(100% + 0.35rem);
+        right: 50%;
+        transform: translateX(50%);
+        width: max-content;
+        max-width: 18rem;
+        white-space: normal;
+        background: var(--ink);
+        color: var(--sheet);
+        font-size: 0.78rem;
+        font-weight: 500;
+        line-height: 1.7;
+        padding: 0.3rem 0.65rem;
+        border-radius: 3px;
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+        z-index: 1;
+      }
+
       .empty {
         color: var(--mute);
       }
@@ -264,6 +305,66 @@
           .map((item) => item.replace(/^[-\s]+/, "").trim())
           .filter(Boolean);
         return { answer, citations };
+      }
+
+      // An Evidence bullet is `locator: "quoted passage"`. The quoted
+      // passage is the composer's verbatim source pool.
+      function evidenceSources(citations) {
+        const sources = [];
+        for (const item of citations) {
+          const at = item.indexOf(': "');
+          if (at === -1) {
+            continue;
+          }
+          const reference = item.slice(0, at).trim();
+          const passage = item.slice(at + 3).replace(/"$/, "").trim();
+          if (reference && passage) {
+            sources.push({ reference, passage });
+          }
+        }
+        return sources;
+      }
+
+      // The composer's verbatim sentences replace the Evidence list only on
+      // success; on failure, timeout, or zero verified sentences the Evidence
+      // citations stay as rendered (AC-4). The answer path is untouched —
+      // this runs after the streamed answer has rendered (AC-5).
+      async function renderCitationParagraph(question, citations) {
+        const sources = evidenceSources(citations);
+        if (!sources.length) {
+          return;
+        }
+        try {
+          const res = await fetch("/citation-paragraph", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ question, sources }),
+          });
+          if (!res.ok) {
+            return;
+          }
+          const payload = await res.json();
+          const sentences = Array.isArray(payload.sentences) ? payload.sentences : [];
+          if (!sentences.length) {
+            return;
+          }
+          const para = document.createElement("p");
+          para.className = "cite-para";
+          sentences.forEach((item, index) => {
+            if (index) {
+              para.append(" ");
+            }
+            const span = document.createElement("span");
+            span.className = "cite-sent";
+            span.tabIndex = 0;
+            span.textContent = item.text;
+            span.dataset.ref = `طرح کلی اندیشۀ اسلامی در قرآن — ${item.reference}`;
+            para.append(span);
+          });
+          citationsEl.replaceChildren(para);
+        } catch {
+          // Composer unreachable: keep the Evidence citations.
+        }
       }
 
       async function readSse(res, onEvent) {
@@ -359,6 +460,7 @@
               p.textContent = item;
               citationsEl.append(p);
             }
+            renderCitationParagraph(query, citations);
           }
         };
 
