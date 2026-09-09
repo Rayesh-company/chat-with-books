@@ -154,3 +154,11 @@ def test_session_ui_sentences_are_focusable_with_farsi_tooltip():
 def test_session_ui_keeps_the_llm_key_off_the_sheet():
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
     assert "LLM_API_KEY" not in html
+
+
+def test_readme_records_the_citation_paragraph_contract():
+    text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "citation paragraph" in text
+    assert "/citation-paragraph" in text
+    assert "verbatim" in text
+    assert "glm-5.3-flash" in text
