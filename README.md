@@ -36,7 +36,7 @@ docker compose --profile ui up -d
 curl.exe -f http://localhost:3000
 ```
 
-Trial chat model is `gpt-5.4-mini`. Embeddings are `text-embedding-3-small`. Change `LLM_MODEL` in `.env` only after `GET https://api.avalai.ir/v1/models` shows a different ID on this account.
+Chat model is `glm-5.3` on both services, pinned in `compose.yaml` (`environment:` there overrides `.env`, so `.env` carries keys, not models). Embeddings are `text-embedding-3-small`. Change `LLM_MODEL` in `compose.yaml` only after `GET https://api.avalai.ir/v1/models` shows a different ID on this account.
 
 ## Book ingest
 
@@ -83,13 +83,13 @@ In the same Session, on the same question, the Session operator can run a Next-t
 
 It is Cognee `SearchType.GRAPH_COMPLETION_COT` (default `max_iter=4`). Not `FEELING_LUCKY`, not `AGENTIC_COMPLETION`. If live latency is ever unusable, the fallback is `GRAPH_COMPLETION_DECOMPOSITION` — switch only after recording that choice.
 
-It runs on the second Cognee service (`cognee-next-tier`, port `8001`) with the AvalAI chat model `glm-5.3` (confirmed on `/v1/models`). Both tiers use `glm-5.3` (PM call, 2026-09-08). They stay separate services so a multi-minute COT run on `8001` never blocks the first-answer path on `8000`: Cognee's per-stage `LLM_QUERY_MODEL` override cannot draw that line — it hits every search completion, first answer included — and one service cannot serve both tiers independently. Both read the same Postgres memory.
+It runs on the second Cognee service (`cognee-next-tier`, port `8001`) with the AvalAI chat model `glm-5.3` (confirmed on `/v1/models`). Both tiers use `glm-5.3` (PM call, 2026-09-08). They stay separate services so a multi-minute Next-tier search on `8001` never blocks the first-answer path on `8000`: Cognee's per-stage `LLM_QUERY_MODEL` override cannot draw that line — it hits every search completion, first answer included — and one service cannot serve both tiers independently. Both read the same Postgres memory.
 
 ```powershell
 curl.exe -sS -X POST http://localhost:8001/api/v1/recall -H "Content-Type: application/json" --data-raw '{"searchType":"GRAPH_COMPLETION_COT","query":"اندیشه اسلامی در قرآن چه طرحی دارد؟","datasets":["tarhe-kolli"],"includeReferences":true}'
 ```
 
-Same question as the first answer. Do not stream this path; the operator waits for the JSON. Citations may still appear; they follow the first-answer `Evidence:` contract. Pytest locks this recorded next-tier contract; a green suite does not mean COT returned a synthesis.
+Same question as the first answer. Do not stream this path; the operator waits for the JSON. Citations may still appear; they follow the first-answer `Evidence:` contract. Pytest locks this recorded next-tier contract; a green suite does not mean the Next-tier search returned a synthesis.
 
 ## Tests
 

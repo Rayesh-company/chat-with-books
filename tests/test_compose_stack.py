@@ -108,6 +108,10 @@ def test_compose_runs_next_tier_cot_on_its_own_cognee_service():
     assert env["VECTOR_DB_PROVIDER"] == "pgvector"
     assert env["GRAPH_DATABASE_PROVIDER"] == "postgres_demo"
 
+    first = compose["services"]["cognee"]["environment"]
+    assert env["DB_HOST"] == first["DB_HOST"]
+    assert env["DB_NAME"] == first["DB_NAME"]
+
 
 def test_compose_keeps_next_tier_off_the_first_answer_path():
     compose = _load_compose()

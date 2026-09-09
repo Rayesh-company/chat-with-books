@@ -8,7 +8,7 @@ def test_env_example_points_chat_and_embeddings_at_avalai():
 
     assert env["LLM_PROVIDER"] == "custom"
     assert env["LLM_ENDPOINT"] == "https://api.avalai.ir/v1"
-    assert env["LLM_MODEL"] == "openai/gpt-5.4-mini"
+    assert env["LLM_MODEL"] == "openai/glm-5.3"
     assert "LLM_API_KEY" in env
 
     assert env["EMBEDDING_PROVIDER"] == "openai_compatible"

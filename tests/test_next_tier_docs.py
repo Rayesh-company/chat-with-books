@@ -19,10 +19,11 @@ def test_readme_records_next_tier_cot_search_contract():
 
 def test_readme_keeps_next_tier_off_the_first_answer_path():
     text = README.read_text(encoding="utf-8")
-    first_answer_curl = text.split("/api/v1/recall", 2)[1].split("--data-raw '", 1)[1]
-    first_answer_curl = first_answer_curl.split("'", 1)[0]
-    assert "HYBRID_COMPLETION" in first_answer_curl
-    assert "GRAPH_COMPLETION_COT" not in first_answer_curl
+    payloads = [chunk.split("'", 1)[0] for chunk in text.split("--data-raw '")[1:]]
+    hybrid_payloads = [p for p in payloads if "HYBRID_COMPLETION" in p]
+    assert hybrid_payloads, "README must record a first-answer HYBRID_COMPLETION curl"
+    for payload in hybrid_payloads:
+        assert "GRAPH_COMPLETION_COT" not in payload
 
 
 def test_readme_pins_the_next_tier_model_and_its_reason():
