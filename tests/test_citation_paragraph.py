@@ -131,6 +131,9 @@ def test_serve_pins_the_composer_endpoint_and_model():
     assert "glm-5.3-flash" in text
     assert "api.z.ai/api/coding/paas/v4" in text
     assert "LLM_API_KEY" in text
+    # The model pin changes only by editing this file (smoke rule first),
+    # never through an env override.
+    assert 'environ.get("COMPOSER_MODEL"' not in text
 
 
 def test_session_ui_renders_the_hover_citation_paragraph():

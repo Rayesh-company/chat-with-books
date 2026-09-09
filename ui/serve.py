@@ -20,8 +20,9 @@ ALLOWED_PROXY = {"/health", "/api/v1/recall"}
 
 # Citation-paragraph composer: asks the chat model to pick verbatim Book
 # sentences for the sheet's hover-citation paragraph. glm-5.3-flash only —
-# glm-5.3 stays reserved for Next-tier search (ADR-0002).
-COMPOSER_MODEL = os.environ.get("COMPOSER_MODEL", "glm-5.3-flash")
+# glm-5.3 stays reserved for Next-tier search (ADR-0002). The pin changes
+# only here, after the README's /chat/completions smoke rule — never via env.
+COMPOSER_MODEL = "glm-5.3-flash"
 COMPOSER_URL = (
     os.environ.get("LLM_ENDPOINT", "https://api.z.ai/api/coding/paas/v4").rstrip("/")
     + "/chat/completions"
