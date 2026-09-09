@@ -142,6 +142,17 @@ def test_session_ui_renders_the_hover_citation_paragraph():
     assert 'className = "cite-sent"' in html
 
 
+def test_session_ui_drops_a_stale_paragraph_when_a_new_question_starts():
+    # The composer call can outlive the answer it belongs to (minutes on the
+    # Z.AI queue). A paragraph for an older question must never overwrite a
+    # newer answer's citations.
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert "let citationRun = 0" in html
+    assert "citationRun += 1" in html
+    assert "const run = citationRun" in html
+    assert "run !== citationRun" in html
+
+
 def test_session_ui_sentences_are_focusable_with_farsi_tooltip():
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
     assert "tabIndex = 0" in html

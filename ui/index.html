@@ -286,6 +286,9 @@
       const answerEl = document.getElementById("answer");
       const citationsEl = document.getElementById("citations");
       const statusEl = document.getElementById("status");
+      // Bumped on every ask so a slow composer reply for an older question
+      // is dropped instead of overwriting the newer answer's citations.
+      let citationRun = 0;
 
       function setText(el, text, className) {
         el.className = className;
@@ -330,6 +333,7 @@
       // citations stay as rendered (AC-4). The answer path is untouched —
       // this runs after the streamed answer has rendered (AC-5).
       async function renderCitationParagraph(question, citations) {
+        const run = citationRun;
         const sources = evidenceSources(citations);
         if (!sources.length) {
           return;
@@ -344,6 +348,9 @@
             return;
           }
           const payload = await res.json();
+          if (run !== citationRun) {
+            return;
+          }
           const sentences = Array.isArray(payload.sentences) ? payload.sentences : [];
           if (!sentences.length) {
             return;
@@ -431,6 +438,7 @@
           elapsedEl.textContent = `${seconds} ثانیه`;
         }, 250);
         setText(answerEl, "در حال پرسیدن…", "empty");
+        citationRun += 1;
         citationsEl.replaceChildren();
         const waiting = document.createElement("p");
         waiting.className = "empty";
