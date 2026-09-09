@@ -1,6 +1,6 @@
 # chat-with-books
 
-Farsi Q&A over a fixed Book set through Cognee. The whole memory layer stays on Postgres (ADR-0001). Chat and embeddings go to AvalAI at `https://api.avalai.ir/v1`.
+Farsi Q&A over a fixed Book set through Cognee. The whole memory layer stays on Postgres (ADR-0001). Chat goes to Z.AI's GLM Coding Plan at `https://api.z.ai/api/coding/paas/v4`; embeddings stay on AvalAI at `https://api.avalai.ir/v1` (ADR-0002). The coding-plan endpoint is documented for coding tools; other agent use is best-effort under Z.AI's usage policy.
 
 The Book set is one Book: طرح کلی اندیشۀ اسلامی در قرآن (`tarhe-kolli.pdf`). Keep it at the repo root. It is not committed.
 
@@ -10,7 +10,7 @@ Postgres is always on. We do not use Cognee's `--profile postgres`, because this
 
 ```powershell
 copy .env.example .env
-# Set LLM_API_KEY and EMBEDDING_API_KEY to the same AvalAI key.
+# Set LLM_API_KEY to the Z.AI key and EMBEDDING_API_KEY to the AvalAI key.
 docker compose up -d
 curl.exe -f http://localhost:8000/health
 ```
@@ -36,7 +36,7 @@ docker compose --profile ui up -d
 curl.exe -f http://localhost:3000
 ```
 
-Chat model is `glm-5.3` on both services, pinned in `compose.yaml` (`environment:` there overrides `.env`, so `.env` carries keys, not models). Embeddings are `text-embedding-3-small`. Change `LLM_MODEL` in `compose.yaml` only after `GET https://api.avalai.ir/v1/models` shows a different ID on this account.
+Chat models are pinned in `compose.yaml`: `glm-5.3-flash` on `cognee` (first answers), `glm-5.3` on `cognee-next-tier` (`environment:` there overrides `.env`, so `.env` carries keys, not models). Embeddings are `text-embedding-3-small` on AvalAI. Change an `LLM_MODEL` in `compose.yaml` only after a POST to `https://api.z.ai/api/coding/paas/v4/chat/completions` with that model ID succeeds on this key.
 
 ## Book ingest
 
@@ -63,7 +63,7 @@ A Session operator asks a Farsi question against the ingested Book. First answer
 
 This path streams: pass `stream: true`. Deltas are preview only and never contain the `Evidence:` block; the `final` frame carries the same JSON array as the non-streaming reply, and citation splitting runs on `final`'s `[0].text`. Token deltas need `LLM_ANSWER_STREAMING: "true"` in compose (Cognee env). With the flag off the stream still works with zero deltas, and TTFT measures submit to first render from `final`.
 
-Chat model for this path is `glm-5.3` (PM call, 2026-09-08: one model family for both tiers, replacing the `gpt-5.4-mini` trial).
+Chat model for this path is `glm-5.3-flash` on Z.AI's GLM Coding Plan (PM call, 2026-09-09: flash for first answers, `glm-5.3` reserved for Next-tier; supersedes the 2026-09-08 same-model call made when chat was on AvalAI).
 
 Pytest locks this recorded first-answer contract. A green suite does not mean recall returned an answer or Evidence.
 
@@ -83,7 +83,7 @@ In the same Session, on the same question, the Session operator can run a Next-t
 
 It is Cognee `SearchType.GRAPH_COMPLETION_COT` (default `max_iter=4`). Not `FEELING_LUCKY`, not `AGENTIC_COMPLETION`. If live latency is ever unusable, the fallback is `GRAPH_COMPLETION_DECOMPOSITION` — switch only after recording that choice.
 
-It runs on the second Cognee service (`cognee-next-tier`, port `8001`) with the AvalAI chat model `glm-5.3` (confirmed on `/v1/models`). Both tiers use `glm-5.3` (PM call, 2026-09-08). They stay separate services so a multi-minute Next-tier search on `8001` never blocks the first-answer path on `8000`: Cognee's per-stage `LLM_QUERY_MODEL` override cannot draw that line — it hits every search completion, first answer included — and one service cannot serve both tiers independently. Both read the same Postgres memory.
+It runs on the second Cognee service (`cognee-next-tier`, port `8001`) with the Z.AI chat model `glm-5.3` on the GLM Coding Plan endpoint (smoke-checked via `/chat/completions`). The tiers use different models since 2026-09-09 — `glm-5.3-flash` first answers, `glm-5.3` here. They stay separate services so a multi-minute Next-tier search on `8001` never blocks the first-answer path on `8000`: Cognee's per-stage `LLM_QUERY_MODEL` override cannot draw that line — it hits every search completion, first answer included — and one service cannot serve both tiers independently. Both read the same Postgres memory.
 
 ```powershell
 curl.exe -sS -X POST http://localhost:8001/api/v1/recall -H "Content-Type: application/json" --data-raw '{"searchType":"GRAPH_COMPLETION_COT","query":"اندیشه اسلامی در قرآن چه طرحی دارد؟","datasets":["tarhe-kolli"],"includeReferences":true}'

@@ -1,14 +1,16 @@
+import re
+
 from tests.conftest import REPO_ROOT, parse_dotenv
 
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 
 
-def test_env_example_points_chat_and_embeddings_at_avalai():
+def test_env_example_points_chat_at_z_ai_and_embeddings_at_avalai():
     env = parse_dotenv(ENV_EXAMPLE)
 
     assert env["LLM_PROVIDER"] == "custom"
-    assert env["LLM_ENDPOINT"] == "https://api.avalai.ir/v1"
-    assert env["LLM_MODEL"] == "openai/glm-5.3"
+    assert env["LLM_ENDPOINT"] == "https://api.z.ai/api/coding/paas/v4"
+    assert env["LLM_MODEL"] == "openai/glm-5.3-flash"
     assert "LLM_API_KEY" in env
 
     assert env["EMBEDDING_PROVIDER"] == "openai_compatible"
@@ -29,11 +31,16 @@ def test_env_example_keeps_the_whole_memory_layer_on_postgres():
 
 def test_env_example_does_not_ship_a_real_api_key():
     env = parse_dotenv(ENV_EXAMPLE)
-    for key in ("LLM_API_KEY", "EMBEDDING_API_KEY"):
+    placeholders = {
+        "LLM_API_KEY": {"", "your_z_ai_api_key"},
+        "EMBEDDING_API_KEY": {"", "your_avalai_api_key"},
+    }
+    for key, allowed in placeholders.items():
         value = env[key]
-        assert value in {"", "your_avalai_api_key"}
+        assert value in allowed
         assert not value.startswith("aa-")
         assert not value.startswith("sk-")
+        assert not re.fullmatch(r"[0-9a-f]{32}\.[A-Za-z0-9]{16}", value)
 
 
 def test_env_example_caps_embedding_throughput_for_avalai():

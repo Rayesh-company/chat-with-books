@@ -45,12 +45,12 @@ def test_compose_pins_postgres_demo_for_the_graph():
     assert graph in {"postgres_demo", "${GRAPH_DATABASE_PROVIDER:-postgres_demo}"}
 
 
-def test_compose_pins_avalai_for_chat_and_embeddings():
+def test_compose_pins_z_ai_for_chat_and_avalai_for_embeddings():
     compose = _load_compose()
     env = compose["services"]["cognee"]["environment"]
     assert env["LLM_PROVIDER"] == "custom"
-    assert env["LLM_ENDPOINT"] == "https://api.avalai.ir/v1"
-    assert env["LLM_MODEL"] == "openai/glm-5.3"
+    assert env["LLM_ENDPOINT"] == "https://api.z.ai/api/coding/paas/v4"
+    assert env["LLM_MODEL"] == "openai/glm-5.3-flash"
     assert env["EMBEDDING_PROVIDER"] == "openai_compatible"
     assert env["EMBEDDING_ENDPOINT"] == "https://api.avalai.ir/v1"
     assert env["EMBEDDING_MODEL"] == "text-embedding-3-small"
@@ -98,7 +98,7 @@ def test_compose_runs_next_tier_cot_on_its_own_cognee_service():
     env = next_tier["environment"]
     assert env["LLM_PROVIDER"] == "custom"
     assert env["LLM_MODEL"] == "openai/glm-5.3"
-    assert env["LLM_ENDPOINT"] == "https://api.avalai.ir/v1"
+    assert env["LLM_ENDPOINT"] == "https://api.z.ai/api/coding/paas/v4"
 
     volumes = [str(item) for item in next_tier.get("volumes", [])]
     assert any("enable_farsi_evidence.py" in item for item in volumes)
@@ -118,7 +118,8 @@ def test_compose_keeps_next_tier_off_the_first_answer_path():
     first = compose["services"]["cognee"]
     next_tier = compose["services"]["cognee-next-tier"]
 
-    assert first["environment"]["LLM_MODEL"] == "openai/glm-5.3"
+    assert first["environment"]["LLM_MODEL"] == "openai/glm-5.3-flash"
+    assert next_tier["environment"]["LLM_MODEL"] == "openai/glm-5.3"
 
     first_ports = [str(item) for item in first["ports"]]
     next_tier_ports = [str(item) for item in next_tier["ports"]]
