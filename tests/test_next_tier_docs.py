@@ -30,7 +30,7 @@ def test_readme_pins_the_next_tier_model_and_its_reason():
     assert "glm-5.3" in section
     assert "/v1/models" in section
     assert "LLM_QUERY_MODEL" in section
-    assert "gpt-5.4-mini" in section
+    assert "8000" in section
 
 
 def test_readme_bounds_next_tier_to_a_second_search_on_the_same_question():

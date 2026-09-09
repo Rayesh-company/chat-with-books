@@ -50,7 +50,7 @@ def test_compose_pins_avalai_for_chat_and_embeddings():
     env = compose["services"]["cognee"]["environment"]
     assert env["LLM_PROVIDER"] == "custom"
     assert env["LLM_ENDPOINT"] == "https://api.avalai.ir/v1"
-    assert env["LLM_MODEL"] == "openai/gpt-5.4-mini"
+    assert env["LLM_MODEL"] == "openai/glm-5.3"
     assert env["EMBEDDING_PROVIDER"] == "openai_compatible"
     assert env["EMBEDDING_ENDPOINT"] == "https://api.avalai.ir/v1"
     assert env["EMBEDDING_MODEL"] == "text-embedding-3-small"
@@ -114,8 +114,7 @@ def test_compose_keeps_next_tier_off_the_first_answer_path():
     first = compose["services"]["cognee"]
     next_tier = compose["services"]["cognee-next-tier"]
 
-    assert first["environment"]["LLM_MODEL"] == "openai/gpt-5.4-mini"
-    assert next_tier["environment"]["LLM_MODEL"] != first["environment"]["LLM_MODEL"]
+    assert first["environment"]["LLM_MODEL"] == "openai/glm-5.3"
 
     first_ports = [str(item) for item in first["ports"]]
     next_tier_ports = [str(item) for item in next_tier["ports"]]

@@ -41,7 +41,7 @@ services:
       CACHE_BACKEND: postgres
       ENABLE_BACKEND_ACCESS_CONTROL: "false"
       LLM_PROVIDER: custom
-      LLM_MODEL: openai/gpt-5.4-mini
+      LLM_MODEL: openai/glm-5.3
       LLM_ENDPOINT: https://api.avalai.ir/v1
       EMBEDDING_PROVIDER: openai_compatible
       EMBEDDING_MODEL: text-embedding-3-small

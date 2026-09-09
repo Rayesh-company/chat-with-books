@@ -63,7 +63,7 @@ A Session operator asks a Farsi question against the ingested Book. First answer
 
 This path streams: pass `stream: true`. Deltas are preview only and never contain the `Evidence:` block; the `final` frame carries the same JSON array as the non-streaming reply, and citation splitting runs on `final`'s `[0].text`. Token deltas need `LLM_ANSWER_STREAMING: "true"` in compose (Cognee env). With the flag off the stream still works with zero deltas, and TTFT measures submit to first render from `final`.
 
-Trial chat model for this path is `gpt-5.4-mini` (already in `.env` / compose).
+Chat model for this path is `glm-5.3` (PM call, 2026-09-08: one model family for both tiers, replacing the `gpt-5.4-mini` trial).
 
 Pytest locks this recorded first-answer contract. A green suite does not mean recall returned an answer or Evidence.
 
@@ -83,7 +83,7 @@ In the same Session, on the same question, the Session operator can run a Next-t
 
 It is Cognee `SearchType.GRAPH_COMPLETION_COT` (default `max_iter=4`). Not `FEELING_LUCKY`, not `AGENTIC_COMPLETION`. If live latency is ever unusable, the fallback is `GRAPH_COMPLETION_DECOMPOSITION` — switch only after recording that choice.
 
-It runs on the second Cognee service (`cognee-next-tier`, port `8001`) with the stronger AvalAI chat model `glm-5.3` (confirmed on `/v1/models`). The first-answer service on port `8000` keeps `gpt-5.4-mini`. Cognee's per-stage `LLM_QUERY_MODEL` override cannot separate the two paths — every search completion, first answer included, runs in the `query` pipeline stage — so the stronger model gets its own service reading the same Postgres memory.
+It runs on the second Cognee service (`cognee-next-tier`, port `8001`) with the AvalAI chat model `glm-5.3` (confirmed on `/v1/models`). Both tiers use `glm-5.3` (PM call, 2026-09-08). They stay separate services so a multi-minute COT run on `8001` never blocks the first-answer path on `8000`: Cognee's per-stage `LLM_QUERY_MODEL` override cannot draw that line — it hits every search completion, first answer included — and one service cannot serve both tiers independently. Both read the same Postgres memory.
 
 ```powershell
 curl.exe -sS -X POST http://localhost:8001/api/v1/recall -H "Content-Type: application/json" --data-raw '{"searchType":"GRAPH_COMPLETION_COT","query":"اندیشه اسلامی در قرآن چه طرحی دارد؟","datasets":["tarhe-kolli"],"includeReferences":true}'
