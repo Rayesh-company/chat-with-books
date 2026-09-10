@@ -45,7 +45,6 @@ _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
 
 # Evidence locators end in the Book text layer's page range, e.g.
 # "chunk 101 of document tarhe-kolli (pages 740-745)" (enable_farsi_evidence.py).
-# "تا" between the numbers, not a dash: digits are LTR-weak in Farsi text.
 _PAGES_IN_REFERENCE = re.compile(r"\(pages (\d+)-(\d+)\)")
 _PAGE_IN_REFERENCE = re.compile(r"\(page (\d+)\)")
 
@@ -151,12 +150,14 @@ def guard_blocks(blocks, sources):
 def pages_label(reference: str) -> str:
     """Farsi page label for an Evidence locator; '' when it carries no pages.
 
-    A quote whose passage has no page markers cites the Book alone on the
-    sheet — never an invented page.
+    The FIRST page of the range only (PM call, 2026-09-10): the label
+    reads as a book citation — where the quote starts — not a database
+    chunk window. A passage without page markers cites the Book alone on
+    the sheet — never an invented page.
     """
     pages = _PAGES_IN_REFERENCE.search(reference)
     if pages:
-        return f"صفحات {pages.group(1)} تا {pages.group(2)}"
+        return f"صفحه {pages.group(1)}"
     page = _PAGE_IN_REFERENCE.search(reference)
     if page:
         return f"صفحه {page.group(1)}"

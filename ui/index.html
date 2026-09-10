@@ -195,7 +195,8 @@
       .cite-sent {
         position: relative;
         cursor: help;
-        border-bottom: 1px dotted var(--clay);
+        background: rgba(196, 92, 38, 0.12);
+        border-bottom: 1px solid var(--clay);
       }
 
       .cite-sent:hover,
@@ -280,7 +281,7 @@
         <div id="answer" class="answer">
           <p class="empty">هنوز پرسشی نپرسیده‌اید.</p>
         </div>
-        <h2>استناد</h2>
+        <h2 id="citations-heading">استناد</h2>
         <div id="citations">
           <p class="empty">پس از پاسخ، استناد اینجا می‌آید: هویت کتاب و عبارت نقل‌شده.</p>
         </div>
@@ -295,6 +296,7 @@
       const ttftEl = document.getElementById("ttft");
       const answerEl = document.getElementById("answer");
       const citationsEl = document.getElementById("citations");
+      const citationsHeadingEl = document.getElementById("citations-heading");
       const statusEl = document.getElementById("status");
       // Bumped on every ask so a slow composer reply for an older question
       // is dropped instead of swapping the newer answer or its citations.
@@ -426,10 +428,11 @@
             }
           }
           answerEl.replaceChildren(doc);
-          const note = document.createElement("p");
-          note.className = "empty";
-          note.textContent = "استنادها در متن پاسخ‌اند؛ روی هر جملهٔ نقل‌شده بایستید.";
-          citationsEl.replaceChildren(note);
+          // The answer itself carries the citations now, so the whole
+          // Evidence section — heading and list — goes away (PM call,
+          // 2026-09-10); a new question brings it back.
+          citationsHeadingEl.hidden = true;
+          citationsEl.hidden = true;
         } catch {
           // Composer unreachable: keep the streamed answer and Evidence citations.
         }
@@ -500,6 +503,8 @@
         }, 250);
         setText(answerEl, "در حال پرسیدن…", "empty");
         citationRun += 1;
+        citationsHeadingEl.hidden = false;
+        citationsEl.hidden = false;
         citationsEl.replaceChildren();
         const waiting = document.createElement("p");
         waiting.className = "empty";

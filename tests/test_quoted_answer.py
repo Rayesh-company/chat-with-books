@@ -96,9 +96,10 @@ def test_guard_drops_malformed_selections():
 
 
 def test_pages_label_from_the_evidence_locator():
-    # "تا" between the numbers, not a dash: digits are LTR-weak in the
-    # Farsi sheet and a dash can scramble the range in RTL.
-    assert serve.pages_label(SOURCES[0]["reference"]) == "صفحات 740 تا 745"
+    # First page only, never the full chunk range (PM call, 2026-09-10):
+    # the paragraph-end label reads as a book citation — where the quote
+    # starts — not a database chunk window.
+    assert serve.pages_label(SOURCES[0]["reference"]) == "صفحه 740"
     assert serve.pages_label("chunk 5 of document tarhe-kolli (page 401)") == "صفحه 401"
     # No text-layer page markers: the Book alone, never an invented page.
     assert serve.pages_label(SOURCES[1]["reference"]) == ""
@@ -142,7 +143,7 @@ def test_guard_blocks_keeps_embedded_quotes_and_drops_one_sentence():
             "type": "paragraph",
             "parts": [
                 {"text": "پیش از هر چیز باید معنای واژه را روشن کرد:"},
-                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745"},
+                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحه 740"},
                 {"quote": OTHER_PASSAGE, "source": 1, "pages_label": ""},
                 {"text": "بر این اساس، ادامه می‌دهیم."},
             ],
@@ -176,7 +177,7 @@ def test_guard_blocks_drops_a_paragraph_whose_only_quote_fails_the_guard():
             "type": "paragraph",
             "parts": [
                 {"text": "مقدمه‌ای کوتاه."},
-                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745"},
+                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحه 740"},
             ],
         },
         {"type": "heading", "text": "عنوان"},
@@ -305,7 +306,7 @@ def test_compose_request_disables_reasoning():
             "type": "paragraph",
             "parts": [
                 {"text": "پیش از هر چیز باید معنای واژه را روشن کرد:"},
-                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745"},
+                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحه 740"},
             ],
         },
         {
@@ -381,6 +382,26 @@ def test_session_ui_sentences_are_focusable_with_farsi_tooltip():
     assert "طرح کلی اندیشۀ اسلامی در قرآن" in html
     assert ".cite-sent:hover" in html
     assert ".cite-sent:focus-visible" in html
+
+
+def test_session_ui_quotes_carry_a_resting_highlight():
+    # PM call, 2026-09-10: an embedded quote must read as Book text at a
+    # glance — a clay tint plus solid underline at rest, deepening on
+    # hover/focus — not only the hover tooltip.
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert "background: rgba(196, 92, 38, 0.12)" in html
+    assert "border-bottom: 1px solid var(--clay)" in html
+
+
+def test_session_ui_hides_the_citations_section_after_the_swap():
+    # PM call, 2026-09-10: once the answer itself carries the citations,
+    # the whole Evidence section — heading and list — goes away; a new
+    # question brings it back for the fallback path.
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert "استنادها در متن پاسخ‌اند" not in html
+    assert "citationsHeadingEl.hidden = true" in html
+    assert "citationsEl.hidden = true" in html
+    assert "citationsHeadingEl.hidden = false" in html
 
 
 def test_session_ui_keeps_the_llm_key_off_the_sheet():

@@ -41,7 +41,7 @@ A first answer rendered as paragraphs that each interleave Filler text with embe
 _Avoid_: citation paragraph (the superseded paragraph-only design), chat
 
 **Quoted paragraph**:
-A paragraph of a Quoted answer: Filler text with verbatim Book sentences embedded inside it, each sentence hoverable for its own Citation, the paragraph ending with the pages of every passage it quoted. May weave several passages.
+A paragraph of a Quoted answer: Filler text with verbatim Book sentences embedded inside it, each sentence highlighted and hoverable for its own Citation, the paragraph ending with the first page of every passage it quoted. May weave several passages.
 _Avoid_: evidence block, snippet, quote-only paragraph
 
 **Filler text**:
