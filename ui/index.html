@@ -182,6 +182,29 @@
         font-weight: 700;
       }
 
+      .composer-status {
+        margin: 0.6rem 0 0;
+        color: var(--mute);
+        font-size: 0.85rem;
+      }
+
+      .composer-status::before {
+        content: "●";
+        margin-left: 0.45rem;
+        color: var(--clay);
+        animation: composer-pulse 1.2s ease-in-out infinite;
+      }
+
+      @keyframes composer-pulse {
+        0%,
+        100% {
+          opacity: 0.25;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+
       .doc-para {
         margin: 0 0 0.85rem;
       }
@@ -307,6 +330,47 @@
         el.textContent = text;
       }
 
+      // Phase-1 answers arrive as markdown (headings, bold, bullets);
+      // render that structure, never the literal #/** characters.
+      function markBold(el, text) {
+        const parts = String(text).split(/\*\*(.+?)\*\*/g);
+        parts.forEach((part, index) => {
+          if (index % 2) {
+            const strong = document.createElement("strong");
+            strong.textContent = part;
+            el.append(strong);
+          } else if (part) {
+            el.append(part);
+          }
+        });
+      }
+
+      function renderMarkdown(container, text) {
+        container.replaceChildren();
+        for (const block of String(text).split(/\n{2,}/)) {
+          const lines = block.split("\n").filter((line) => line.trim());
+          if (!lines.length) continue;
+          if (lines.every((line) => /^\s*[-*]\s+/.test(line))) {
+            const ul = document.createElement("ul");
+            for (const line of lines) {
+              const li = document.createElement("li");
+              markBold(li, line.replace(/^\s*[-*]\s+/, ""));
+              ul.append(li);
+            }
+            container.append(ul);
+            continue;
+          }
+          for (const line of lines) {
+            const heading = line.match(/^(#{1,4})\s+(.*)$/);
+            const el = document.createElement(
+              heading ? "h" + Math.min(heading[1].length + 2, 6) : "p"
+            );
+            markBold(el, heading ? heading[2] : line);
+            container.append(el);
+          }
+        }
+      }
+
       function splitCitation(text) {
         const marker = "Evidence:";
         const at = text.indexOf(marker);
@@ -394,12 +458,19 @@
       // failure, timeout, or an empty document the streamed answer and the
       // Evidence citations stay as rendered (AC-4). The stream path is
       // untouched — this runs after the streamed answer has rendered (AC-5).
-      async function renderQuotedAnswer(question, answer, citations) {
+      async function renderQuotedAnswer(question, answer, citations, onSettled) {
         const run = citationRun;
         const sources = evidenceSources(citations);
         if (!sources.length) {
+          onSettled();
           return;
         }
+        // Phase 2 is visible while it runs: a pulsing status under the
+        // streamed answer, gone with the swap (or with any fallback).
+        const status = document.createElement("p");
+        status.className = "composer-status";
+        status.textContent = "در حال نوشتن پاسخ استنادی…";
+        answerEl.append(status);
         try {
           const res = await fetch("/quoted-answer", {
             method: "POST",
@@ -407,14 +478,20 @@
             body: JSON.stringify({ question, answer, sources }),
           });
           if (!res.ok) {
+            status.remove();
+            onSettled();
             return;
           }
           const payload = await res.json();
           if (run !== citationRun) {
+            status.remove();
+            onSettled();
             return;
           }
           const blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
           if (!blocks.length) {
+            status.remove();
+            onSettled();
             return;
           }
           const doc = document.createDocumentFragment();
@@ -434,8 +511,11 @@
           // 2026-09-10); a new question brings it back.
           citationsHeadingEl.hidden = true;
           citationsEl.hidden = true;
+          onSettled();
         } catch {
           // Composer unreachable: keep the streamed answer and Evidence citations.
+          status.remove();
+          onSettled();
         }
       }
 
@@ -502,6 +582,14 @@
           const seconds = Math.round((Date.now() - started) / 1000);
           elapsedEl.textContent = `${seconds} ثانیه`;
         }, 250);
+        // The clock times the WHOLE pipeline — stream plus the composer
+        // phase — and stops only when the final rendering settles (PM
+        // call, 2026-09-10).
+        const stopTimer = () => {
+          clearInterval(tick);
+          const seconds = Math.round((Date.now() - started) / 1000);
+          elapsedEl.textContent = `${seconds} ثانیه`;
+        };
         setText(answerEl, "در حال پرسیدن…", "empty");
         citationRun += 1;
         citationsHeadingEl.hidden = false;
@@ -520,7 +608,8 @@
             throw new Error("پاسخ خالی برگشت.");
           }
           const { answer, citations } = splitCitation(text);
-          setText(answerEl, answer || text, "answer");
+          answerEl.className = "answer";
+          renderMarkdown(answerEl, answer || text);
           markFirstToken();
           citationsEl.replaceChildren();
           if (!citations.length) {
@@ -528,6 +617,7 @@
             missing.className = "error";
             missing.textContent = "استناد در پاسخ نبود.";
             citationsEl.append(missing);
+            stopTimer();
           } else {
             for (const item of citations) {
               const p = document.createElement("p");
@@ -535,7 +625,7 @@
               p.textContent = item;
               citationsEl.append(p);
             }
-            renderQuotedAnswer(query, answer, citations);
+            renderQuotedAnswer(query, answer, citations, stopTimer);
           }
         };
 
@@ -567,7 +657,8 @@
                 );
               } else if (name === "delta") {
                 preview += JSON.parse(data).text;
-                setText(answerEl, preview, "answer");
+                answerEl.className = "answer";
+                renderMarkdown(answerEl, preview);
                 markFirstToken();
               } else if (name === "reset") {
                 preview = "";
@@ -605,10 +696,8 @@
           missing.className = "empty";
           missing.textContent = "بدون استناد.";
           citationsEl.append(missing);
+          stopTimer();
         } finally {
-          clearInterval(tick);
-          const seconds = Math.round((Date.now() - started) / 1000);
-          elapsedEl.textContent = `${seconds} ثانیه`;
           if (firstTokenAt === null) {
             ttftEl.hidden = true;
           }

@@ -408,6 +408,30 @@ def test_session_ui_hides_the_citations_section_after_the_swap():
     assert "citationsHeadingEl.hidden = false" in html
 
 
+def test_session_ui_renders_the_streamed_answer_as_markdown():
+    # Phase 1 (the streamed answer) arrives as markdown — headings, bold,
+    # bullets — and the sheet renders that structure during the live
+    # preview and at final, never the literal #/** characters (PM call,
+    # 2026-09-10).
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert "function renderMarkdown" in html
+    assert "function markBold" in html
+
+
+def test_session_ui_shows_the_composer_phase_and_times_the_whole_pipeline():
+    # PM call, 2026-09-10: a pulsing status line marks phase 2 (the
+    # composer rewriting the answer) while it runs, and the elapsed clock
+    # keeps counting until the swap or fallback settles — not just until
+    # the stream ends.
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert "در حال نوشتن پاسخ استنادی" in html
+    assert 'className = "composer-status"' in html
+    assert "composer-pulse" in html
+    assert "const stopTimer" in html
+    assert "clearInterval(tick)" in html
+    assert "renderQuotedAnswer(query, answer, citations, stopTimer)" in html
+
+
 def test_session_ui_keeps_the_llm_key_off_the_sheet():
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
     assert "LLM_API_KEY" not in html
