@@ -19,10 +19,11 @@ PROXY_TIMEOUT = 600
 ALLOWED_PROXY = {"/health", "/api/v1/recall"}
 
 # Quoted-answer composer: asks the chat model to write the interleaved
-# document (AI fillers + verbatim Book quotes) that replaces the streamed
-# answer on the sheet (ADR-0003). glm-5.3-flash only — glm-5.3 stays
-# reserved for Next-tier search (ADR-0002). The pin changes only here,
-# after the README's /chat/completions smoke rule — never via env.
+# document (paragraphs of AI text with embedded verbatim Book quotes)
+# that replaces the streamed answer on the sheet (ADR-0003). glm-5.3-flash
+# only — glm-5.3 stays reserved for Next-tier search (ADR-0002). The pin
+# changes only here, after the README's /chat/completions smoke rule —
+# never via env.
 COMPOSER_MODEL = "glm-5.3-flash"
 COMPOSER_URL = (
     os.environ.get("LLM_ENDPOINT", "https://api.z.ai/api/coding/paas/v4").rstrip("/")
@@ -85,46 +86,66 @@ def guard_sentences(selections, sources):
 def guard_blocks(blocks, sources):
     """Turn composer blocks into renderable Quoted answer blocks.
 
-    Quote sentences drop individually under the verbatim guard and the
-    paragraph survives with its other sentences; a quote with no survivor,
-    a malformed block, or a claim on a missing passage drops whole. The
-    document itself drops to [] unless it holds at least one surviving
-    quote AND one filler or heading — the sheet swaps the streamed answer
-    only for a real Quoted answer (ADR-0003 swap threshold).
+    Every paragraph is one unit — AI text with embedded verbatim quotes,
+    several passages allowed (PM call, 2026-09-10). A quote part drops
+    alone under the verbatim guard; a paragraph left with no surviving
+    quote (it would be pure AI text) or no AI text (bare quotes) drops
+    whole, and so does any malformed block or claim on a missing passage.
+    Each kept quote part carries the pages label of exactly the passage
+    it claims. The document itself drops to [] below the swap threshold —
+    at least two quoting paragraphs, or one plus a heading — so the sheet
+    swaps the streamed answer only for a real Quoted answer (ADR-0003).
     """
     kept = []
     for block in blocks:
         if not isinstance(block, dict):
             continue
         kind = block.get("type")
-        if kind in ("heading", "filler"):
+        if kind == "heading":
             text = block.get("text")
             if isinstance(text, str) and text.strip():
-                kept.append({"type": kind, "text": text.strip()})
-        elif kind == "quote":
-            index = block.get("source")
-            sentences = block.get("sentences")
-            if not isinstance(index, int) or isinstance(index, bool):
+                kept.append({"type": "heading", "text": text.strip()})
+        elif kind == "paragraph":
+            parts = block.get("parts")
+            if not isinstance(parts, list):
                 continue
-            if not 0 <= index < len(sources):
-                continue
-            if not isinstance(sentences, list):
-                continue
-            kept_sentences = guard_sentences(
-                [{"text": sentence, "source": index} for sentence in sentences],
-                sources,
-            )
-            if kept_sentences:
-                kept.append(
+            kept_parts = []
+            has_text = False
+            has_quote = False
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    kept_parts.append({"text": text.strip()})
+                    has_text = True
+                    continue
+                quote = part.get("quote")
+                index = part.get("source")
+                if not isinstance(quote, str) or not quote.strip():
+                    continue
+                if not isinstance(index, int) or isinstance(index, bool):
+                    continue
+                if not 0 <= index < len(sources):
+                    continue
+                kept_sentence = guard_sentences(
+                    [{"text": quote, "source": index}], sources
+                )
+                if not kept_sentence:
+                    continue
+                kept_parts.append(
                     {
-                        "type": "quote",
-                        "sentences": [item["text"] for item in kept_sentences],
+                        "quote": quote.strip(),
+                        "source": index,
                         "pages_label": pages_label(sources[index]["reference"]),
                     }
                 )
-    has_quote = any(block["type"] == "quote" for block in kept)
-    has_voice = any(block["type"] in ("heading", "filler") for block in kept)
-    return kept if has_quote and has_voice else []
+                has_quote = True
+            if has_quote and has_text:
+                kept.append({"type": "paragraph", "parts": kept_parts})
+    paragraphs = sum(1 for block in kept if block["type"] == "paragraph")
+    headings = sum(1 for block in kept if block["type"] == "heading")
+    return kept if paragraphs and (paragraphs >= 2 or headings) else []
 
 
 def pages_label(reference: str) -> str:
@@ -176,23 +197,28 @@ def build_quoted_prompt(question: str, answer: str, sources) -> str:
         "Passages (numbered, from the Book's retrieved Evidence; text-layer "
         "noise like \\b backspaces may appear between words):\n"
         f"{passages}\n\n"
-        "Task: write a document that answers the question by interleaving "
-        "two kinds of paragraphs:\n"
-        "- Filler paragraphs in your own Farsi: introduce the topic, connect "
-        "the quotes, and summarize what the quoted passages establish. Never "
-        "state a Book claim the passages do not support.\n"
-        "- Quote paragraphs: complete Farsi sentences copied VERBATIM from "
-        "exactly ONE passage each (ignore the \\b noise; write proper Farsi). "
-        "Do not paraphrase, do not merge, do not shorten.\n"
+        "Task: write a document that answers the question in interleaved "
+        "paragraphs.\n"
+        "Every paragraph is one unit: your own Farsi text with quoted "
+        "sentences embedded inside it — your text, then a quoted sentence, "
+        "then more of your text, as the argument needs. Introduce the topic, "
+        "connect the quotes, and summarize what they establish; never state "
+        "a Book claim the passages do not support. A paragraph may quote "
+        "from more than one passage. Each quoted sentence is a complete "
+        "Farsi sentence copied VERBATIM from exactly ONE passage (ignore "
+        "the \\b noise; write proper Farsi). Do not paraphrase, do not "
+        "merge, do not shorten. Never write a paragraph without at least "
+        "one quoted sentence, and never a paragraph of bare quotes without "
+        "your connective text.\n"
         "Aim for at least five quote paragraphs across the document when "
         "the passages support them; never invent or paraphrase a quote to "
         "reach the count.\n"
         "You may write short section headings.\n\n"
         "Reply with ONLY a JSON object, no prose, no code fence:\n"
         '{"blocks": [{"type": "heading", "text": "..."}, '
-        '{"type": "filler", "text": "..."}, '
-        '{"type": "quote", "source": <passage index>, '
-        '"sentences": ["<verbatim sentence>"]}]}'
+        '{"type": "paragraph", "parts": [{"text": "..."}, '
+        '{"quote": "<verbatim sentence>", "source": <passage index>}, '
+        '{"text": "..."}]}]}'
     )
 
 
@@ -207,7 +233,7 @@ def compose_quoted_answer(question: str, answer: str, sources):
                 {
                     "model": COMPOSER_MODEL,
                     "temperature": 0,
-                    # Interleaving fillers with verbatim quotes is light
+                    # Interleaving AI text with verbatim quotes is light
                     # writing plus copy-matching, not reasoning;
                     # glm-5.3-flash's default thinking adds ~70s for
                     # identical output (measured 2026-09-10).

@@ -105,7 +105,7 @@ def test_pages_label_from_the_evidence_locator():
 
 
 def test_parse_quoted_reply_accepts_plain_and_fenced_json():
-    payload = {"blocks": [{"type": "filler", "text": "مقدمه"}]}
+    payload = {"blocks": [{"type": "paragraph", "parts": [{"text": "مقدمه"}]}]}
     assert serve.parse_quoted_reply(json.dumps(payload)) == payload["blocks"]
     fenced = f"```json\n{json.dumps(payload)}\n```"
     assert serve.parse_quoted_reply(fenced) == payload["blocks"]
@@ -117,77 +117,117 @@ def test_parse_quoted_reply_rejects_malformed_content():
     assert serve.parse_quoted_reply("") == []
 
 
-def test_guard_blocks_drops_one_sentence_and_keeps_the_paragraph():
+def test_guard_blocks_keeps_embedded_quotes_and_drops_one_sentence():
+    # PM call 2026-09-10 (format): a paragraph is one unit — AI text with
+    # verbatim quotes embedded inside it, several passages allowed. A quote
+    # sentence that fails the verbatim guard drops alone; the paragraph
+    # survives on its other quotes, and every kept quote carries the pages
+    # of exactly the passage it claims.
     blocks = [
         {"type": "heading", "text": "۱. مفهوم‌شناسی"},
-        {"type": "filler", "text": "پیش از هر چیز باید معنای واژه را روشن کرد."},
         {
-            "type": "quote",
-            "source": 0,
-            "sentences": [
-                "سخن در این است؛",
-                "قرآن برنامه‌ای برای زندگی شخصی انسان‌ها ارائه می‌دهد",
+            "type": "paragraph",
+            "parts": [
+                {"text": "پیش از هر چیز باید معنای واژه را روشن کرد: "},
+                {"quote": "سخن در این است؛", "source": 0},
+                {"quote": "قرآن برنامه‌ای برای زندگی شخصی انسان‌ها ارائه می‌دهد", "source": 0},
+                {"quote": OTHER_PASSAGE, "source": 1},
+                {"text": " بر این اساس، ادامه می‌دهیم."},
             ],
         },
     ]
     assert serve.guard_blocks(blocks, SOURCES) == [
         {"type": "heading", "text": "۱. مفهوم‌شناسی"},
-        {"type": "filler", "text": "پیش از هر چیز باید معنای واژه را روشن کرد."},
         {
-            "type": "quote",
-            "sentences": ["سخن در این است؛"],
-            "pages_label": "صفحات 740 تا 745",
+            "type": "paragraph",
+            "parts": [
+                {"text": "پیش از هر چیز باید معنای واژه را روشن کرد:"},
+                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745"},
+                {"quote": OTHER_PASSAGE, "source": 1, "pages_label": ""},
+                {"text": "بر این اساس، ادامه می‌دهیم."},
+            ],
         },
     ]
 
 
-def test_guard_blocks_drops_a_quote_with_no_survivors():
+def test_guard_blocks_drops_a_paragraph_whose_only_quote_fails_the_guard():
+    # With no surviving quote the paragraph would be pure AI text, which
+    # the sheet never swaps in (PM call, 2026-09-10) — it drops whole.
+    good = {
+        "type": "paragraph",
+        "parts": [
+            {"text": "مقدمه‌ای کوتاه."},
+            {"quote": "سخن در این است؛", "source": 0},
+        ],
+    }
     blocks = [
-        {"type": "filler", "text": "مقدمه"},
         {
-            "type": "quote",
-            "source": 0,
-            "sentences": ["قرآن برنامه‌ای برای زندگی شخصی انسان‌ها ارائه می‌دهد"],
+            "type": "paragraph",
+            "parts": [
+                {"text": "بر پایهٔ این نگاه،"},
+                {"quote": "قرآن برنامه‌ای برای زندگی شخصی انسان‌ها ارائه می‌دهد", "source": 0},
+            ],
         },
-        {"type": "quote", "source": 0, "sentences": ["سخن در این است؛"]},
+        good,
+        {"type": "heading", "text": "عنوان"},
     ]
-    # The paraphrased quote drops whole; the document survives on its
-    # verbatim quote and its filler (the swap threshold still met).
     assert serve.guard_blocks(blocks, SOURCES) == [
-        {"type": "filler", "text": "مقدمه"},
         {
-            "type": "quote",
-            "sentences": ["سخن در این است؛"],
-            "pages_label": "صفحات 740 تا 745",
+            "type": "paragraph",
+            "parts": [
+                {"text": "مقدمه‌ای کوتاه."},
+                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745"},
+            ],
         },
+        {"type": "heading", "text": "عنوان"},
     ]
+
+
+def test_guard_blocks_drops_pure_ai_and_bare_quote_paragraphs():
+    heading = {"type": "heading", "text": "عنوان"}
+    voice_only = {"type": "paragraph", "parts": [{"text": "فقط متن هوش مصنوعی، بدون نقل."}]}
+    quotes_only = {"type": "paragraph", "parts": [{"quote": "سخن در این است؛", "source": 0}]}
+    assert serve.guard_blocks([heading, voice_only], SOURCES) == []
+    assert serve.guard_blocks([heading, quotes_only], SOURCES) == []
 
 
 def test_guard_blocks_enforces_the_swap_threshold():
-    quote = {"type": "quote", "source": 0, "sentences": ["سخن در این است؛"]}
-    # Quotes without any AI voice: a quote list, not a Quoted answer.
-    assert serve.guard_blocks([quote], SOURCES) == []
-    assert serve.guard_blocks([quote, dict(quote)], SOURCES) == []
-    # Fillers without a verbatim quote: nothing earned the swap.
-    filler = {"type": "filler", "text": "مقدمه"}
-    assert serve.guard_blocks([filler], SOURCES) == []
-    assert serve.guard_blocks([filler, {"type": "heading", "text": "عنوان"}], SOURCES) == []
-    # A heading counts as the voice half of the threshold.
-    assert serve.guard_blocks([{"type": "heading", "text": "عنوان"}, quote], SOURCES)
+    def paragraph():
+        return {
+            "type": "paragraph",
+            "parts": [
+                {"text": "مقدمه‌ای کوتاه."},
+                {"quote": "سخن در این است؛", "source": 0},
+            ],
+        }
+
+    # One quoting paragraph is not a document — two quoting paragraphs,
+    # or one plus a heading, earn the swap (ADR-0003 threshold, restated
+    # for the paragraph-unit format 2026-09-10).
+    assert serve.guard_blocks([paragraph()], SOURCES) == []
+    assert serve.guard_blocks([paragraph(), paragraph()], SOURCES)
+    assert serve.guard_blocks([{"type": "heading", "text": "عنوان"}, paragraph()], SOURCES)
+    # Headings alone never earn the swap.
+    assert serve.guard_blocks([{"type": "heading", "text": "عنوان"}], SOURCES) == []
 
 
 def test_guard_blocks_drops_malformed_blocks():
+    sentence = "سخن در این است؛"
     blocks = [
         "not a dict",
         {"type": "mystery", "text": "؟"},
-        {"type": "filler"},
-        {"type": "filler", "text": "   "},
-        {"type": "quote", "source": True, "sentences": ["سخن در این است؛"]},
-        {"type": "quote", "source": 0.0, "sentences": ["سخن در این است؛"]},
-        {"type": "quote", "source": "0", "sentences": ["سخن در این است؛"]},
-        {"type": "quote", "source": 7, "sentences": ["سخن در این است؛"]},
-        {"type": "quote", "source": 0},
-        {"type": "quote", "source": 0, "sentences": "سخن در این است؛"},
+        {"type": "paragraph"},
+        {"type": "paragraph", "parts": "not a list"},
+        {"type": "paragraph", "parts": ["not a dict"]},
+        {"type": "paragraph", "parts": [{"text": "   "}, {"quote": sentence, "source": 0}]},
+        {"type": "paragraph", "parts": [{"text": "متن"}, {"quote": sentence, "source": True}]},
+        {"type": "paragraph", "parts": [{"text": "متن"}, {"quote": sentence, "source": 0.0}]},
+        {"type": "paragraph", "parts": [{"text": "متن"}, {"quote": sentence, "source": "0"}]},
+        {"type": "paragraph", "parts": [{"text": "متن"}, {"quote": sentence, "source": 7}]},
+        {"type": "paragraph", "parts": [{"text": "متن"}, {"quote": 123, "source": 0}]},
+        {"type": "paragraph", "parts": [{"text": "متن"}, {"quote": "   ", "source": 0}]},
+        {"type": "heading"},
+        {"type": "heading", "text": "   "},
     ]
     assert serve.guard_blocks(blocks, SOURCES) == []
 
@@ -227,8 +267,21 @@ def test_compose_request_disables_reasoning():
     reply = json.dumps(
         {"choices": [{"message": {"content": json.dumps(
             {"blocks": [
-                {"type": "filler", "text": "مقدمه"},
-                {"type": "quote", "source": 0, "sentences": ["سخن در این است؛"]},
+                {"type": "heading", "text": "۱. طرح کلی"},
+                {
+                    "type": "paragraph",
+                    "parts": [
+                        {"text": "پیش از هر چیز باید معنای واژه را روشن کرد: "},
+                        {"quote": "سخن در این است؛", "source": 0},
+                    ],
+                },
+                {
+                    "type": "paragraph",
+                    "parts": [
+                        {"text": "و در قطعه‌ای دیگر می‌خوانیم: "},
+                        {"quote": OTHER_PASSAGE, "source": 1},
+                    ],
+                },
             ]}
         )}}]}
     )
@@ -247,11 +300,20 @@ def test_compose_request_disables_reasoning():
         del os.environ["LLM_API_KEY"]
     assert captured["payload"]["thinking"] == {"type": "disabled"}
     assert kept == [
-        {"type": "filler", "text": "مقدمه"},
+        {"type": "heading", "text": "۱. طرح کلی"},
         {
-            "type": "quote",
-            "sentences": ["سخن در این است؛"],
-            "pages_label": "صفحات 740 تا 745",
+            "type": "paragraph",
+            "parts": [
+                {"text": "پیش از هر چیز باید معنای واژه را روشن کرد:"},
+                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745"},
+            ],
+        },
+        {
+            "type": "paragraph",
+            "parts": [
+                {"text": "و در قطعه‌ای دیگر می‌خوانیم:"},
+                {"quote": OTHER_PASSAGE, "source": 1, "pages_label": ""},
+            ],
         },
     ]
 
@@ -262,8 +324,12 @@ def test_quoted_prompt_carries_question_answer_and_locators():
     assert "پیش‌نویس پاسخ" in prompt
     assert "chunk 101 of document tarhe-kolli (pages 740-745)" in prompt
     assert NOISY_PASSAGE in prompt
+    # PM call 2026-09-10 (format): every paragraph is one unit — AI text
+    # with embedded verbatim quotes; several passages per paragraph.
+    assert "Every paragraph is one unit" in prompt
+    assert "parts" in prompt
     # PM call 2026-09-10: the composer aims for at least five quote
-    # paragraphs; the swap threshold below still needs only one.
+    # paragraphs; the swap threshold below still needs only two.
     assert "at least five quote paragraphs" in prompt
 
 
@@ -284,9 +350,9 @@ def test_session_ui_renders_the_quoted_answer():
     assert "/quoted-answer" in html
     assert "renderQuotedAnswer" in html
     assert "evidenceSources" in html
+    assert "paragraphNode" in html
     assert 'className = "doc-heading"' in html
-    assert 'className = "doc-filler"' in html
-    assert 'className = "doc-quote"' in html
+    assert 'className = "doc-para"' in html
     assert 'className = "cite-sent"' in html
     assert 'className = "cite-pages"' in html
 

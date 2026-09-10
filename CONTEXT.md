@@ -37,13 +37,13 @@ The Book identity plus the exact pages of a quoted passage, shown with an answer
 _Avoid_: footnote, Evidence (Cognee's block name is not the domain name)
 
 **Quoted answer**:
-A first answer rendered as Filler paragraphs interleaved with Quote paragraphs.
+A first answer rendered as paragraphs that each interleave Filler text with embedded verbatim Book sentences and end with the pages they cite.
 _Avoid_: citation paragraph (the superseded paragraph-only design), chat
 
-**Quote paragraph**:
-A paragraph of sentences copied verbatim from one Book passage, highlighted and hoverable, carrying its Citation pages.
-_Avoid_: evidence block, snippet
+**Quoted paragraph**:
+A paragraph of a Quoted answer: Filler text with verbatim Book sentences embedded inside it, each sentence hoverable for its own Citation, the paragraph ending with the pages of every passage it quoted. May weave several passages.
+_Avoid_: evidence block, snippet, quote-only paragraph
 
-**Filler paragraph**:
-An AI-written connective paragraph of a Quoted answer; it claims no pages and is never shown as quoted.
-_Avoid_: glue text, preamble
+**Filler text**:
+The AI-written connective text inside a Quoted paragraph; it claims no pages and is never shown as quoted.
+_Avoid_: glue text, preamble, filler paragraph (the superseded standalone-paragraph design)

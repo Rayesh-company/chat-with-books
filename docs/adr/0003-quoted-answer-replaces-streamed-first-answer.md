@@ -14,3 +14,7 @@ The first answer streams today as plain prose with a separate citation paragraph
 - The streamed answer is unreachable after the swap — no raw-answer toggle, deliberately.
 - Filler paragraphs cannot be machine-guarded; "summarize what the quotes establish, introduce no new Book claims" is a prompt-level constraint only. Quote paragraphs stay under the verbatim guard, sentence-level drops.
 - One passage per Quote paragraph, so the paragraph-end page label and every sentence tooltip cite exactly one locator; passages without text-layer page markers cite the Book title alone, never an invented page.
+
+## Amendments
+
+- 2026-09-10, later the same day (PM format call): the interleaving moved inside the paragraph. Every paragraph is one unit — AI text with embedded verbatim quotes, several passages allowed — matching `docs/example.txt` ("AI synthesized, quote, the whole paragraph's reference pages"); standalone Filler paragraphs and quote-only paragraphs are gone, and a paragraph with no surviving quote or no AI text drops whole. Swap threshold restated for the unit format: at least two quoting paragraphs, or one plus a heading. The one-passage-per-paragraph consequence above no longer holds: the paragraph end lists each quoted passage's pages in order, while each sentence tooltip still cites exactly the passage that sentence came from.

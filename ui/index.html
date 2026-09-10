@@ -182,15 +182,8 @@
         font-weight: 700;
       }
 
-      .doc-filler {
+      .doc-para {
         margin: 0 0 0.85rem;
-      }
-
-      .doc-quote {
-        margin: 0 0 0.85rem;
-        padding: 0.35rem 0.75rem 0.35rem 0;
-        border-right: 3px solid var(--clay);
-        background: rgba(196, 92, 38, 0.1);
       }
 
       .cite-pages {
@@ -345,37 +338,56 @@
         return sources;
       }
 
-      // One passage per quote paragraph, so every sentence in it hovers to
-      // the same Citation and the paragraph ends with its exact pages.
-      function quoteParagraph(block) {
+      // One paragraph = AI text with embedded verbatim quotes (PM format,
+      // 2026-09-10). Each quote sentence hovers to the Citation of exactly
+      // the passage it claims, and the paragraph ends with the pages of
+      // every passage it quoted, in order of first appearance.
+      function paragraphNode(block) {
         const para = document.createElement("p");
-        para.className = "doc-quote";
-        const sentences = Array.isArray(block.sentences) ? block.sentences : [];
-        sentences.forEach((text, index) => {
-          if (index) {
+        para.className = "doc-para";
+        // The composer's text parts carry no reliable boundary spaces, so
+        // each appended node is preceded by one when the run needs it.
+        const appendPart = (node) => {
+          const last = para.lastChild;
+          if (
+            last &&
+            (last.nodeType !== Node.TEXT_NODE || !/\s$/.test(last.textContent))
+          ) {
             para.append(" ");
           }
-          const span = document.createElement("span");
-          span.className = "cite-sent";
-          span.tabIndex = 0;
-          span.textContent = text;
-          span.dataset.ref = block.pages_label
-            ? `طرح کلی اندیشۀ اسلامی در قرآن — ${block.pages_label}`
-            : "طرح کلی اندیشۀ اسلامی در قرآن";
-          para.append(span);
+          para.append(node);
+        };
+        const parts = Array.isArray(block.parts) ? block.parts : [];
+        const labels = [];
+        parts.forEach((part) => {
+          if (part.text) {
+            appendPart(part.text);
+          } else if (part.quote !== undefined) {
+            const span = document.createElement("span");
+            span.className = "cite-sent";
+            span.tabIndex = 0;
+            span.textContent = part.quote;
+            span.dataset.ref = part.pages_label
+              ? `طرح کلی اندیشۀ اسلامی در قرآن — ${part.pages_label}`
+              : "طرح کلی اندیشۀ اسلامی در قرآن";
+            appendPart(span);
+            if (part.pages_label && !labels.includes(part.pages_label)) {
+              labels.push(part.pages_label);
+            }
+          }
         });
-        if (block.pages_label) {
+        labels.forEach((label) => {
           const pages = document.createElement("span");
           pages.className = "cite-pages";
-          pages.textContent = ` [${block.pages_label}]`;
-          para.append(pages);
-        }
+          pages.textContent = `[${label}]`;
+          appendPart(pages);
+        });
         return para;
       }
 
       // The composer's Quoted answer replaces the streamed answer only on
       // success: non-empty blocks mean the server's swap threshold passed
-      // (at least one verbatim-guarded quote and one filler or heading). On
+      // (at least two quoting paragraphs, or one plus a heading). On
       // failure, timeout, or an empty document the streamed answer and the
       // Evidence citations stay as rendered (AC-4). The stream path is
       // untouched — this runs after the streamed answer has rendered (AC-5).
@@ -409,13 +421,8 @@
               heading.className = "doc-heading";
               heading.textContent = block.text;
               doc.append(heading);
-            } else if (block.type === "filler") {
-              const para = document.createElement("p");
-              para.className = "doc-filler";
-              para.textContent = block.text;
-              doc.append(para);
-            } else if (block.type === "quote") {
-              doc.append(quoteParagraph(block));
+            } else if (block.type === "paragraph") {
+              doc.append(paragraphNode(block));
             }
           }
           answerEl.replaceChildren(doc);
