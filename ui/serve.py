@@ -259,9 +259,15 @@ def build_quoted_prompt(question: str, answer: str, sources, plan: str = "") -> 
     )
 
 
-def build_planner_prompt(question: str, answer: str, sources) -> str:
+def build_planner_prompt(question: str, sources) -> str:
     """The reasoning pass's brief: plan the document's structure and the
-    cross-passage weaving — not write it (PM call, 2026-09-10)."""
+    cross-passage weaving — not write it (PM call, 2026-09-10). Kept
+    short the same night after live phase 2 measured ~295s: reasoning
+    time scales with what the planner reads and writes, so it plans
+    from the question and passages alone — the draft answer is held
+    back (the writer still gets it when the planner fails) — and the
+    plan itself is capped.
+    """
     passages = "\n".join(
         f"[{i}] ({source['reference']}) {source['passage']}"
         for i, source in enumerate(sources)
@@ -270,23 +276,19 @@ def build_planner_prompt(question: str, answer: str, sources) -> str:
         "You are planning a Farsi Quoted answer for a Q&A sheet over one "
         "Book.\n\n"
         f"Question: {question}\n\n"
-        "A faster model's draft answer (context for framing and coverage "
-        "only — its claims about the Book are unverified; ground every Book "
-        f"claim in the passages below):\n{answer}\n\n"
         "Passages (numbered, from the Book's retrieved Evidence; text-layer "
         "noise like \\b backspaces may appear between words):\n"
         f"{passages}\n\n"
-        "Task: plan the document that answers the question in interleaved "
-        "paragraphs — each paragraph one unit of the writer's own Farsi "
-        "text with verbatim quoted sentences embedded inside it.\n"
-        "Write a plain-text plan, not the document itself and not JSON:\n"
+        "Task: outline the document in a plain-text plan — not the "
+        "document itself, not JSON:\n"
         "- the section headings, in order;\n"
-        "- for each paragraph: the point it makes, which passages and "
-        "which of their sentences to weave into it, and where one "
-        "paragraph should weave sentences from more than one passage;\n"
-        "- aim for at least eight quote paragraphs when the passages "
-        "support them; never plan a quote the passages do not contain.\n"
-        "Reply with ONLY the plan as plain text."
+        "- for each paragraph: the point it makes and which passages to "
+        "weave into it, noting where one paragraph should weave "
+        "sentences from more than one passage;\n"
+        "- at least eight quote paragraphs when the passages support "
+        "them; never plan a quote the passages do not contain.\n"
+        "Keep the plan under 150 words. Reply with ONLY the plan as "
+        "plain text."
     )
 
 
@@ -323,7 +325,7 @@ def _composer_reply(message: str, thinking_type: str):
         return json.load(response)
 
 
-def plan_quoted_document(question: str, answer: str, sources) -> str:
+def plan_quoted_document(question: str, sources) -> str:
     """Reason out the document plan; "" on any planner failure.
 
     The plan is loose plain text — it is never machine-guarded, only
@@ -332,9 +334,7 @@ def plan_quoted_document(question: str, answer: str, sources) -> str:
     (AC-4, issue #23).
     """
     try:
-        reply = _composer_reply(
-            build_planner_prompt(question, answer, sources), "enabled"
-        )
+        reply = _composer_reply(build_planner_prompt(question, sources), "enabled")
         content = reply["choices"][0]["message"]["content"]
     except (KeyError, ValueError, OSError):
         return ""
@@ -354,7 +354,7 @@ def compose_quoted_answer(question: str, answer: str, sources):
     plan (the single-call shape), so the sheet is never left empty.
     Each call gets its own COMPOSER_TIMEOUT.
     """
-    plan = plan_quoted_document(question, answer, sources)
+    plan = plan_quoted_document(question, sources)
     try:
         reply = _composer_reply(
             build_quoted_prompt(question, answer, sources, plan), "disabled"

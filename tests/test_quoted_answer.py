@@ -398,12 +398,14 @@ def test_quoted_prompt_carries_question_answer_and_locators():
     assert "at least eight quote paragraphs" in prompt
 
 
-def test_planner_prompt_carries_question_answer_and_weaving_brief():
-    # The planning brief is where reasoning pays (PM call, 2026-09-10):
-    # document structure and cross-passage weaving, as plain text.
-    prompt = serve.build_planner_prompt("پرسش؟", "پیش‌نویس پاسخ", SOURCES)
+def test_planner_prompt_keeps_a_short_question_passages_brief():
+    # Live phase 2 measured ~295s against the ~100s estimate (PM call,
+    # 2026-09-10): reasoning time scales with what the planner reads,
+    # so the draft answer is held back — the planner plans from the
+    # question and passages alone — and the plan itself is capped short.
+    prompt = serve.build_planner_prompt("پرسش؟", SOURCES)
     assert "پرسش؟" in prompt
-    assert "پیش‌نویس پاسخ" in prompt
+    assert "پیش‌نویس پاسخ" not in prompt
     assert "chunk 101 of document tarhe-kolli (pages 740-745)" in prompt
     assert NOISY_PASSAGE in prompt
     assert "plain-text plan" in prompt
@@ -411,6 +413,7 @@ def test_planner_prompt_carries_question_answer_and_weaving_brief():
     assert "more than one passage" in prompt
     assert "not JSON" in prompt
     assert "at least eight quote paragraphs" in prompt
+    assert "under 150 words" in prompt
 
 
 def test_quoted_prompt_slots_the_plan_in_place_of_the_draft_answer():
