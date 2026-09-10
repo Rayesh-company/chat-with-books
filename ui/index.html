@@ -342,8 +342,9 @@
 
       // One paragraph = AI text with embedded verbatim quotes (PM format,
       // 2026-09-10). Each quote sentence hovers to the Citation of exactly
-      // the passage it claims, and the paragraph ends with the pages of
-      // every passage it quoted, in order of first appearance.
+      // the passage it claims — on that passage's first page — and the
+      // paragraph ends with the full chunk-page range of every passage it
+      // quoted, in order of first appearance.
       function paragraphNode(block) {
         const para = document.createElement("p");
         para.className = "doc-para";
@@ -369,8 +370,8 @@
             span.className = "cite-sent";
             span.tabIndex = 0;
             span.textContent = part.quote;
-            span.dataset.ref = part.pages_label
-              ? `طرح کلی اندیشۀ اسلامی در قرآن — ${part.pages_label}`
+            span.dataset.ref = part.first_page_label
+              ? `طرح کلی اندیشۀ اسلامی در قرآن — ${part.first_page_label}`
               : "طرح کلی اندیشۀ اسلامی در قرآن";
             appendPart(span);
             if (part.pages_label && !labels.includes(part.pages_label)) {

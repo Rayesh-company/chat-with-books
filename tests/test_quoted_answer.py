@@ -96,13 +96,17 @@ def test_guard_drops_malformed_selections():
 
 
 def test_pages_label_from_the_evidence_locator():
-    # First page only, never the full chunk range (PM call, 2026-09-10):
-    # the paragraph-end label reads as a book citation — where the quote
-    # starts — not a database chunk window.
-    assert serve.pages_label(SOURCES[0]["reference"]) == "صفحه 740"
+    # The paragraph-end Citation carries the full chunk range — «تا»
+    # between the numbers, never a dash (digits are LTR-weak in Farsi
+    # text) — while the per-sentence tooltip stays on the first page
+    # (PM call + same-evening reversal, 2026-09-10).
+    assert serve.pages_label(SOURCES[0]["reference"]) == "صفحات 740 تا 745"
+    assert serve.first_page_label(SOURCES[0]["reference"]) == "صفحه 740"
     assert serve.pages_label("chunk 5 of document tarhe-kolli (page 401)") == "صفحه 401"
+    assert serve.first_page_label("chunk 5 of document tarhe-kolli (page 401)") == "صفحه 401"
     # No text-layer page markers: the Book alone, never an invented page.
     assert serve.pages_label(SOURCES[1]["reference"]) == ""
+    assert serve.first_page_label(SOURCES[1]["reference"]) == ""
 
 
 def test_parse_quoted_reply_accepts_plain_and_fenced_json():
@@ -143,8 +147,8 @@ def test_guard_blocks_keeps_embedded_quotes_and_drops_one_sentence():
             "type": "paragraph",
             "parts": [
                 {"text": "پیش از هر چیز باید معنای واژه را روشن کرد:"},
-                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحه 740"},
-                {"quote": OTHER_PASSAGE, "source": 1, "pages_label": ""},
+                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740"},
+                {"quote": OTHER_PASSAGE, "source": 1, "pages_label": "", "first_page_label": ""},
                 {"text": "بر این اساس، ادامه می‌دهیم."},
             ],
         },
@@ -177,7 +181,7 @@ def test_guard_blocks_drops_a_paragraph_whose_only_quote_fails_the_guard():
             "type": "paragraph",
             "parts": [
                 {"text": "مقدمه‌ای کوتاه."},
-                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحه 740"},
+                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740"},
             ],
         },
         {"type": "heading", "text": "عنوان"},
@@ -306,14 +310,14 @@ def test_compose_request_disables_reasoning():
             "type": "paragraph",
             "parts": [
                 {"text": "پیش از هر چیز باید معنای واژه را روشن کرد:"},
-                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحه 740"},
+                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740"},
             ],
         },
         {
             "type": "paragraph",
             "parts": [
                 {"text": "و در قطعه‌ای دیگر می‌خوانیم:"},
-                {"quote": OTHER_PASSAGE, "source": 1, "pages_label": ""},
+                {"quote": OTHER_PASSAGE, "source": 1, "pages_label": "", "first_page_label": ""},
             ],
         },
     ]

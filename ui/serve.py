@@ -90,8 +90,9 @@ def guard_blocks(blocks, sources):
     alone under the verbatim guard; a paragraph left with no surviving
     quote (it would be pure AI text) or no AI text (bare quotes) drops
     whole, and so does any malformed block or claim on a missing passage.
-    Each kept quote part carries the pages label of exactly the passage
-    it claims. The document itself drops to [] below the swap threshold —
+    Each kept quote part carries the range and first-page labels of
+    exactly the passage it claims. The document itself drops to [] below
+    the swap threshold —
     at least two quoting paragraphs, or one plus a heading — so the sheet
     swaps the streamed answer only for a real Quoted answer (ADR-0003).
     """
@@ -137,6 +138,9 @@ def guard_blocks(blocks, sources):
                         "quote": quote.strip(),
                         "source": index,
                         "pages_label": pages_label(sources[index]["reference"]),
+                        "first_page_label": first_page_label(
+                            sources[index]["reference"]
+                        ),
                     }
                 )
                 has_quote = True
@@ -148,12 +152,27 @@ def guard_blocks(blocks, sources):
 
 
 def pages_label(reference: str) -> str:
-    """Farsi page label for an Evidence locator; '' when it carries no pages.
+    """Farsi chunk-range label for an Evidence locator; '' with no pages.
 
-    The FIRST page of the range only (PM call, 2026-09-10): the label
-    reads as a book citation — where the quote starts — not a database
-    chunk window. A passage without page markers cites the Book alone on
-    the sheet — never an invented page.
+    The paragraph-end Citation carries the whole range — "تا" between the
+    numbers, not a dash: digits are LTR-weak in Farsi text. A passage
+    without page markers cites the Book alone on the sheet — never an
+    invented page.
+    """
+    pages = _PAGES_IN_REFERENCE.search(reference)
+    if pages:
+        return f"صفحات {pages.group(1)} تا {pages.group(2)}"
+    page = _PAGE_IN_REFERENCE.search(reference)
+    if page:
+        return f"صفحه {page.group(1)}"
+    return ""
+
+
+def first_page_label(reference: str) -> str:
+    """Farsi label for the page a passage STARTS on; '' with no pages.
+
+    The per-sentence tooltip stays on this first page (PM call,
+    2026-09-10) while the paragraph end carries the full range.
     """
     pages = _PAGES_IN_REFERENCE.search(reference)
     if pages:
