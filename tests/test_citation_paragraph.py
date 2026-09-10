@@ -32,24 +32,13 @@ SOURCES = [
 ]
 
 
-def test_normalize_collapses_pdf_text_noise_to_a_word_stream():
-    # Backspaces, kashida, ZWNJ, punctuation, and ellipsis disappear.
-    assert serve.normalize_for_match(NOISY_PASSAGE).split() == [
-        "سخن",
-        "در",
-        "این",
-        "است",
-        "اگرچه",
-        "میگویند",
-        "قرآن",
-        "کتابی",
-        "است",
-        "برای",
-        "زندگی",
-        "جمعی",
-        "انسانها",
-        "و",
-    ]
+def test_normalize_collapses_pdf_text_noise_to_a_letter_stream():
+    # Backspaces, kashida, ZWNJ, punctuation, ellipsis, and spaces all
+    # vanish: only the letter sequence survives, so word-separator
+    # disagreements between the PDF and the composer cannot mismatch.
+    assert serve.normalize_for_match(NOISY_PASSAGE) == (
+        "سخندرایناستاگرچهمیگویندقرآنکتابیاستبرایزندگیجمعیانسانهاو"
+    )
     # Arabic variants map to Farsi so ي/ك quotes still match.
     assert serve.normalize_for_match("كتابي") == serve.normalize_for_match("کتابی")
 
@@ -65,6 +54,17 @@ def test_guard_keeps_verbatim_sentence_from_noisy_passage():
             "reference": "chunk 101 of document tarhe-kolli (pages 740-745)",
         }
     ]
+
+
+def test_guard_matches_when_the_composer_rejoins_backspace_split_words():
+    # The PDF text layer separates words with backspaces (می). The
+    # composer writes proper Farsi with ZWNJ (می‌تواند) or spaces; the
+    # word sequence is identical, so the guard must match it.
+    passage = "چنین\bمی\bگویند:\b انسان\bمی\bتواند\b در\bحوزۀ\bمؤمنین\bباشـد؛"
+    sources = [{"reference": "chunk 1 of document tarhe-kolli", "passage": passage}]
+    sentence = "انسان می‌تواند در حوزۀ مؤمنین باشد؛"
+    kept = serve.guard_sentences([{"text": sentence, "source": 0}], sources)
+    assert kept == [{"text": sentence, "reference": "chunk 1 of document tarhe-kolli"}]
 
 
 def test_guard_drops_paraphrased_sentence():

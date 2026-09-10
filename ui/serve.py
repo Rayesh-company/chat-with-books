@@ -35,19 +35,18 @@ COMPOSER_TIMEOUT = int(os.environ.get("COMPOSER_TIMEOUT", "240"))
 _ARABIC_TO_FARSI = str.maketrans({"ي": "ی", "ك": "ک"})
 # Tashkeel, superscript alef, tatweel/kashida.
 _STRIPPED_MARKS = re.compile(r"[ً-ٰٟـ]")
-# Everything that is not a word character (backspaces, ZWNJ, punctuation,
-# quotes, the ellipsis that truncates Evidence snippets) becomes a space.
+# Every separator — the text layer's backspaces, ZWNJ/ZWJ, spaces,
+# punctuation, the truncating ellipsis — is deleted, not spaced: the PDF
+# splits words with \b (می) where the composer writes می‌تواند or
+# می تواند, so only the letter stream compares equal across all three.
 _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
 
 
 def normalize_for_match(text: str) -> str:
-    """Reduce Farsi text to a comparable word stream (AC-3 normalized comparison)."""
+    """Reduce Farsi text to a comparable letter stream (AC-3 normalized comparison)."""
     text = text.translate(_ARABIC_TO_FARSI)
     text = _STRIPPED_MARKS.sub("", text)
-    # ZWNJ/ZWJ are transparent: انسان‌ها and انسانها compare equal.
-    text = text.replace("‌", "").replace("‍", "")
-    text = _NON_WORD.sub(" ", text)
-    return " ".join(text.split()).lower()
+    return _NON_WORD.sub("", text).lower()
 
 
 def guard_sentences(selections, sources):
