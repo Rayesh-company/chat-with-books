@@ -22,8 +22,10 @@ API docs: `http://localhost:8000/docs`.
 A Farsi-first sheet for first answers. It proxies `recall()` to Cognee on this machine. It is not Next-tier search, and it is not Cognee `--profile ui`.
 
 ```powershell
-python ui/serve.py
+powershell -ExecutionPolicy Bypass -File start-ui.ps1
 ```
+
+`start-ui.ps1` reads `LLM_API_KEY` from `.env` into the process env — `serve.py` takes the key from the host env, never from `.env` (that file is compose-only), and without it the citation paragraph falls back to the Evidence list — then runs `python ui/serve.py`.
 
 Open `http://localhost:8765`. Cognee must already be up on port 8000 with `tarhe-kolli` ingested.
 
