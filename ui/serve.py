@@ -18,20 +18,22 @@ PORT = int(os.environ.get("SESSION_UI_PORT", "8765"))
 PROXY_TIMEOUT = 600
 ALLOWED_PROXY = {"/health", "/api/v1/recall"}
 
-# Quoted-answer composer: asks the chat model to write the interleaved
-# document (paragraphs of AI text with embedded verbatim Book quotes)
-# that replaces the streamed answer on the sheet (ADR-0003). glm-5.3-flash
-# only — glm-5.3 stays reserved for Next-tier search (ADR-0002). The pin
-# changes only here, after the README's /chat/completions smoke rule —
-# never via env.
+# Quoted-answer composer: asks the chat model twice to produce the
+# interleaved document (paragraphs of AI text with embedded verbatim Book
+# quotes) that replaces the streamed answer on the sheet (ADR-0003).
+# glm-5.3-flash only — glm-5.3 stays reserved for Next-tier search
+# (ADR-0002). The pin changes only here, after the README's
+# /chat/completions smoke rule — never via env.
 COMPOSER_MODEL = "glm-5.3-flash"
 COMPOSER_URL = (
     os.environ.get("LLM_ENDPOINT", "https://api.z.ai/api/coding/paas/v4").rstrip("/")
     + "/chat/completions"
 )
-# Measured 2026-09-10: the composer call answers in ~17s with reasoning
-# disabled (the default reasoning burned ~70s on a copy-matching task);
-# 240s stays as headroom for the coding endpoint's queue variance.
+# Two sequential calls since 2026-09-10 (PM planning call): a reasoning
+# planner (~84s measured) then the non-reasoning writer (~17s), so phase
+# 2 lands in ~100s expected. 240s per call stays as headroom for the
+# coding endpoint's queue variance — worst case ~480s, covered by the
+# sheet's pulsing status and pipeline timer.
 COMPOSER_TIMEOUT = int(os.environ.get("COMPOSER_TIMEOUT", "240"))
 
 _ARABIC_TO_FARSI = str.maketrans({"ي": "ی", "ك": "ک"})
@@ -202,18 +204,33 @@ def parse_quoted_reply(content):
     return blocks if isinstance(blocks, list) else []
 
 
-def build_quoted_prompt(question: str, answer: str, sources) -> str:
+def build_quoted_prompt(question: str, answer: str, sources, plan: str = "") -> str:
+    """Build the writer prompt. With a plan the plan is the framing
+    context (PM call, 2026-09-10); without one — planner failed — it is
+    exactly the single-call prompt: question + draft answer + passages.
+    """
     passages = "\n".join(
         f"[{i}] ({source['reference']}) {source['passage']}"
         for i, source in enumerate(sources)
     )
+    if plan:
+        context = (
+            "A planning pass over the same passages produced this plan — "
+            "follow its structure and paragraph outline; its suggested "
+            "sentences are pointers only, you still copy each quoted "
+            f"sentence VERBATIM from the passages below:\n{plan}"
+        )
+    else:
+        context = (
+            "A faster model's draft answer (context for framing and coverage "
+            "only — its claims about the Book are unverified; ground every Book "
+            f"claim in the passages below):\n{answer}"
+        )
     return (
         "You are writing a Farsi Quoted answer for a Q&A sheet over one "
         "Book.\n\n"
         f"Question: {question}\n\n"
-        "A faster model's draft answer (context for framing and coverage "
-        "only — its claims about the Book are unverified; ground every Book "
-        f"claim in the passages below):\n{answer}\n\n"
+        f"{context}\n\n"
         "Passages (numbered, from the Book's retrieved Evidence; text-layer "
         "noise like \\b backspaces may appear between words):\n"
         f"{passages}\n\n"
@@ -230,7 +247,7 @@ def build_quoted_prompt(question: str, answer: str, sources) -> str:
         "merge, do not shorten. Never write a paragraph without at least "
         "one quoted sentence, and never a paragraph of bare quotes without "
         "your connective text.\n"
-        "Aim for at least five quote paragraphs across the document when "
+        "Aim for at least eight quote paragraphs across the document when "
         "the passages support them; never invent or paraphrase a quote to "
         "reach the count.\n"
         "You may write short section headings.\n\n"
@@ -242,38 +259,106 @@ def build_quoted_prompt(question: str, answer: str, sources) -> str:
     )
 
 
-def compose_quoted_answer(question: str, answer: str, sources):
-    """Write the Quoted answer blocks; [] on any composer failure or when
-    the document misses the swap threshold (AC-4)."""
+def build_planner_prompt(question: str, answer: str, sources) -> str:
+    """The reasoning pass's brief: plan the document's structure and the
+    cross-passage weaving — not write it (PM call, 2026-09-10)."""
+    passages = "\n".join(
+        f"[{i}] ({source['reference']}) {source['passage']}"
+        for i, source in enumerate(sources)
+    )
+    return (
+        "You are planning a Farsi Quoted answer for a Q&A sheet over one "
+        "Book.\n\n"
+        f"Question: {question}\n\n"
+        "A faster model's draft answer (context for framing and coverage "
+        "only — its claims about the Book are unverified; ground every Book "
+        f"claim in the passages below):\n{answer}\n\n"
+        "Passages (numbered, from the Book's retrieved Evidence; text-layer "
+        "noise like \\b backspaces may appear between words):\n"
+        f"{passages}\n\n"
+        "Task: plan the document that answers the question in interleaved "
+        "paragraphs — each paragraph one unit of the writer's own Farsi "
+        "text with verbatim quoted sentences embedded inside it.\n"
+        "Write a plain-text plan, not the document itself and not JSON:\n"
+        "- the section headings, in order;\n"
+        "- for each paragraph: the point it makes, which passages and "
+        "which of their sentences to weave into it, and where one "
+        "paragraph should weave sentences from more than one passage;\n"
+        "- aim for at least eight quote paragraphs when the passages "
+        "support them; never plan a quote the passages do not contain.\n"
+        "Reply with ONLY the plan as plain text."
+    )
+
+
+def _composer_reply(message: str, thinking_type: str):
+    """One POST to the composer endpoint; raises on any failure.
+
+    thinking_type "enabled" for the planner — reasoning structures the
+    document and the cross-passage weaving (PM call, 2026-09-10) — and
+    "disabled" for the writer, so copied sentences survive the verbatim
+    guard. Both calls run at the endpoint's default temperature (the
+    writer's "temperature": 0 pin was dropped the same call: final
+    synthesizing, not extraction). Interleaving AI text with verbatim
+    quotes is light writing plus copy-matching, not reasoning;
+    glm-5.3-flash's default thinking adds ~70s for identical output
+    (measured 2026-09-10: 84.2s -> 16.5s on the writing task). glm-5.3-flash
+    only (ADR-0002).
+    """
+    request = Request(
+        COMPOSER_URL,
+        data=json.dumps(
+            {
+                "model": COMPOSER_MODEL,
+                "thinking": {"type": thinking_type},
+                "messages": [{"role": "user", "content": message}],
+            }
+        ).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.environ['LLM_API_KEY']}",
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=COMPOSER_TIMEOUT) as response:
+        return json.load(response)
+
+
+def plan_quoted_document(question: str, answer: str, sources) -> str:
+    """Reason out the document plan; "" on any planner failure.
+
+    The plan is loose plain text — it is never machine-guarded, only
+    fed to the writer as context. "" means the writer falls back to
+    the no-plan prompt, so a planner failure never empties the sheet
+    (AC-4, issue #23).
+    """
     try:
-        api_key = os.environ["LLM_API_KEY"]
-        request = Request(
-            COMPOSER_URL,
-            data=json.dumps(
-                {
-                    "model": COMPOSER_MODEL,
-                    "temperature": 0,
-                    # Interleaving AI text with verbatim quotes is light
-                    # writing plus copy-matching, not reasoning;
-                    # glm-5.3-flash's default thinking adds ~70s for
-                    # identical output (measured 2026-09-10).
-                    "thinking": {"type": "disabled"},
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": build_quoted_prompt(question, answer, sources),
-                        }
-                    ],
-                }
-            ).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            method="POST",
+        reply = _composer_reply(
+            build_planner_prompt(question, answer, sources), "enabled"
         )
-        with urlopen(request, timeout=COMPOSER_TIMEOUT) as response:
-            reply = json.load(response)
+        content = reply["choices"][0]["message"]["content"]
+    except (KeyError, ValueError, OSError):
+        return ""
+    # A thinking reply lands its final text in message.content (the
+    # reasoning itself rides in a separate field); anything empty or
+    # non-string counts as planner failure, not a plan.
+    return content.strip() if isinstance(content, str) else ""
+
+
+def compose_quoted_answer(question: str, answer: str, sources):
+    """Write the Quoted answer blocks; [] on writer failure or when the
+    document misses the swap threshold (AC-4).
+
+    Two sequential glm-5.3-flash calls since 2026-09-10 (PM call): a
+    reasoning planner first, then the non-reasoning writer. The planner
+    is best-effort — on any planner failure the writer runs without a
+    plan (the single-call shape), so the sheet is never left empty.
+    Each call gets its own COMPOSER_TIMEOUT.
+    """
+    plan = plan_quoted_document(question, answer, sources)
+    try:
+        reply = _composer_reply(
+            build_quoted_prompt(question, answer, sources, plan), "disabled"
+        )
         content = reply["choices"][0]["message"]["content"]
         return guard_blocks(parse_quoted_reply(content), sources)
     except (KeyError, ValueError, OSError):

@@ -249,78 +249,137 @@ def test_compose_returns_empty_list_when_the_composer_is_unreachable():
         serve.urlopen = original
 
 
-def test_compose_request_disables_reasoning():
-    # glm-5.3-flash reasons by default on the coding endpoint; writing
-    # fillers plus copy-matching quotes needs none, and reasoning cost
-    # ~70s per call (measured 2026-09-10: 84.2s -> 16.5s with identical
-    # kept sentences on the sentence-picking task).
-    captured = {}
+# The writer's guarded reply, shared by the two-call tests below.
+WRITER_BLOCKS = [
+    {"type": "heading", "text": "۱. طرح کلی"},
+    {
+        "type": "paragraph",
+        "parts": [
+            {"text": "پیش از هر چیز باید معنای واژه را روشن کرد: "},
+            {"quote": "سخن در این است؛", "source": 0},
+        ],
+    },
+    {
+        "type": "paragraph",
+        "parts": [
+            {"text": "و در قطعه‌ای دیگر می‌خوانیم: "},
+            {"quote": OTHER_PASSAGE, "source": 1},
+        ],
+    },
+]
+WRITER_KEPT = [
+    {"type": "heading", "text": "۱. طرح کلی"},
+    {
+        "type": "paragraph",
+        "parts": [
+            {"text": "پیش از هر چیز باید معنای واژه را روشن کرد:"},
+            {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740"},
+        ],
+    },
+    {
+        "type": "paragraph",
+        "parts": [
+            {"text": "و در قطعه‌ای دیگر می‌خوانیم:"},
+            {"quote": OTHER_PASSAGE, "source": 1, "pages_label": "", "first_page_label": ""},
+        ],
+    },
+]
+PLAN_MARKER = "طرح: بندها و بافت‌دهی میان قطعه‌ها"
 
-    class FakeResponse:
-        def __init__(self, body):
-            self._body = body
 
-        def read(self):
-            return self._body
+class FakeResponse:
+    def __init__(self, body):
+        self._body = body
 
-        def __enter__(self):
-            return self
+    def read(self):
+        return self._body
 
-        def __exit__(self, *exc):
-            return False
+    def __enter__(self):
+        return self
 
-    reply = json.dumps(
-        {"choices": [{"message": {"content": json.dumps(
-            {"blocks": [
-                {"type": "heading", "text": "۱. طرح کلی"},
-                {
-                    "type": "paragraph",
-                    "parts": [
-                        {"text": "پیش از هر چیز باید معنای واژه را روشن کرد: "},
-                        {"quote": "سخن در این است؛", "source": 0},
-                    ],
-                },
-                {
-                    "type": "paragraph",
-                    "parts": [
-                        {"text": "و در قطعه‌ای دیگر می‌خوانیم: "},
-                        {"quote": OTHER_PASSAGE, "source": 1},
-                    ],
-                },
-            ]}
-        )}}]}
-    )
+    def __exit__(self, *exc):
+        return False
+
+
+def writer_reply():
+    content = json.dumps({"blocks": WRITER_BLOCKS}, ensure_ascii=False)
+    return json.dumps({"choices": [{"message": {"content": content}}]})
+
+
+def planner_reply(plan):
+    return json.dumps({"choices": [{"message": {"content": plan}}]})
+
+
+def run_compose_with_replies(replies):
+    """Run compose_quoted_answer against per-call canned replies; return
+    (kept blocks, captured payloads, captured timeouts)."""
+    captured = {"payloads": [], "timeouts": []}
+    queue = [reply.encode("utf-8") if isinstance(reply, str) else reply for reply in replies]
 
     def fake_urlopen(request, timeout=None):
-        captured["payload"] = json.loads(request.data.decode("utf-8"))
-        return FakeResponse(reply.encode("utf-8"))
+        captured["payloads"].append(json.loads(request.data.decode("utf-8")))
+        captured["timeouts"].append(timeout)
+        item = queue.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return FakeResponse(item)
 
     original = serve.urlopen
     serve.urlopen = fake_urlopen
     os.environ["LLM_API_KEY"] = "test-key"
     try:
-        kept = serve.compose_quoted_answer("پرسش؟", "پاسخ", SOURCES)
+        kept = serve.compose_quoted_answer("پرسش؟", "پیش‌نویس پاسخ", SOURCES)
     finally:
         serve.urlopen = original
         del os.environ["LLM_API_KEY"]
-    assert captured["payload"]["thinking"] == {"type": "disabled"}
-    assert kept == [
-        {"type": "heading", "text": "۱. طرح کلی"},
-        {
-            "type": "paragraph",
-            "parts": [
-                {"text": "پیش از هر چیز باید معنای واژه را روشن کرد:"},
-                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740"},
-            ],
-        },
-        {
-            "type": "paragraph",
-            "parts": [
-                {"text": "و در قطعه‌ای دیگر می‌خوانیم:"},
-                {"quote": OTHER_PASSAGE, "source": 1, "pages_label": "", "first_page_label": ""},
-            ],
-        },
+    return kept, captured
+
+
+def test_compose_plans_with_reasoning_then_writes_without_it():
+    # Two sequential composer calls (PM call, 2026-09-10): the planner
+    # reasons — thinking enabled — over structure and cross-passage
+    # weaving, and the writer copies verbatim with thinking disabled at
+    # the endpoint's default temperature; no call pins a temperature.
+    kept, captured = run_compose_with_replies([planner_reply(PLAN_MARKER), writer_reply()])
+    assert [p["model"] for p in captured["payloads"]] == [
+        "glm-5.3-flash",
+        "glm-5.3-flash",
     ]
+    assert captured["payloads"][0]["thinking"] == {"type": "enabled"}
+    assert captured["payloads"][1]["thinking"] == {"type": "disabled"}
+    assert "temperature" not in captured["payloads"][0]
+    assert "temperature" not in captured["payloads"][1]
+    assert captured["timeouts"] == [serve.COMPOSER_TIMEOUT, serve.COMPOSER_TIMEOUT]
+    # The plan rides into the writer's prompt as its framing context.
+    assert PLAN_MARKER in captured["payloads"][1]["messages"][0]["content"]
+    assert kept == WRITER_KEPT
+
+
+def test_compose_falls_back_when_the_planner_call_fails():
+    # A planner failure must never empty the sheet (AC-4): the writer
+    # still runs, on the no-plan prompt with the draft answer back in.
+    kept, captured = run_compose_with_replies([OSError("planner down"), writer_reply()])
+    # The planner was attempted (payload 0, thinking enabled) and the
+    # writer still ran (payload 1, thinking disabled).
+    assert len(captured["payloads"]) == 2
+    assert captured["payloads"][0]["thinking"] == {"type": "enabled"}
+    assert captured["payloads"][1]["thinking"] == {"type": "disabled"}
+    content = captured["payloads"][1]["messages"][0]["content"]
+    assert "پیش‌نویس پاسخ" in content
+    assert PLAN_MARKER not in content
+    assert kept == WRITER_KEPT
+
+
+def test_compose_falls_back_when_the_planner_reply_is_empty():
+    # Empty or non-string planner content is planner failure, not a
+    # plan — the writer gets the no-plan prompt.
+    for empty in ("", None):
+        kept, captured = run_compose_with_replies([planner_reply(empty), writer_reply()])
+        assert len(captured["payloads"]) == 2
+        content = captured["payloads"][1]["messages"][0]["content"]
+        assert "پیش‌نویس پاسخ" in content
+        assert PLAN_MARKER not in content
+        assert kept == WRITER_KEPT
 
 
 def test_quoted_prompt_carries_question_answer_and_locators():
@@ -333,9 +392,39 @@ def test_quoted_prompt_carries_question_answer_and_locators():
     # with embedded verbatim quotes; several passages per paragraph.
     assert "Every paragraph is one unit" in prompt
     assert "parts" in prompt
-    # PM call 2026-09-10: the composer aims for at least five quote
-    # paragraphs; the swap threshold below still needs only two.
-    assert "at least five quote paragraphs" in prompt
+    # PM call 2026-09-10 (raised from five the same night): the writer
+    # aims for at least eight quote paragraphs; the swap threshold below
+    # still needs only two.
+    assert "at least eight quote paragraphs" in prompt
+
+
+def test_planner_prompt_carries_question_answer_and_weaving_brief():
+    # The planning brief is where reasoning pays (PM call, 2026-09-10):
+    # document structure and cross-passage weaving, as plain text.
+    prompt = serve.build_planner_prompt("پرسش؟", "پیش‌نویس پاسخ", SOURCES)
+    assert "پرسش؟" in prompt
+    assert "پیش‌نویس پاسخ" in prompt
+    assert "chunk 101 of document tarhe-kolli (pages 740-745)" in prompt
+    assert NOISY_PASSAGE in prompt
+    assert "plain-text plan" in prompt
+    assert "section headings" in prompt
+    assert "more than one passage" in prompt
+    assert "not JSON" in prompt
+    assert "at least eight quote paragraphs" in prompt
+
+
+def test_quoted_prompt_slots_the_plan_in_place_of_the_draft_answer():
+    # With a plan, the writer's framing context is the plan — not the
+    # draft answer — while every verbatim rule stays byte-identical.
+    planned = serve.build_quoted_prompt(
+        "پرسش؟", "پیش‌نویس پاسخ", SOURCES, "طرح آزمایشی: بند یک از قطعهٔ ۱"
+    )
+    assert "طرح آزمایشی: بند یک از قطعهٔ ۱" in planned
+    assert "پیش‌نویس پاسخ" not in planned
+    assert "copied VERBATIM" in planned
+    assert "Do not paraphrase" in planned
+    assert "at least eight quote paragraphs" in planned
+    assert '"blocks"' in planned
 
 
 def test_serve_pins_the_composer_endpoint_and_model():
@@ -444,4 +533,9 @@ def test_readme_records_the_quoted_answer_contract():
     assert "verbatim" in text
     assert "glm-5.3-flash" in text
     assert "ADR-0003" in text
-    assert "at least five quote paragraphs" in text
+    assert "at least eight quote paragraphs" in text
+    # The two-call composer contract (PM call, 2026-09-10): reasoning
+    # plans, non-reasoning writes.
+    assert "two sequential" in text
+    assert "thinking enabled" in text
+    assert "thinking disabled" in text
