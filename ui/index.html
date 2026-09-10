@@ -176,12 +176,27 @@
         color: var(--mute);
       }
 
-      .cite-para {
+      .doc-heading {
+        margin: 1.1rem 0 0.4rem;
+        font-size: 1.02rem;
+        font-weight: 700;
+      }
+
+      .doc-filler {
         margin: 0 0 0.85rem;
-        padding: 0 0.9rem 0 0;
+      }
+
+      .doc-quote {
+        margin: 0 0 0.85rem;
+        padding: 0.35rem 0.75rem 0.35rem 0;
         border-right: 3px solid var(--clay);
+        background: rgba(196, 92, 38, 0.1);
+      }
+
+      .cite-pages {
         color: var(--mute);
-        line-height: 2.2;
+        font-size: 0.78rem;
+        font-weight: 500;
       }
 
       .cite-sent {
@@ -269,7 +284,9 @@
 
       <section class="out" aria-live="polite">
         <h2>پاسخ</h2>
-        <p class="empty" id="answer">هنوز پرسشی نپرسیده‌اید.</p>
+        <div id="answer" class="answer">
+          <p class="empty">هنوز پرسشی نپرسیده‌اید.</p>
+        </div>
         <h2>استناد</h2>
         <div id="citations">
           <p class="empty">پس از پاسخ، استناد اینجا می‌آید: هویت کتاب و عبارت نقل‌شده.</p>
@@ -287,7 +304,7 @@
       const citationsEl = document.getElementById("citations");
       const statusEl = document.getElementById("status");
       // Bumped on every ask so a slow composer reply for an older question
-      // is dropped instead of overwriting the newer answer's citations.
+      // is dropped instead of swapping the newer answer or its citations.
       let citationRun = 0;
 
       function setText(el, text, className) {
@@ -328,21 +345,51 @@
         return sources;
       }
 
-      // The composer's verbatim sentences replace the Evidence list only on
-      // success; on failure, timeout, or zero verified sentences the Evidence
-      // citations stay as rendered (AC-4). The answer path is untouched —
-      // this runs after the streamed answer has rendered (AC-5).
-      async function renderCitationParagraph(question, citations) {
+      // One passage per quote paragraph, so every sentence in it hovers to
+      // the same Citation and the paragraph ends with its exact pages.
+      function quoteParagraph(block) {
+        const para = document.createElement("p");
+        para.className = "doc-quote";
+        const sentences = Array.isArray(block.sentences) ? block.sentences : [];
+        sentences.forEach((text, index) => {
+          if (index) {
+            para.append(" ");
+          }
+          const span = document.createElement("span");
+          span.className = "cite-sent";
+          span.tabIndex = 0;
+          span.textContent = text;
+          span.dataset.ref = block.pages_label
+            ? `طرح کلی اندیشۀ اسلامی در قرآن — ${block.pages_label}`
+            : "طرح کلی اندیشۀ اسلامی در قرآن";
+          para.append(span);
+        });
+        if (block.pages_label) {
+          const pages = document.createElement("span");
+          pages.className = "cite-pages";
+          pages.textContent = ` [${block.pages_label}]`;
+          para.append(pages);
+        }
+        return para;
+      }
+
+      // The composer's Quoted answer replaces the streamed answer only on
+      // success: non-empty blocks mean the server's swap threshold passed
+      // (at least one verbatim-guarded quote and one filler or heading). On
+      // failure, timeout, or an empty document the streamed answer and the
+      // Evidence citations stay as rendered (AC-4). The stream path is
+      // untouched — this runs after the streamed answer has rendered (AC-5).
+      async function renderQuotedAnswer(question, answer, citations) {
         const run = citationRun;
         const sources = evidenceSources(citations);
         if (!sources.length) {
           return;
         }
         try {
-          const res = await fetch("/citation-paragraph", {
+          const res = await fetch("/quoted-answer", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ question, sources }),
+            body: JSON.stringify({ question, answer, sources }),
           });
           if (!res.ok) {
             return;
@@ -351,26 +398,33 @@
           if (run !== citationRun) {
             return;
           }
-          const sentences = Array.isArray(payload.sentences) ? payload.sentences : [];
-          if (!sentences.length) {
+          const blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
+          if (!blocks.length) {
             return;
           }
-          const para = document.createElement("p");
-          para.className = "cite-para";
-          sentences.forEach((item, index) => {
-            if (index) {
-              para.append(" ");
+          const doc = document.createDocumentFragment();
+          for (const block of blocks) {
+            if (block.type === "heading") {
+              const heading = document.createElement("h3");
+              heading.className = "doc-heading";
+              heading.textContent = block.text;
+              doc.append(heading);
+            } else if (block.type === "filler") {
+              const para = document.createElement("p");
+              para.className = "doc-filler";
+              para.textContent = block.text;
+              doc.append(para);
+            } else if (block.type === "quote") {
+              doc.append(quoteParagraph(block));
             }
-            const span = document.createElement("span");
-            span.className = "cite-sent";
-            span.tabIndex = 0;
-            span.textContent = item.text;
-            span.dataset.ref = `طرح کلی اندیشۀ اسلامی در قرآن — ${item.reference}`;
-            para.append(span);
-          });
-          citationsEl.replaceChildren(para);
+          }
+          answerEl.replaceChildren(doc);
+          const note = document.createElement("p");
+          note.className = "empty";
+          note.textContent = "استنادها در متن پاسخ‌اند؛ روی هر جملهٔ نقل‌شده بایستید.";
+          citationsEl.replaceChildren(note);
         } catch {
-          // Composer unreachable: keep the Evidence citations.
+          // Composer unreachable: keep the streamed answer and Evidence citations.
         }
       }
 
@@ -468,7 +522,7 @@
               p.textContent = item;
               citationsEl.append(p);
             }
-            renderCitationParagraph(query, citations);
+            renderQuotedAnswer(query, answer, citations);
           }
         };
 

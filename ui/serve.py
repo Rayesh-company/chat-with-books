@@ -18,10 +18,11 @@ PORT = int(os.environ.get("SESSION_UI_PORT", "8765"))
 PROXY_TIMEOUT = 600
 ALLOWED_PROXY = {"/health", "/api/v1/recall"}
 
-# Citation-paragraph composer: asks the chat model to pick verbatim Book
-# sentences for the sheet's hover-citation paragraph. glm-5.3-flash only —
-# glm-5.3 stays reserved for Next-tier search (ADR-0002). The pin changes
-# only here, after the README's /chat/completions smoke rule — never via env.
+# Quoted-answer composer: asks the chat model to write the interleaved
+# document (AI fillers + verbatim Book quotes) that replaces the streamed
+# answer on the sheet (ADR-0003). glm-5.3-flash only — glm-5.3 stays
+# reserved for Next-tier search (ADR-0002). The pin changes only here,
+# after the README's /chat/completions smoke rule — never via env.
 COMPOSER_MODEL = "glm-5.3-flash"
 COMPOSER_URL = (
     os.environ.get("LLM_ENDPOINT", "https://api.z.ai/api/coding/paas/v4").rstrip("/")
@@ -40,6 +41,12 @@ _STRIPPED_MARKS = re.compile(r"[ً-ٰٟـ]")
 # splits words with \b (می) where the composer writes می‌تواند or
 # می تواند, so only the letter stream compares equal across all three.
 _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
+
+# Evidence locators end in the Book text layer's page range, e.g.
+# "chunk 101 of document tarhe-kolli (pages 740-745)" (enable_farsi_evidence.py).
+# "تا" between the numbers, not a dash: digits are LTR-weak in Farsi text.
+_PAGES_IN_REFERENCE = re.compile(r"\(pages (\d+)-(\d+)\)")
+_PAGE_IN_REFERENCE = re.compile(r"\(page (\d+)\)")
 
 
 def normalize_for_match(text: str) -> str:
@@ -75,8 +82,68 @@ def guard_sentences(selections, sources):
     return kept
 
 
-def parse_composer_reply(content):
-    """Pull the sentences list out of the composer's reply; [] when malformed."""
+def guard_blocks(blocks, sources):
+    """Turn composer blocks into renderable Quoted answer blocks.
+
+    Quote sentences drop individually under the verbatim guard and the
+    paragraph survives with its other sentences; a quote with no survivor,
+    a malformed block, or a claim on a missing passage drops whole. The
+    document itself drops to [] unless it holds at least one surviving
+    quote AND one filler or heading — the sheet swaps the streamed answer
+    only for a real Quoted answer (ADR-0003 swap threshold).
+    """
+    kept = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        kind = block.get("type")
+        if kind in ("heading", "filler"):
+            text = block.get("text")
+            if isinstance(text, str) and text.strip():
+                kept.append({"type": kind, "text": text.strip()})
+        elif kind == "quote":
+            index = block.get("source")
+            sentences = block.get("sentences")
+            if not isinstance(index, int) or isinstance(index, bool):
+                continue
+            if not 0 <= index < len(sources):
+                continue
+            if not isinstance(sentences, list):
+                continue
+            kept_sentences = guard_sentences(
+                [{"text": sentence, "source": index} for sentence in sentences],
+                sources,
+            )
+            if kept_sentences:
+                kept.append(
+                    {
+                        "type": "quote",
+                        "sentences": [item["text"] for item in kept_sentences],
+                        "pages_label": pages_label(sources[index]["reference"]),
+                    }
+                )
+    has_quote = any(block["type"] == "quote" for block in kept)
+    has_voice = any(block["type"] in ("heading", "filler") for block in kept)
+    return kept if has_quote and has_voice else []
+
+
+def pages_label(reference: str) -> str:
+    """Farsi page label for an Evidence locator; '' when it carries no pages.
+
+    A quote whose passage has no page markers cites the Book alone on the
+    sheet — never an invented page.
+    """
+    pages = _PAGES_IN_REFERENCE.search(reference)
+    if pages:
+        return f"صفحات {pages.group(1)} تا {pages.group(2)}"
+    page = _PAGE_IN_REFERENCE.search(reference)
+    if page:
+        return f"صفحه {page.group(1)}"
+    return ""
+
+
+def parse_quoted_reply(content):
+    """Pull the blocks list out of the composer's reply; [] when malformed."""
     if not isinstance(content, str) or not content.strip():
         return []
     stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
@@ -90,32 +157,45 @@ def parse_composer_reply(content):
             parsed = json.loads(match.group(0))
         except ValueError:
             return []
-    sentences = parsed.get("sentences") if isinstance(parsed, dict) else None
-    return sentences if isinstance(sentences, list) else []
+    blocks = parsed.get("blocks") if isinstance(parsed, dict) else None
+    return blocks if isinstance(blocks, list) else []
 
 
-def build_composer_prompt(question: str, sources) -> str:
+def build_quoted_prompt(question: str, answer: str, sources) -> str:
     passages = "\n".join(
         f"[{i}] ({source['reference']}) {source['passage']}"
         for i, source in enumerate(sources)
     )
     return (
-        "You are building a citation paragraph for a Farsi Q&A sheet.\n\n"
+        "You are writing a Farsi Quoted answer for a Q&A sheet over one "
+        "Book.\n\n"
         f"Question: {question}\n\n"
+        "A faster model's draft answer (context for framing and coverage "
+        "only — its claims about the Book are unverified; ground every Book "
+        f"claim in the passages below):\n{answer}\n\n"
         "Passages (numbered, from the Book's retrieved Evidence; text-layer "
         "noise like \\b backspaces may appear between words):\n"
         f"{passages}\n\n"
-        "Task: select complete Farsi sentences copied VERBATIM from the "
-        "passages above (ignore the \\b noise; copy the words exactly), "
-        "ordered so they best support answering the question. Do not "
-        "paraphrase, do not merge, do not shorten.\n\n"
+        "Task: write a document that answers the question by interleaving "
+        "two kinds of paragraphs:\n"
+        "- Filler paragraphs in your own Farsi: introduce the topic, connect "
+        "the quotes, and summarize what the quoted passages establish. Never "
+        "state a Book claim the passages do not support.\n"
+        "- Quote paragraphs: complete Farsi sentences copied VERBATIM from "
+        "exactly ONE passage each (ignore the \\b noise; write proper Farsi). "
+        "Do not paraphrase, do not merge, do not shorten.\n"
+        "You may write short section headings.\n\n"
         "Reply with ONLY a JSON object, no prose, no code fence:\n"
-        '{"sentences": [{"text": "<verbatim sentence>", "source": <passage index>}]}'
+        '{"blocks": [{"type": "heading", "text": "..."}, '
+        '{"type": "filler", "text": "..."}, '
+        '{"type": "quote", "source": <passage index>, '
+        '"sentences": ["<verbatim sentence>"]}]}'
     )
 
 
-def compose_citation_paragraph(question: str, sources):
-    """Select verbatim citation sentences; [] on any composer failure (AC-4)."""
+def compose_quoted_answer(question: str, answer: str, sources):
+    """Write the Quoted answer blocks; [] on any composer failure or when
+    the document misses the swap threshold (AC-4)."""
     try:
         api_key = os.environ["LLM_API_KEY"]
         request = Request(
@@ -124,14 +204,15 @@ def compose_citation_paragraph(question: str, sources):
                 {
                     "model": COMPOSER_MODEL,
                     "temperature": 0,
-                    # Selecting verbatim sentences is copy-matching, not
-                    # reasoning; glm-5.3-flash's default thinking adds ~70s
-                    # for identical output (measured 2026-09-10).
+                    # Interleaving fillers with verbatim quotes is light
+                    # writing plus copy-matching, not reasoning;
+                    # glm-5.3-flash's default thinking adds ~70s for
+                    # identical output (measured 2026-09-10).
                     "thinking": {"type": "disabled"},
                     "messages": [
                         {
                             "role": "user",
-                            "content": build_composer_prompt(question, sources),
+                            "content": build_quoted_prompt(question, answer, sources),
                         }
                     ],
                 }
@@ -145,7 +226,7 @@ def compose_citation_paragraph(question: str, sources):
         with urlopen(request, timeout=COMPOSER_TIMEOUT) as response:
             reply = json.load(response)
         content = reply["choices"][0]["message"]["content"]
-        return guard_sentences(parse_composer_reply(content), sources)
+        return guard_blocks(parse_quoted_reply(content), sources)
     except (KeyError, ValueError, OSError):
         return []
 
@@ -167,17 +248,18 @@ class SessionHandler(SimpleHTTPRequestHandler):
         if self.path.split("?", 1)[0] == "/api/v1/recall":
             self._proxy("POST")
             return
-        if self.path.split("?", 1)[0] == "/citation-paragraph":
-            self._citation_paragraph()
+        if self.path.split("?", 1)[0] == "/quoted-answer":
+            self._quoted_answer()
             return
         self.send_error(404, "Not found")
 
-    def _citation_paragraph(self) -> None:
-        """Compose the hover-citation paragraph; empty sentences = fallback."""
+    def _quoted_answer(self) -> None:
+        """Compose the Quoted answer; empty blocks = fallback."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
             question = payload["question"]
+            answer = payload.get("answer")
             sources = [
                 {
                     "reference": source["reference"],
@@ -190,11 +272,13 @@ class SessionHandler(SimpleHTTPRequestHandler):
             ]
             if not isinstance(question, str) or not question.strip() or not sources:
                 raise ValueError("question and sources are required")
+            if not isinstance(answer, str):
+                answer = ""
         except (ValueError, KeyError, TypeError):
             self.send_error(400, "Bad request")
             return
-        sentences = compose_citation_paragraph(question, sources)
-        body = json.dumps({"sentences": sentences}, ensure_ascii=False).encode("utf-8")
+        blocks = compose_quoted_answer(question, answer, sources)
+        body = json.dumps({"blocks": blocks}, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

@@ -12,7 +12,7 @@ ASCII_TOKEN = 'r"[a-z0-9]+"'
 UNICODE_TOKEN = 'r"[^\\W_]+"'
 EXPECTED_SITES = 2
 SNIPPET_CAP_PRISTINE = "_SNIPPET_MAX_CHARS = 160"
-# 160 chars cut passages mid-sentence, leaving the sheet's citation-paragraph
+# 160 chars cut passages mid-sentence, leaving the sheet's Quoted answer
 # composer almost no complete sentence its verbatim guard could keep.
 SNIPPET_CAP_WIDENED = "_SNIPPET_MAX_CHARS = 600"
 REFERENCES_PATH = Path("/app/cognee/modules/retrieval/utils/references.py")
