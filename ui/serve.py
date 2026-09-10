@@ -447,7 +447,21 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def _drain_request_body(self) -> None:
+        """Read the body Content-Length promised before answering and
+        closing. Closing with bytes unread makes the kernel answer RST,
+        not FIN, and the response we just wrote can be lost to the reset
+        (WinError 10054 flaking the gate tests; through nginx the same
+        reset can surface as a 502 instead of the gate's 429)."""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        while length > 0:
+            chunk = self.rfile.read(min(length, 65536))
+            if not chunk:
+                break
+            length -= len(chunk)
+
     def _json_error(self, status: int, detail: str) -> None:
+        self._drain_request_body()
         body = json.dumps({"detail": detail}, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -495,6 +509,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 return
             self._quoted_answer()
             return
+        self._drain_request_body()
         self.send_error(404, "Not found")
 
     def _quoted_answer(self) -> None:
@@ -534,6 +549,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
         sys.stderr.write("%s - proxy %s %s\n" % (self.address_string(), method, path))
         sys.stderr.flush()
         if path not in ALLOWED_PROXY:
+            self._drain_request_body()
             self.send_error(404, "Not found")
             return
         length = int(self.headers.get("Content-Length", "0") or "0")

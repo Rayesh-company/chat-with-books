@@ -223,6 +223,30 @@ def test_five_chats_is_the_daily_limit_and_other_phones_unaffected(tmp_path):
     assert len(upstream.calls) == 1
 
 
+def test_gate_rejection_reads_the_request_body_before_answering(tmp_path):
+    # A gate rejection that answers without reading the request body
+    # closes the socket over unread bytes; the kernel answers RST, not
+    # FIN, and the client can lose the 429 it was owed (WinError 10054,
+    # flaking the suite ~15% of runs, 2026-09-10). A large body makes
+    # the race near-certain, so the rejection must still arrive.
+    upstream = FakeUpstream()
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        for _ in range(5):
+            serve.record_chat("09120000009")
+        status, payload = post(
+            base,
+            "/api/v1/recall",
+            {"searchType": "HYBRID_COMPLETION", "query": "پرسش؟", "pad": "x" * 200000},
+            phone="09120000009",
+        )
+    finally:
+        stop_gate(server, original)
+    assert status == 429
+    assert "امروز" in payload["detail"]
+    assert upstream.calls == []
+
+
 def test_yesterday_chats_do_not_count_against_today(tmp_path):
     serve.QUOTA_DB = tmp_path / "usage.sqlite3"
     assert serve.chats_today("09120000003") == 0  # also creates the table
