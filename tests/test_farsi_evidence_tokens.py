@@ -85,8 +85,8 @@ def test_patch_bullets_show_pages_and_drop_id_provenance():
 
 
 def test_patch_snippet_cap_widens_the_citation_pool():
-    # Cognee's 160-char snippet window cuts mid-sentence, so the citation
-    # paragraph's verbatim guard had almost nothing complete to keep; the
+    # Cognee's 160-char snippet window cuts mid-sentence, so the Quoted
+    # answer's verbatim guard had almost nothing complete to keep; the
     # widened window is the composer's source pool (measured 2026-09-10).
     patcher = _load_patcher()
     source = "X = 1\n_SNIPPET_MAX_CHARS = 160\n\ndef _snippet(text):\n    return text\n"
