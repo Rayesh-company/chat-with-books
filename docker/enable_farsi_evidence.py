@@ -1,5 +1,6 @@
 """Widen Cognee Evidence tokens past Latin [a-z0-9] so Farsi answers can ground;
-show the Book's PDF page range and drop id provenance on each Evidence bullet."""
+show the Book's PDF page range and drop id provenance on each Evidence bullet;
+widen the snippet window so quoted passages hold complete sentences."""
 
 from __future__ import annotations
 
@@ -10,6 +11,10 @@ from pathlib import Path
 ASCII_TOKEN = 'r"[a-z0-9]+"'
 UNICODE_TOKEN = 'r"[^\\W_]+"'
 EXPECTED_SITES = 2
+SNIPPET_CAP_PRISTINE = "_SNIPPET_MAX_CHARS = 160"
+# 160 chars cut passages mid-sentence, leaving the sheet's citation-paragraph
+# composer almost no complete sentence its verbatim guard could keep.
+SNIPPET_CAP_WIDENED = "_SNIPPET_MAX_CHARS = 600"
 REFERENCES_PATH = Path("/app/cognee/modules/retrieval/utils/references.py")
 ORIGINAL_ENTRYPOINT = "/app/entrypoint.sh"
 
@@ -62,9 +67,18 @@ def patch_bullets(source: str) -> str:
     raise ValueError("Evidence bullet anchor not found exactly once")
 
 
+def patch_snippet_cap(source: str) -> str:
+    if SNIPPET_CAP_WIDENED in source:
+        return source
+    found = source.count(SNIPPET_CAP_PRISTINE)
+    if found != 1:
+        raise ValueError(f"expected 1 snippet cap anchor, found {found}")
+    return source.replace(SNIPPET_CAP_PRISTINE, SNIPPET_CAP_WIDENED, 1)
+
+
 def main() -> None:
     source = REFERENCES_PATH.read_text(encoding="utf-8")
-    patched = patch_bullets(patch_references(source))
+    patched = patch_snippet_cap(patch_bullets(patch_references(source)))
     REFERENCES_PATH.write_text(patched, encoding="utf-8")
     os.execv(ORIGINAL_ENTRYPOINT, [ORIGINAL_ENTRYPOINT, *sys.argv[1:]])
 

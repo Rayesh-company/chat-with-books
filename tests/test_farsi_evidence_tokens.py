@@ -84,6 +84,18 @@ def test_patch_bullets_show_pages_and_drop_id_provenance():
     assert "data_id" not in bullet and "chunk_id" not in bullet
 
 
+def test_patch_snippet_cap_widens_the_citation_pool():
+    # Cognee's 160-char snippet window cuts mid-sentence, so the citation
+    # paragraph's verbatim guard had almost nothing complete to keep; the
+    # widened window is the composer's source pool (measured 2026-09-10).
+    patcher = _load_patcher()
+    source = "X = 1\n_SNIPPET_MAX_CHARS = 160\n\ndef _snippet(text):\n    return text\n"
+    patched = patcher.patch_snippet_cap(source)
+    assert "_SNIPPET_MAX_CHARS = 600" in patched
+    assert "_SNIPPET_MAX_CHARS = 160" not in patched
+    assert patcher.patch_snippet_cap(patched) == patched
+
+
 def test_patch_bullets_upgrades_the_pages_only_state():
     patcher = _load_patcher()
     already_pages = COGNEE_BULLET_SITES.replace(
