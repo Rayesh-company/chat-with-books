@@ -262,6 +262,9 @@ def test_quoted_prompt_carries_question_answer_and_locators():
     assert "پیش‌نویس پاسخ" in prompt
     assert "chunk 101 of document tarhe-kolli (pages 740-745)" in prompt
     assert NOISY_PASSAGE in prompt
+    # PM call 2026-09-10: the composer aims for at least five quote
+    # paragraphs; the swap threshold below still needs only one.
+    assert "at least five quote paragraphs" in prompt
 
 
 def test_serve_pins_the_composer_endpoint_and_model():
@@ -326,3 +329,4 @@ def test_readme_records_the_quoted_answer_contract():
     assert "verbatim" in text
     assert "glm-5.3-flash" in text
     assert "ADR-0003" in text
+    assert "at least five quote paragraphs" in text

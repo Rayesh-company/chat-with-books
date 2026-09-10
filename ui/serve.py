@@ -184,6 +184,9 @@ def build_quoted_prompt(question: str, answer: str, sources) -> str:
         "- Quote paragraphs: complete Farsi sentences copied VERBATIM from "
         "exactly ONE passage each (ignore the \\b noise; write proper Farsi). "
         "Do not paraphrase, do not merge, do not shorten.\n"
+        "Aim for at least five quote paragraphs across the document when "
+        "the passages support them; never invent or paraphrase a quote to "
+        "reach the count.\n"
         "You may write short section headings.\n\n"
         "Reply with ONLY a JSON object, no prose, no code fence:\n"
         '{"blocks": [{"type": "heading", "text": "..."}, '
