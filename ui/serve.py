@@ -35,6 +35,15 @@ COMPOSER_URL = (
 # coding endpoint's queue variance — worst case ~480s, covered by the
 # sheet's pulsing status and pipeline timer.
 COMPOSER_TIMEOUT = int(os.environ.get("COMPOSER_TIMEOUT", "240"))
+# The endpoint caps a reply's length; left unpinned, an unknown default
+# applies and a long document runs out of room mid-write (live run
+# 2026-09-10: the Quoted answer ended unfinished at its final section).
+# A capped reply returns finish_reason "length" cut mid-sentence, and
+# reasoning tokens count inside the ceiling — measured 128 of 173
+# completion tokens on a trivial reply, thinking disabled — so the
+# reasoning planner carries the same ceiling. Pinned in source like the
+# model, never via env.
+COMPOSER_MAX_TOKENS = 16384
 
 _ARABIC_TO_FARSI = str.maketrans({"ي": "ی", "ك": "ک"})
 # Tashkeel, superscript alef, tatweel/kashida.
@@ -303,7 +312,9 @@ def _composer_reply(message: str, thinking_type: str):
     synthesizing, not extraction). Interleaving AI text with verbatim
     quotes is light writing plus copy-matching, not reasoning;
     glm-5.3-flash's default thinking adds ~70s for identical output
-    (measured 2026-09-10: 84.2s -> 16.5s on the writing task). glm-5.3-flash
+    (measured 2026-09-10: 84.2s -> 16.5s on the writing task). Both calls
+    pin COMPOSER_MAX_TOKENS — the unpinned endpoint default left a long
+    document out of room mid-write (2026-09-10). glm-5.3-flash
     only (ADR-0002).
     """
     request = Request(
@@ -312,6 +323,7 @@ def _composer_reply(message: str, thinking_type: str):
             {
                 "model": COMPOSER_MODEL,
                 "thinking": {"type": thinking_type},
+                "max_tokens": COMPOSER_MAX_TOKENS,
                 "messages": [{"role": "user", "content": message}],
             }
         ).encode("utf-8"),

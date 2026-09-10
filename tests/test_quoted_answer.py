@@ -350,6 +350,16 @@ def test_compose_plans_with_reasoning_then_writes_without_it():
     assert "temperature" not in captured["payloads"][0]
     assert "temperature" not in captured["payloads"][1]
     assert captured["timeouts"] == [serve.COMPOSER_TIMEOUT, serve.COMPOSER_TIMEOUT]
+    # An explicit output ceiling rides on both payloads (PM call,
+    # 2026-09-10): left unpinned, a long document ran out of room
+    # mid-write — and reasoning tokens count inside the ceiling (measured:
+    # 128 of 173 completion tokens on a trivial reply, thinking
+    # disabled), so the reasoning planner carries the same headroom.
+    assert [p["max_tokens"] for p in captured["payloads"]] == [
+        serve.COMPOSER_MAX_TOKENS,
+        serve.COMPOSER_MAX_TOKENS,
+    ]
+    assert serve.COMPOSER_MAX_TOKENS >= 8192
     # The plan rides into the writer's prompt as its framing context.
     assert PLAN_MARKER in captured["payloads"][1]["messages"][0]["content"]
     assert kept == WRITER_KEPT
@@ -542,3 +552,4 @@ def test_readme_records_the_quoted_answer_contract():
     assert "two sequential" in text
     assert "thinking enabled" in text
     assert "thinking disabled" in text
+    assert "output ceiling" in text
