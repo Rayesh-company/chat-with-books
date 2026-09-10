@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 
 from tests.conftest import REPO_ROOT
@@ -116,6 +117,49 @@ def test_compose_returns_empty_list_when_the_composer_is_unreachable():
         assert serve.compose_citation_paragraph("پرسش؟", SOURCES) == []
     finally:
         serve.urlopen = original
+
+
+def test_compose_request_disables_reasoning():
+    # glm-5.3-flash reasons by default on the coding endpoint; the verbatim
+    # copy task needs none, and reasoning cost ~70s per call (measured
+    # 2026-09-10: 84.2s -> 16.5s with identical kept sentences).
+    captured = {}
+
+    class FakeResponse:
+        def __init__(self, body):
+            self._body = body
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    reply = json.dumps(
+        {"choices": [{"message": {"content": json.dumps(
+            {"sentences": [{"text": "سخن در این است؛", "source": 0}]}
+        )}}]}
+    )
+
+    def fake_urlopen(request, timeout=None):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse(reply.encode("utf-8"))
+
+    original = serve.urlopen
+    serve.urlopen = fake_urlopen
+    os.environ["LLM_API_KEY"] = "test-key"
+    try:
+        kept = serve.compose_citation_paragraph("پرسش؟", SOURCES)
+    finally:
+        serve.urlopen = original
+        del os.environ["LLM_API_KEY"]
+    assert captured["payload"]["thinking"] == {"type": "disabled"}
+    assert kept == [
+        {"text": "سخن در این است؛", "reference": SOURCES[0]["reference"]}
+    ]
 
 
 def test_composer_prompt_carries_question_and_locators():

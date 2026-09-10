@@ -27,8 +27,9 @@ COMPOSER_URL = (
     os.environ.get("LLM_ENDPOINT", "https://api.z.ai/api/coding/paas/v4").rstrip("/")
     + "/chat/completions"
 )
-# Measured 2026-09-09: glm-5.3-flash needs ~190s on a 5-passage prompt
-# (the coding endpoint queues); below that the paragraph never lands.
+# Measured 2026-09-10: the composer call answers in ~17s with reasoning
+# disabled (the default reasoning burned ~70s on a copy-matching task);
+# 240s stays as headroom for the coding endpoint's queue variance.
 COMPOSER_TIMEOUT = int(os.environ.get("COMPOSER_TIMEOUT", "240"))
 
 _ARABIC_TO_FARSI = str.maketrans({"ي": "ی", "ك": "ک"})
@@ -124,6 +125,10 @@ def compose_citation_paragraph(question: str, sources):
                 {
                     "model": COMPOSER_MODEL,
                     "temperature": 0,
+                    # Selecting verbatim sentences is copy-matching, not
+                    # reasoning; glm-5.3-flash's default thinking adds ~70s
+                    # for identical output (measured 2026-09-10).
+                    "thinking": {"type": "disabled"},
                     "messages": [
                         {
                             "role": "user",
