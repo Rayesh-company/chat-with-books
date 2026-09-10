@@ -114,6 +114,27 @@
         outline-offset: 4px;
       }
 
+      input[type="tel"] {
+        width: 100%;
+        border: 0;
+        border-bottom: 1px solid var(--ink);
+        background: transparent;
+        color: var(--ink);
+        font: inherit;
+        padding: 0.15rem 0.1rem 0.35rem;
+      }
+
+      input[type="tel"]:focus {
+        outline: 2px solid var(--focus);
+        outline-offset: 4px;
+      }
+
+      .phone-hint {
+        margin: 0.25rem 0 0;
+        font-size: 0.78rem;
+        color: var(--mute);
+      }
+
       .actions {
         display: flex;
         justify-content: flex-start;
@@ -284,7 +305,18 @@
       </header>
 
       <form id="ask">
-        <label for="question">پرسش</label>
+        <label for="phone">شمارهٔ تلفن</label>
+        <input
+          type="tel"
+          id="phone"
+          name="phone"
+          inputmode="tel"
+          autocomplete="tel"
+          maxlength="16"
+          placeholder="۰۹۱۲۳۴۵۶۷۸۹"
+        />
+        <p class="phone-hint">هر شماره در روز پنج گفتگو دارد.</p>
+        <label for="question" style="margin-top: 1rem">پرسش</label>
         <textarea
           id="question"
           name="question"
@@ -313,6 +345,7 @@
 
     <script>
       const form = document.getElementById("ask");
+      const phoneEl = document.getElementById("phone");
       const questionEl = document.getElementById("question");
       const buttonEl = document.getElementById("ask-btn");
       const elapsedEl = document.getElementById("elapsed");
@@ -324,6 +357,21 @@
       // Bumped on every ask so a slow composer reply for an older question
       // is dropped instead of swapping the newer answer or its citations.
       let citationRun = 0;
+
+      // The phone gates the sheet: each number gets five chats a day,
+      // counted server-side. It rides in a header, remembered between
+      // visits; the server never forwards it to Cognee. Headers are
+      // latin-1, so Farsi digits are normalized before they ride.
+      const toAsciiDigits = (value) =>
+        String(value).replace(/[۰-۹٠-٩]/g, (ch) =>
+          String.fromCharCode(ch.charCodeAt(0) & 0xf)
+        );
+      phoneEl.value = toAsciiDigits(localStorage.getItem("sessionPhone") || "");
+      phoneEl.addEventListener("change", () => {
+        phoneEl.value = toAsciiDigits(phoneEl.value.trim());
+        localStorage.setItem("sessionPhone", phoneEl.value);
+      });
+      const phoneHeader = () => ({ "X-Session-Phone": phoneEl.value.trim() });
 
       function setText(el, text, className) {
         el.className = className;
@@ -474,7 +522,10 @@
         try {
           const res = await fetch("/quoted-answer", {
             method: "POST",
-            headers: { "Content-Type": "application/json; charset=utf-8" },
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+              ...phoneHeader(),
+            },
             body: JSON.stringify({ question, answer, sources }),
           });
           if (!res.ok) {
@@ -562,6 +613,10 @@
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const query = questionEl.value.trim();
+        if (!phoneEl.value.trim()) {
+          phoneEl.focus();
+          return;
+        }
         if (!query) {
           questionEl.focus();
           return;
@@ -632,7 +687,10 @@
         try {
           const res = await fetch("/api/v1/recall", {
             method: "POST",
-            headers: { "Content-Type": "application/json; charset=utf-8" },
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+              ...phoneHeader(),
+            },
             body: JSON.stringify({
               searchType: "HYBRID_COMPLETION",
               query,

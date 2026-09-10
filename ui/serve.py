@@ -4,19 +4,76 @@
 from __future__ import annotations
 
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+import datetime
 import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import sys
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 UI_DIR = Path(__file__).resolve().parent
 COGNEE_URL = os.environ.get("COGNEE_URL", "http://127.0.0.1:8000").rstrip("/")
+HOST = os.environ.get("SESSION_UI_HOST", "127.0.0.1")
 PORT = int(os.environ.get("SESSION_UI_PORT", "8765"))
 PROXY_TIMEOUT = 600
 ALLOWED_PROXY = {"/health", "/api/v1/recall"}
+
+# Phone gate (PM call, 2026-09-10, for the public VPS deploy): the sheet
+# identifies a Customer by a phone number and each number gets
+# DAILY_CHAT_LIMIT chats per server-local day. Honor-system — no SMS
+# verification; it stops casual credit-burn, not a determined caller.
+# A chat is one ask: phase 1 records it, and phase 2 (/quoted-answer)
+# belongs to that chat — it needs a phone with a chat today, and never
+# counts or checks the limit itself (the 5th chat's own swap must pass).
+DAILY_CHAT_LIMIT = 5
+QUOTA_DB = Path(os.environ.get("SESSION_UI_QUOTA_DB", str(UI_DIR / "usage.sqlite3")))
+
+# Persian and Arabic-Indic digits users type into the phone field.
+_DIGIT_MAP = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+
+
+def normalize_phone(raw) -> str:
+    """ASCII digits out of whatever was typed; '' unless 10-13 digits."""
+    digits = "".join(ch for ch in str(raw).translate(_DIGIT_MAP) if ch.isdigit())
+    return digits if 10 <= len(digits) <= 13 else ""
+
+
+def _today() -> str:
+    return datetime.date.today().isoformat()
+
+
+def _connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(QUOTA_DB), timeout=5)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS chats (phone TEXT NOT NULL, day TEXT NOT NULL)"
+    )
+    return conn
+
+
+def chats_today(phone: str) -> int:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM chats WHERE phone = ? AND day = ?",
+            (phone, _today()),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0]
+
+
+def record_chat(phone: str) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO chats (phone, day) VALUES (?, ?)", (phone, _today())
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 # Quoted-answer composer: asks the chat model twice to produce the
 # interleaved document (paragraphs of AI text with embedded verbatim Book
@@ -390,11 +447,52 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def _json_error(self, status: int, detail: str) -> None:
+        body = json.dumps({"detail": detail}, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _gate_phone(self):
+        """The ask gate: a valid phone with chats left today; records the
+        chat. Answers 400/429 itself and returns None when rejected."""
+        phone = normalize_phone(self.headers.get("X-Session-Phone", ""))
+        if not phone:
+            self._json_error(400, "شمارهٔ تلفن همراه را وارد کنید.")
+            return None
+        if chats_today(phone) >= DAILY_CHAT_LIMIT:
+            self._json_error(
+                429, "شمار گفتگوهای امروز این شماره پر شده است؛ فردا بیایید."
+            )
+            return None
+        record_chat(phone)
+        return phone
+
+    def _quoted_phone(self):
+        """The phase-2 gate: a valid phone with at least one chat today
+        (the quoted answer belongs to a chat that already started)."""
+        phone = normalize_phone(self.headers.get("X-Session-Phone", ""))
+        if not phone:
+            self._json_error(400, "شمارهٔ تلفن همراه را وارد کنید.")
+            return None
+        if chats_today(phone) < 1:
+            self._json_error(
+                429, "پاسخ استنادی بخشی از همان گفتگو است؛ اول یک پرسش بپرسید."
+            )
+            return None
+        return phone
+
     def do_POST(self):
         if self.path.split("?", 1)[0] == "/api/v1/recall":
+            if self._gate_phone() is None:
+                return
             self._proxy("POST")
             return
         if self.path.split("?", 1)[0] == "/quoted-answer":
+            if self._quoted_phone() is None:
+                return
             self._quoted_answer()
             return
         self.send_error(404, "Not found")
@@ -498,8 +596,8 @@ class SessionHandler(SimpleHTTPRequestHandler):
 
 
 def main() -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), SessionHandler)
-    print(f"Session sheet http://localhost:{PORT}", flush=True)
+    server = ThreadingHTTPServer((HOST, PORT), SessionHandler)
+    print(f"Session sheet http://{HOST}:{PORT}", flush=True)
     print(f"Proxying /api/v1/recall and /health to {COGNEE_URL}", flush=True)
     try:
         server.serve_forever()
