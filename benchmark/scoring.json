@@ -1,0 +1,33 @@
+{
+  "answer_scale": "Each component is scored 0-100, then combined with the weights below into a final score out of 100. Hallucination penalties are subtracted after the weighted sum, floored at 0.",
+  "criteria": [
+    {"name": "answer_correctness", "weight": 25, "fa": "Answer Correctness", "evaluate": "چند Gold Point درست پوشش داده شده؟"},
+    {"name": "groundedness", "weight": 20, "fa": "Groundedness / Faithfulness", "evaluate": "آیا ادعاها واقعاً از Context بازیابی‌شده می‌آیند؟"},
+    {"name": "evidence_quality", "weight": 15, "fa": "Evidence Quality", "evaluate": "آیا بهترین chunk/جلسه را استناد کرده؟"},
+    {"name": "retrieval_completeness", "weight": 15, "fa": "Retrieval Completeness", "evaluate": "آیا همه chunkهای لازم را پیدا کرده؟"},
+    {"name": "reasoning_quality", "weight": 10, "fa": "Reasoning Quality", "evaluate": "آیا رابطه مفاهیم را استنتاج کرده یا فقط متن را تکرار کرده؟"},
+    {"name": "contradiction_handling", "weight": 5, "fa": "Contradiction Handling", "evaluate": "آیا premise غلط را تشخیص می‌دهد؟"},
+    {"name": "citation_accuracy", "weight": 5, "fa": "Citation Accuracy", "evaluate": "citation واقعاً ادعای کناری را پشتیبانی می‌کند؟"},
+    {"name": "conciseness_relevance", "weight": 5, "fa": "Conciseness / Relevance", "evaluate": "بدون حاشیه و اطلاعات بیرونی غیرضروری؟"}
+  ],
+  "formula": "FinalScore = 0.25*Correctness + 0.20*Groundedness + 0.15*EvidenceQuality + 0.15*RetrievalCompleteness + 0.10*Reasoning + 0.05*ContradictionHandling + 0.05*CitationAccuracy + 0.05*Relevance - hallucination_penalties",
+  "hallucination_penalties": [
+    {"type": "minor_unsupported_claim", "deduction": 5},
+    {"type": "major_unsupported_claim", "deduction": 15},
+    {"type": "wrong_attribution", "deduction": 20},
+    {"type": "invented_verse_page_chapter", "deduction": 25},
+    {"type": "contradiction_with_source", "deduction": 30},
+    {"type": "confident_fabricated_quote", "deduction": 40}
+  ],
+  "retrieval_metrics": {
+    "note": "Score retrieval separately from generation so a weak run is attributable to the retriever or the LLM. Requires the CHUNKS probe (--probe-chunks) and a human/LLM labeling of the returned chunks against evidence_hint.",
+    "metrics": ["Recall@5", "Recall@10", "MRR", "GoldChunkHit", "DistractorResistance", "CrossSectionRecall"],
+    "cross_section_scheme_example": {
+      "question": "TKI-15",
+      "gold_chunks": ["ایمان / جلسات 3 تا 5", "توحید / جلسات 8 تا 10", "نبوت / جلسات 14 تا 22", "ولایت / جلسات 23 تا 28"],
+      "score": "100 = at least one key chunk from all 4 sections, 75 = 3 sections, 50 = 2, 25 = 1, 0 = none"
+    }
+  },
+  "level_target_distribution": {"L1": 0.2, "L2": 0.3, "L3": 0.3, "L4": 0.2, "note": "For the 50-question set; the current 18-question set deviates (see questions.json)."},
+  "judge_policy": "judge.py scores with a fixed judge model (glm-5.3 on the Z.AI coding endpoint) held constant across variants. Same-model judging is circular for quality criteria; treat absolute numbers with caution and weight the retrieval/groundedness/citation components and hallucination penalties most."
+}

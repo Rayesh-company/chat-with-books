@@ -1,0 +1,319 @@
+{
+  "judge_model": "glm-5.3",
+  "judged_utc": "2026-09-10T18:38:24Z",
+  "results": {
+    "TKI-01": {
+      "scores": {
+        "answer_correctness": 88,
+        "groundedness": 60,
+        "evidence_quality": 55,
+        "retrieval_completeness": 50,
+        "reasoning_quality": 85,
+        "contradiction_handling": 95,
+        "citation_accuracy": 65,
+        "conciseness_relevance": 90
+      },
+      "penalties": [
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "«این توحید با شرک تفاوت چندانی ندارد» و «المالُ مالُ اللهِ» — این نقل‌قول‌ها در چانک‌های بازیابی‌شده ظاهر نمی‌شوند"
+        },
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "تمثیل «جاده به شمال می‌رسد یا جنوب» — در متن Evidence قابل مشاهده نیست (تنها مثال حاصلخیزی زمین در چانک 34 موجود است)"
+        }
+      ],
+      "final_score": 61,
+      "rationale": "The answer substantively covers the gold points: it frames worldview-tawhid as an insight about God's existence, ideology-tawhid as a supra-question inspiration with governmental/social content, shows tawhid is not a mere proposition about the creator, and explicitly explains the relation between the two (vital, system-building dimension of the same truth), thereby avoiding the 'theoretical vs. practical' cliché trap. However, groundedness is weakened because several key formulations (the definitional quote 'بالاتر از حد یک پاسخ به سؤال', the shirk comparison, «المال مال الله», and the road analogy) are not visible in the retrieved chunks, even though they are consistent with the book's session 9/10 content; chunks 34 and 37 do support the vital-discussion analogy and the responsibility/taklif framing. Evidence quality is mediocre: chunks 35 and 48 are irrelevant, and the explicit definitional passage contrasting the two tawhids was not surfaced, hurting retrieval completeness. No inline claim-to-chunk citations are given, though no verse/page was invented.",
+      "judge_wall_seconds": 63.46
+    },
+    "TKI-02": {
+      "scores": {
+        "answer_correctness": 80,
+        "groundedness": 55,
+        "evidence_quality": 65,
+        "retrieval_completeness": 60,
+        "reasoning_quality": 85,
+        "contradiction_handling": 100,
+        "citation_accuracy": 55,
+        "conciseness_relevance": 85
+      },
+      "penalties": [
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "«در حدّ شرک است یا خودِ شرک است» (حدیث قدسی امام باقر) — a hadith cannot be both 'qudsi' and from Imam Baqir; the label is contradictory and no such hadith appears in the Evidence block"
+        },
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "Adi ibn Hatim dialogue («احَلّوا حَراماً و حَرَّموا حَلالاً») and «مادۀ اول قطعنامۀ توحیدی» are quoted but do not appear in any cited chunk"
+        }
+      ],
+      "final_score": 60,
+      "rationale": "The answer builds a genuine four-step inferential chain (takwini tadbir -> tashri' -> guidance to truth -> who deserves obedience -> obedience-as-worship) that covers three of the four gold points well and the fourth only implicitly (human dependence on God is hinted via 'weak individuals and imperfect intellects' but never stated). However, grounding is weak: the key Quranic quotes (Yunus 10:31, 10:35, 67:1), the Adi ibn Hatim narration, and the 'first clause of the monotheistic covenant' are not present in the retrieved Evidence block, whose chunks (39, 104, 40) only partially support the skeleton. The contradictory 'qudsi hadith of Imam Baqir' label and uncited final-section quotes draw minor penalties. Reasoning quality and conciseness are strong; retrieval misses the session pages containing the actual proof texts.",
+      "judge_wall_seconds": 63.39
+    },
+    "TKI-03": {
+      "scores": {
+        "answer_correctness": 95,
+        "groundedness": 58,
+        "evidence_quality": 55,
+        "retrieval_completeness": 50,
+        "reasoning_quality": 85,
+        "contradiction_handling": 95,
+        "citation_accuracy": 50,
+        "conciseness_relevance": 90
+      },
+      "penalties": [
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "آیةالکرسی «لا اِلهَ اِلّا هُوَ الحَیُّ القَیّوم» و حدیث «لِنُخرِجَ النّاسَ مِن عِبادَةِ العِبادِ اِلىٰ عِبادَةِ اللهِ» — neither appears in the retrieved Evidence chunks"
+        },
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "«توحیدی که در زندگی اثری نداشته باشد با شرک تفاوت چندانی ندارد» و «همه‌اش تعهد است، کار است» — quoted phrases not found in the provided evidence"
+        },
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "جواب پیامبر به عدیّ بن حاتم: «احَلّوا حَراماً و حَرَّموا حَلالاً» — anecdote cited but absent from the Evidence block"
+        }
+      ],
+      "final_score": 56,
+      "rationale": "The answer fully covers all six gold points (worldview, ideology/practice, exclusive obedience, negation of servitude to non-God, social effects like class negation, psychological effects) and explicitly rejects the dictionary-style trap by framing tawhid as a system-building belief, so answer correctness, contradiction handling, and reasoning are high. However, it strings together many specific quotes (Ayat al-Kursi, the Adi ibn Hatim exchange, the 'عبادة العباد' hadith, 'no different from shirk') that do not appear in the retrieved chunks, hurting groundedness and citation accuracy; the evidence itself is only partially on-target (chunks 34/35 on the ideology session are tangential anecdotes, chunk 29 on qibla is irrelevant, while chunk 40 on negating god-like masters and chunk 48 titled 'psychological effects of tawhid' do support points 4 and 6), and the worldview, obedience/worship, and class-negation sessions were never retrieved, leaving retrieval completeness low. Minor unsupported-claim penalties are applied for quotations asserted without evidentiary backing, though no verses, pages, or attributions were fabricated.",
+      "judge_wall_seconds": 42.64
+    },
+    "TKI-04": {
+      "scores": {
+        "answer_correctness": 92,
+        "groundedness": 40,
+        "evidence_quality": 25,
+        "retrieval_completeness": 25,
+        "reasoning_quality": 85,
+        "contradiction_handling": 100,
+        "citation_accuracy": 40,
+        "conciseness_relevance": 90
+      },
+      "penalties": [
+        {
+          "type": "major_unsupported_claim",
+          "deduction": 15,
+          "excerpt": "«آدم موحد نمی‌گوید من در این میدان شکست خوردم... او این قدر نزدیک‌بین نیست» و «فکر توحیدی به درازای عمر بشر دارای قلمرو است... ده سال و بیست سال و پنجاه سال و صد سال، یک لحظه و یک دقیقه بیش نیست» — این نقل‌قول‌ها در هیچ‌کدام از چانک‌های Evidence ارائه‌شده وجود ندارند"
+        }
+      ],
+      "final_score": 44,
+      "rationale": "The answer substantively covers all gold points: it identifies the flaw as narrowness of horizon (فقدان وسعت افق), critiques judging truth by immediate short-term results, affirms that the tawhidic outlook evaluates حق/باطل on the scale of humanity's lifespan, and does not reduce the response to a mere 'have tawakkul' advice — answer_correctness is high, with solid inferential structure (nearsightedness → wrong time-scale criterion → tawhid-as-touchstone), earning good reasoning quality. However, it fails as a RAG answer: the pivotal quotations and the 'داروی تقلبی' touchstone claim are not present anywhere in the visible Evidence block — chunk 48 only shows the session-13 title page and the closing of the prior session, while chunks 35, 29, 92, and 34 are entirely irrelevant (Rib'i b. Amir, qibla, wilayah, land fertility). The quotes plausibly come from the book itself, so no fabricated-quote penalty is applied, but as claims unsupported by the retrieved context they trigger a major unsupported-claim deduction and depress groundedness, evidence_quality, retrieval_completeness, and citation_accuracy. No false premise exists in the question, so contradiction_handling is defaulted to full marks.",
+      "judge_wall_seconds": 50.86
+    },
+    "TKI-05": {
+      "scores": {
+        "answer_correctness": 85,
+        "groundedness": 20,
+        "evidence_quality": 15,
+        "retrieval_completeness": 20,
+        "reasoning_quality": 65,
+        "contradiction_handling": 100,
+        "citation_accuracy": 15,
+        "conciseness_relevance": 80
+      },
+      "penalties": [
+        {
+          "type": "confident_fabricated_quote",
+          "deduction": 40,
+          "excerpt": "کتاب می‌گوید: «ایمانی که فقط در دل بماند، می‌پوسد و می‌خشکد»"
+        },
+        {
+          "type": "major_unsupported_claim",
+          "deduction": 15,
+          "excerpt": "«اولْ مؤمن به خدا، شیطان است»؛ سال‌ها خدا را عبادت می‌کرد و دلش کانون معرفت خدا بود، اما... «این ایمان به کار ابلیس نیامد و در همان دل ماند»"
+        }
+      ],
+      "final_score": 0,
+      "rationale": "The answer substantively covers all four gold points (faith is not a neutral belief; it creates commitment and action; it must manifest in behavior and responsibility; and it correctly answers that mere mental assent is not the book's complete instance of faith), so answer_correctness is high. However, groundedness and citation_accuracy are very low: the Evidence block is mostly irrelevant (chunks on qibla, session 13, and materialism; chunk 1 is only the table of contents; chunk 14 covers the prior session on aware faith), and none of it supports the direct quotes attributed to the book, including the 'faith that stays in the heart rots and dries' line and the Iblis narrative, which appear fabricated rather than retrieved. Retrieval clearly failed to surface the actual 'ایمان زاینده و همراه با تعهد' session content. Reasoning is decent (contrast + application to part two) but rests on unverifiable quotes, so severe hallucination penalties apply despite conceptual correctness.",
+      "judge_wall_seconds": 57.53
+    },
+    "TKI-06": {
+      "scores": {
+        "answer_correctness": 78,
+        "groundedness": 55,
+        "evidence_quality": 58,
+        "retrieval_completeness": 55,
+        "reasoning_quality": 72,
+        "contradiction_handling": 88,
+        "citation_accuracy": 60,
+        "conciseness_relevance": 72
+      },
+      "penalties": [
+        {
+          "type": "major_unsupported_claim",
+          "deduction": 15,
+          "excerpt": "«ای مادی! کدام دین را دیدی؟ بیا ثابت کن کجایش مغایرت دارد» — presented as the author's direct words but absent from the retrieved Evidence (chunk 33 cuts off before any such quote)"
+        },
+        {
+          "type": "major_unsupported_claim",
+          "deduction": 15,
+          "excerpt": "این جلسات در اوج خفقان ساواک برگزار شد؛ خواندن آیۀ جهاد جرم بود و «چوبش را هم می‌خوردیم» — historical anecdote not present in any retrieved chunk"
+        },
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "«حَسبُنا ما وَجَدنا عَلَیهِ آباءَنا» و «بیایید... بیازماییِد و بفهمید» — real Quranic material but not from the retrieved context (outside knowledge)"
+        },
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "قرآن ایمان مؤمن را «زیادتر و نیرومندتر» می‌کند / «بذر ایمان آگاهانه» — quoted phrases not found in the Evidence block"
+        }
+      ],
+      "final_score": 26,
+      "rationale": "The answer correctly detects the false premise, opens with 'خیر', and covers three of four gold points (aware/reasoned faith as the desirable faith, confrontation-as-condition logic, weak imitative faith needing deepening), though it misses the caveat that the book does not unconditionally recommend every encounter (only a faint hint via 'درایت' in managing sessions). Reasoning genuinely connects concepts across sessions (materialist strawman -> rational response; social function of faith -> anti-isolation), and chunk 3's verbatim 'انسان‌ساز و جامعه‌ساز' quote and chunk 33's materialism passage are well used. However, several direct quotes ('ای مادی... کدام دین را دیدی', the SAVAK/'چوبش را هم می‌خوردیم' anecdote, 'زیادتر و نیرومندتر', Quranic phrases) are not in the retrieved Evidence, indicating reliance on outside/unverified material; chunk 4 (footnote editorial notes) is irrelevant padding; and the tadabbur-increases-faith and aware-faith sessions were only superficially retrieved (headers/TOC, not content). Penalties total -40, yielding a final score of ~27.",
+      "judge_wall_seconds": 83.56
+    },
+    "TKI-07": {
+      "scores": {
+        "answer_correctness": 80,
+        "groundedness": 30,
+        "evidence_quality": 30,
+        "retrieval_completeness": 30,
+        "reasoning_quality": 75,
+        "contradiction_handling": 100,
+        "citation_accuracy": 25,
+        "conciseness_relevance": 90
+      },
+      "penalties": [
+        {
+          "type": "major_unsupported_claim",
+          "deduction": 15,
+          "excerpt": "«قیامتی در روح و باطنِ نبی برپا می‌شود» / «مثل سرچشمه‌ای که میلیاردها جریان آب از او استخراج می‌شود» / «بعد همین سرچشمه... بعثت به معنای واقعی تحقق پیدا می‌کند» — none of these quoted passages appear in any cited Evidence chunk"
+        },
+        {
+          "type": "major_unsupported_claim",
+          "deduction": 15,
+          "excerpt": "کتاب صریحاً تصویر «واعظی که وارد شهری می‌شود» / «سخنران میتینگ» را رد می‌کند و «بینش نسبت به نبوت اساساً نو شود» / «هرچه که هست، شور و تحول و دگرگونی و بعث و انبعاث است» — these quotes and the طبقاتی/توحیدی framing are not present in the provided context"
+        }
+      ],
+      "final_score": 23,
+      "rationale": "The answer substantively covers 3.5 of 4 gold points (internal transformation of the prophet, its transfer to society, prophethood not being mere preaching) with good inferential structure, but it is poorly grounded: the Evidence block contains only chunk 60 (definition of انقلاب as deep-rooted social transformation) and partially chunk 55 (prophetic governance) as relevant support, while chunks 86, 34, and 1 are irrelevant. The central quotes about the internal قیامت/سرچشمه of بعثت, its overflow into society, and the book's rejection of the 'واعظ/سخنران میتینگ' image are not attested in any retrieved chunk, so the core claims rest on unverifiable material and no inline citations link claims to chunks, warranting low groundedness/citation scores and two major unsupported-claim deductions. No false premise existed in the question, so contradiction_handling is not applicable (scored neutral).",
+      "judge_wall_seconds": 43.39
+    },
+    "TKI-08": {
+      "scores": {
+        "answer_correctness": 92,
+        "groundedness": 65,
+        "evidence_quality": 78,
+        "retrieval_completeness": 68,
+        "reasoning_quality": 90,
+        "contradiction_handling": 90,
+        "citation_accuracy": 72,
+        "conciseness_relevance": 78
+      },
+      "penalties": [
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "در آن نظام «جمع‌کردن ثروت ممنوع» است؛ ثروت‌اندوزان (قارون/مترفین) می‌ترسند — این ادعا و نقل‌قول در هیچ‌یک از چانک‌های Evidence وجود ندارد"
+        },
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "جزئیات و نقل‌قول‌های بدون پشتوانه در Evidence: «آقاییِ آقاها...»، هامان/مغیره و زیاد پیرامون تخت معاویه، کعب‌الاحبار و عبدالله‌سلام، «وقتی خورشید حقیقت بتابد...» و «این قاعدۀ کلی است... هرجا سخن حقی پدید آمد...»"
+        }
+      ],
+      "final_score": 69,
+      "rationale": "The answer correctly covers all four gold points: it frames opposition structurally (prophethood's social consequence), shows the prophetic society challenging the existing order and unjust class structures, and derives that holders of wealth, power, aristocracy and spiritual leadership become opponents — explicitly rejecting the reductive 'kafirs refused' explanation, with strong inferential synthesis. Core sections are grounded in chunks 74, 75, and 40 (the four-class naming of ملأ/مترفین/احبار و رهبان/طاغوت appears verbatim in chunk 40), and the Saba 34:34 paraphrase is a correct Quranic attribution with no invented page/verse. However, many verbatim quotes and specifics (قارون, 'جمع‌کردن ثروت ممنوع', هامان/مغیره/زیاد, کعب‌الاحبار, the 'قاعدۀ کلی' and 'خورشید حقیقت' quotes) are not present in the retrieved Evidence, indicating incomplete retrieval of session 19 and lowering groundedness/citation accuracy; chunk 92 on ولایت شیعی is irrelevant padding. Two minor unsupported claims deducted.",
+      "judge_wall_seconds": 48.07
+    },
+    "TKI-09": {
+      "scores": {
+        "answer_correctness": 95,
+        "groundedness": 60,
+        "evidence_quality": 60,
+        "retrieval_completeness": 55,
+        "reasoning_quality": 85,
+        "contradiction_handling": 100,
+        "citation_accuracy": 65,
+        "conciseness_relevance": 88
+      },
+      "penalties": [
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "«گل نرگس خوش‌بوتر است از گل محمدی» و نقل «هیچ اثری در زندگی ما ندارد، هیچ تعهدی در زندگی ما ایجاد نمی‌کند» — این مثال و نقل‌قول در هیچ‌کدام از پنج chunk ارائه‌شده در Evidence وجود ندارد."
+        },
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "مثال پاپ («مسیحیِ مطلع که می‌داند پاپِ امروز فلان‌کس است، هیچ تعهدی برای او نمی‌آورد») در Evidence block موجود نیست؛ احتمالاً از متن کتاب خارج از چانک‌های بازیابی‌شده آمده است."
+        },
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "نقل‌های «بلی، می‌گذارد» و «اگر بگویم نمی‌توانم، دروغ است» به‌صورت نقل مستقیم کتاب ارائه شده‌اند اما در چانک‌های 86، 87 یا 12 به‌صورت عین عبارت پیدایش نمی‌شوند (chunk 87 فقط عبارت قطع‌شده «اما نمی‌توانم» را دارد)."
+        }
+      ],
+      "final_score": 59,
+      "rationale": "The answer covers all four gold points well (commitment-creating shahada, continuing the Prophet's path, responsibility for delivering his burden, and neutral informational knowledge not being the book's intent) and is well structured with genuine comparative reasoning, so answer_correctness and reasoning_quality are high. However, several key illustrative elements presented as direct book quotes — the narges/mohammadi flower example, the Pope example, «بلی، می‌گذارد», and «اگر بگویم نمی‌توانم، دروغ است» — do not appear anywhere in the retrieved Evidence block, so they are unsupported by the retrieved context (groundedness penalty and three minor deductions). Chunks 86 and 87 are the right session (page header «تعهد ایمان به نبوت») but chunks 51 and 40 are irrelevant sessions dragged in, hurting evidence_quality and citation_accuracy, and the retrieval clearly missed the passages containing the Pope/flower examples and the explicit 'burden of the Prophet' discussion, lowering retrieval_completeness. No false premise exists in the question, so contradiction_handling is not applicable and not penalized.",
+      "judge_wall_seconds": 58.35
+    },
+    "TKI-10": {
+      "scores": {
+        "answer_correctness": 45,
+        "groundedness": 30,
+        "evidence_quality": 15,
+        "retrieval_completeness": 20,
+        "reasoning_quality": 55,
+        "contradiction_handling": 100,
+        "citation_accuracy": 15,
+        "conciseness_relevance": 70
+      },
+      "penalties": [
+        {
+          "type": "wrong_attribution",
+          "deduction": 20,
+          "excerpt": "آیهٔ تلاوتی جلسۀ «تعهد ایمان به نبوت»، آیۀ ۷۲ سورۀ انفال است — the session's pivotal verse is Anfal 74 (with «اولئک هم المؤمنون حقاً»), not 72"
+        },
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "چنان‌که کتاب می‌گوید، ایمانِ خشک و خالی «در دنیا هم اثر نمی‌دهد...» / «ایمانی که فقط در دل بماند، می‌پوسد و می‌خشکد» — attributed book quotes absent from the Evidence block"
+        },
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "«مثل البنیانِ یشدّ بعضُه بعضاً» — hadith/parable reference not present in retrieved context"
+        }
+      ],
+      "final_score": 7,
+      "rationale": "The agent identifies the wrong pivotal verse (Anfal 72 instead of Anfal 74), missing the key «اولئک هم المؤمنون حقاً» formulation that anchors the gold point about the 'true believer' tied to action and responsibility; since the gold itself says citing the verse number is worth half credit or less, and the number is wrong, correctness is heavily reduced even though the surrounding discussion of faith paired with hijrah/jihad/nusra partially covers the remaining points. The Evidence block contains chunks from other faith sessions (sessions 2-5, pages 40-164) none of which contain the Anfal passage or the 'تعهد ایمان به نبوت' session, so the verse quotation, the attributed book quotes, and the Bunyan-like building parable are all unsupported by the retrieved context, hurting groundedness, evidence quality, retrieval completeness, and citation accuracy. Reasoning is genuinely synthetic (contrasting the two groups, deriving the active/committed definition of faith), but it is built on the misidentified verse, and no false premise exists in the question so contradiction handling is neutral.",
+      "judge_wall_seconds": 44.68
+    },
+    "TKI-11": {
+      "scores": {
+        "answer_correctness": 95,
+        "groundedness": 88,
+        "evidence_quality": 80,
+        "retrieval_completeness": 85,
+        "reasoning_quality": 85,
+        "contradiction_handling": 100,
+        "citation_accuracy": 85,
+        "conciseness_relevance": 95
+      },
+      "penalties": [
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "«بر پایۀ آیات سورۀ مائده» و «قلبِ امت — یعنی قطب و حاکم و امام (ولیّ)» — این عبارات در متن Evidence قابل راستی‌آزمایی نیستند (چانک‌های ارائه‌شده اشاره‌ای به سورۀ مائده یا «قلب امت/قطب» ندارند، هرچند محتمل است در بخش بریده‌شده باشند)"
+        }
+      ],
+      "final_score": 84,
+      "rationale": "The answer covers all three gold points correctly: internal cohesion of the believer community (chunk 92, 95: «به هم پیوستگی... هم جبهگان و پیوستهگان یکدیگرند»)، severing bonds with hostile external blocs (chunk 95: «با ولایت با آنها ندارد، پیوستگی با آنها ندارد... پیوند جوهری و ماهوی آنها ندارد»)، and connection with the leader/center of the ummah (chunk 96: پیوند ناگسستنی فکری و عملی با ولی). It avoids the known trap of merely listing «محبت، اطاعت، رهبری». Reasoning is mostly faithful paraphrase with light synthesis (positive/negative dimensions). Evidence quality is reduced because chunks 89 (session 22 on نبوّت) and 1 (front matter) are irrelevant padding, though core chunks 95/96 are exactly on target. Minor deduction for framing details (Surah Ma'idah attribution, «قلب امت/قطب و حاکم و امام» phrasing) not verifiable in the visible evidence. No false premise exists in the question, so contradiction_handling is not applicable (scored full). No fabricated quotes, verses, or pages were detected.",
+      "judge_wall_seconds": 49.26
+    }
+  },
+  "mean_final_score": 44.45
+}

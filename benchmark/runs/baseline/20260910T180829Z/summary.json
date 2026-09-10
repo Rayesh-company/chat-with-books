@@ -1,0 +1,16 @@
+{
+  "variant": "baseline",
+  "finished_utc": "2026-09-10T18:28:04.872569+00:00",
+  "question_count": 18,
+  "ok_count": 18,
+  "error_ids": [],
+  "wall_seconds": {
+    "mean": 64.73,
+    "median": 57.84,
+    "min": 52.26,
+    "max": 119.57
+  },
+  "mean_answer_chars": 1479.4,
+  "mean_evidence_page_count": 3.61,
+  "answers_without_evidence": []
+}

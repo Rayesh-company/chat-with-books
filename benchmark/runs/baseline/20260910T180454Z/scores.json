@@ -1,0 +1,34 @@
+{
+  "judge_model": "glm-5.3",
+  "judged_utc": "2026-09-10T18:09:36Z",
+  "results": {
+    "TKI-06": {
+      "scores": {
+        "answer_correctness": 72,
+        "groundedness": 62,
+        "evidence_quality": 70,
+        "retrieval_completeness": 60,
+        "reasoning_quality": 85,
+        "contradiction_handling": 90,
+        "citation_accuracy": 65,
+        "conciseness_relevance": 75
+      },
+      "penalties": [
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "این جلسات در اوج خفقان ساواک و رژیم طاغوت — که خواندن آیۀ جهاد جرم بود — برگزار شد؛ «چوبش را هم می‌خوردیم»"
+        },
+        {
+          "type": "minor_unsupported_claim",
+          "deduction": 5,
+          "excerpt": "«ای مادی! کدام دین را دیدی؟ بیا ثابت کن کجایش مغایرت دارد!» / «بیایید... بیازمایید و بفهمید» — quotes not present verbatim in the Evidence block"
+        }
+      ],
+      "final_score": 60,
+      "rationale": "The answer correctly negates the question's false premise (خیر) and covers three of four gold points: aware/understanding-based faith (chunk 14), the dismissal of faith that survives only by cutting off questioning, and the social function of faith (chunk 3), with genuine cross-session synthesis (chunks 33, 92) showing real reasoning rather than repetition. However, it misses the fourth gold point — that the book does not unconditionally recommend every exposure — leaning instead toward unconditional engagement, indicating a retrieval gap. Groundedness suffers because section 4's Savak-era narrative, «چوبش را هم می‌خوردیم», the paraphrase-quotes of the speaker, and the Quranic imitation verse are not in the retrieved evidence, though the verse itself is authentic Quran and the materialist-analysis claims are well supported by chunk 33. Citation-chunk matches are otherwise accurate, and the answer is focused, but two minor unsupported claims apply.",
+      "judge_wall_seconds": 56.93
+    }
+  },
+  "mean_final_score": 60.0
+}

@@ -1,0 +1,62 @@
+{
+  "variant_id": "baseline",
+  "description": "Fast chat mode (first answer) exactly as shipped at commit b051e82 on feat/12-cognee-postgres-avalai. Next-tier search and the UI quoted-answer composer are deliberately out of scope.",
+  "created_utc": "2026-09-10T00:00:00Z",
+  "mode_under_test": {
+    "name": "fast chat (first answer)",
+    "http_method": "POST",
+    "endpoint_path": "/api/v1/recall",
+    "base_url": "http://localhost:8000",
+    "service": "cognee",
+    "port": 8000,
+    "search_type": "HYBRID_COMPLETION",
+    "include_references": true,
+    "stream": false,
+    "stream_note": "Benchmark calls non-streaming; the UI streams the same call and the final frame carries the identical JSON, so total wall time is comparable. TTFT is a UI-side metric and is not benchmarked here.",
+    "session_id": null,
+    "request_payload_template": {
+      "searchType": "HYBRID_COMPLETION",
+      "query": "<question>",
+      "datasets": ["tarhe-kolli"],
+      "includeReferences": true
+    }
+  },
+  "excluded_modes": [
+    "Next-tier search: cognee-next-tier, port 8001, GRAPH_COMPLETION_COT, glm-5.3",
+    "Quoted-answer composer (UI phase 2): planner+writer glm-5.3-flash calls in ui/serve.py"
+  ],
+  "chat_model": {
+    "model": "openai/glm-5.3-flash",
+    "provider": "custom",
+    "endpoint": "https://api.z.ai/api/coding/paas/v4",
+    "plan": "GLM Coding Plan",
+    "temperature": "endpoint default (not overridden)",
+    "streaming_flag": "LLM_ANSWER_STREAMING=true in compose.yaml"
+  },
+  "embeddings": {
+    "model": "text-embedding-3-small",
+    "endpoint": "https://api.avalai.ir/v1",
+    "dimensions": 1536,
+    "batch_size": 8,
+    "rate_limit": "8 requests / 60 s"
+  },
+  "memory": {
+    "db_provider": "postgres (pgvector/pgvector:pg17)",
+    "vector_db": "pgvector",
+    "graph_database": "postgres_demo",
+    "cache_backend": "postgres",
+    "backend_access_control": false
+  },
+  "dataset": {
+    "name": "tarhe-kolli",
+    "book": "طرح کلی اندیشۀ اسلامی در قرآن",
+    "file": "tarhe-kolli.pdf",
+    "ingested": true
+  },
+  "patches": {
+    "docker/enable_farsi_evidence.py": "Compose entrypoint patch: Farsi-aware overlap regex (keeps Farsi terms, not only [a-z0-9]) and snippet window widened to 600 chars (Cognee default 160) so quoted passages hold complete sentences."
+  },
+  "container_image": "cognee/cognee:main",
+  "service_version_captured_live": null,
+  "git_commit_captured_live": null
+}
