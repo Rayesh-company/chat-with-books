@@ -48,14 +48,29 @@ NEXT_TIER_SEARCH_TYPE = "GRAPH_COMPLETION_COT"
 
 # Deep dive (ADR-0006, tracer bullet issue #25): the study orchestration
 # runs here, server-side — the browser names no Cognee search type. Each
-# searcher pins its recall shape below (GRAPH_COMPLETION over the Book
+# searcher pins its recall shape below (HYBRID_COMPLETION over the Book
 # set, references on — not FEELING_LUCKY, not AGENTIC_COMPLETION, which
 # needs exactly one dataset), riding the second Cognee service so a
 # multi-minute dive never blocks the first-answer path on 8000. The
 # Planner and Synthesizer run glm-5.3 (the next-tier model, ADR-0002),
 # pinned in source like every model pin — never via env.
 DIVE_MODEL = "glm-5.3"
-DIVE_SEARCH_TYPE = "GRAPH_COMPLETION"
+# The 2026-09-12 live smoke (ticket #25) failed the dive: the pinned
+# GRAPH_COMPLETION renders no Evidence block on the second service —
+# its references arrive as graph-node metadata with no verbatim passage
+# text — so every section's quote pool was empty by construction and all
+# six sections starved through both retrieval rounds. The recorded real
+# reply is the negative fixture tests/fixtures/
+# recall-graph-completion-8001.json (locked to parse to zero passages).
+# The same question over HYBRID_COMPLETION on the same service renders
+# the Evidence contract the pool parser consumes — locators with Book
+# identity and pages, verbatim passages (positive fixture
+# recall-hybrid-completion-8001.json) — exactly the pool the
+# synthesizer's verbatim guard needs. ADR 0006 records the switch;
+# GRAPH_COMPLETION_DECOMPOSITION stays the recorded fallback for
+# planner disappointment, which this was not. The model pin stays
+# per-service, so the tier separation holds.
+DIVE_SEARCH_TYPE = "HYBRID_COMPLETION"
 # A graph-backed search can sit minutes on the second service; each
 # searcher gets its own leash (the COT probe's four rounds fit inside
 # ten minutes on live logs, and a decomposition pass is lighter).
@@ -889,9 +904,11 @@ def dive_recall(sub_question: str) -> list:
     """One searcher: the pinned recall on the second Cognee service.
 
     The search shape is pinned HERE, never in the browser:
-    GRAPH_COMPLETION over the Book set with references on — not
+    HYBRID_COMPLETION over the Book set with references on — not
     FEELING_LUCKY, not AGENTIC_COMPLETION (it requires exactly one
-    dataset; the Book set is two). On any failure the searcher
+    dataset; the Book set is two), and no longer GRAPH_COMPLETION,
+    which renders no Evidence block on this service (the 2026-09-12
+    live smoke, ticket #25; ADR 0006). On any failure the searcher
     contributes nothing; the dive continues on its siblings' pools.
     """
     request = Request(

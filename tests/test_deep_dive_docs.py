@@ -83,7 +83,7 @@ def test_readme_records_the_live_deep_dive_contract():
     assert "thinking on" in section
     assert "thinking disabled" in section
     assert "six" in section
-    assert "GRAPH_COMPLETION" in section
+    assert "HYBRID_COMPLETION" in section
     assert "2,000" in section and "4,000" in section
     assert "five to eight" in section
     # The references list is built server-side from the real pool.
@@ -94,6 +94,23 @@ def test_readme_records_the_live_deep_dive_contract():
     assert "never counts" in section
     assert "stdlib-only" in section
     assert "ADR 0006" in section
+
+
+def test_readme_records_the_searcher_pin_and_the_graph_completion_outcome():
+    # The live smoke (2026-09-12, #25): the pinned GRAPH_COMPLETION
+    # rendered no Evidence block on the second service — its references
+    # are graph-node metadata with no verbatim passage text — so every
+    # section starved through both rounds and the dive failed. The
+    # searchers pin HYBRID_COMPLETION, which renders the Evidence
+    # contract the pool parser consumes; the switch is recorded, and
+    # GRAPH_COMPLETION_DECOMPOSITION stays the fallback for planner
+    # disappointment, which this was not.
+    section = _deep_dive_section()
+    assert "each pinning `HYBRID_COMPLETION`" in section
+    assert "no `Evidence:` block" in section
+    assert "graph-node metadata" in section
+    assert "no verbatim passage text" in section
+    assert "GRAPH_COMPLETION_DECOMPOSITION" in section
 
 
 def test_readme_records_the_registry_caps_and_busy_rejections():

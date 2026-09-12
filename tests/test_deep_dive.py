@@ -216,7 +216,7 @@ def run_dive_job_sync(question, upstream):
 def test_serve_pins_the_dive_constants_in_source():
     text = SERVE.read_text(encoding="utf-8")
     assert serve.DIVE_MODEL == "glm-5.3"
-    assert serve.DIVE_SEARCH_TYPE == "GRAPH_COMPLETION"
+    assert serve.DIVE_SEARCH_TYPE == "HYBRID_COMPLETION"
     assert serve.DIVE_SEARCH_TIMEOUT == 600
     # Pinned in source like every model pin — never via env.
     assert 'environ.get("DIVE_MODEL"' not in text
@@ -271,6 +271,67 @@ def test_parse_evidence_sources_answers_no_evidence_with_an_empty_pool():
     assert serve.parse_evidence_sources("پاسخ بی استناد.") == []
     assert serve.parse_evidence_sources("") == []
     assert serve.parse_evidence_sources(None) == []
+
+
+# --- the recorded live-reply fixtures (the 2026-09-12 live smoke, #25) ------
+#
+# The searcher seam tests once scripted Evidence-bearing replies by hand,
+# and the mock drifted from the real reply shape: the live smoke failed
+# because the pinned GRAPH_COMPLETION renders no Evidence block at all.
+# These fixtures are real 8001 replies to the same question on the same
+# day — the negative one proves the pool is empty by construction under
+# GRAPH_COMPLETION, the positive one proves HYBRID_COMPLETION renders the
+# Evidence contract the pool parser consumes (ADR 0006, searcher pin).
+
+
+def recorded_reply(name):
+    return json.loads(
+        (REPO_ROOT / "tests" / "fixtures" / name).read_text(encoding="utf-8")
+    )
+
+
+def recorded_pool(name):
+    reply = recorded_reply(name)
+    return serve.parse_evidence_sources(reply[0]["text"])
+
+
+def test_recorded_graph_completion_reply_parses_to_an_empty_pool():
+    # The real 8001 reply that starved the live smoke: a top-level list,
+    # one graph_completion item whose answer text carries no Evidence
+    # marker — its references ride in metadata.evidence as graph-node
+    # provenance (labels only: no document_name, no pages, no verbatim
+    # passage text). The parser must read zero passages from the true
+    # shape, not only from invented no-evidence strings.
+    reply = recorded_reply("recall-graph-completion-8001.json")
+    item = reply[0]
+    assert item["search_type"] == "GRAPH_COMPLETION"
+    assert item["kind"] == "graph_completion"
+    assert "Evidence:" not in item["text"]
+    assert item["metadata"]["evidence"], "the real reply carries graph-node metadata"
+    assert all(
+        evidence["document_name"] is None
+        for evidence in item["metadata"]["evidence"]
+    )
+    assert recorded_pool("recall-graph-completion-8001.json") == []
+
+
+def test_recorded_hybrid_completion_reply_parses_to_located_passages():
+    # The same question over HYBRID_COMPLETION on the same service, 41 s
+    # later: the Evidence block the pool lives on — five verbatim
+    # passages, each with a locator carrying Book identity and pages,
+    # and metadata empty (the references ride in the text itself).
+    reply = recorded_reply("recall-hybrid-completion-8001.json")
+    item = reply[0]
+    assert item["search_type"] == "HYBRID_COMPLETION"
+    assert item["metadata"] == {}
+    pool = recorded_pool("recall-hybrid-completion-8001.json")
+    assert len(pool) == 5
+    assert pool[0]["reference"] == "chunk 8 of document tarhe-kolli (pages 31-39)"
+    for source in pool:
+        assert source["reference"].startswith("chunk ")
+        assert " of document " in source["reference"]
+        assert "(pages " in source["reference"]
+        assert source["passage"]
 
 
 # --- the Planner -----------------------------------------------------------
@@ -348,7 +409,7 @@ def test_dive_recall_pins_the_search_payload_on_the_second_service():
     urls, payloads = zip(*recall_calls(upstream))
     assert urls[0].startswith(serve.NEXT_TIER_URL + "/api/v1/recall")
     assert payloads[0] == {
-        "searchType": "GRAPH_COMPLETION",
+        "searchType": "HYBRID_COMPLETION",
         "query": "زیرپرسش؟",
         "datasets": ["tarhe-kolli", "70143-336"],
         "includeReferences": True,
