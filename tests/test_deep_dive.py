@@ -844,6 +844,66 @@ def test_an_always_starved_dive_stops_at_exactly_two_retrieval_rounds():
     ]
 
 
+def test_a_starved_section_whose_gap_round_still_finds_nothing_proceeds_to_the_synthesizer():
+    # The agreed contract's other landing (ADR 0006): الف's round-1
+    # searcher parses exactly one passage — quote-starved — and the gap
+    # round's re-search parses zero. The dive exits at the round cap and
+    # proceeds on the one-passage pool: the synthesizer runs, the job
+    # lands `done`, and the starved section's round-1 passage is what
+    # the study quotes. Residual starvation buys no third round.
+    calls = {"الف؟": 0}
+
+    def reply(payload):
+        # One sub-question, so the two rounds are strictly sequential.
+        calls["الف؟"] += 1
+        if calls["الف؟"] == 1:
+            return cognee_payload(recall_text(SENTENCE))
+        # The gap round comes back empty — the starvation survives it.
+        return b"[]"
+
+    pool = [{"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE}]
+    upstream = DiveUpstream(
+        composer_replies=[
+            subquestions_reply(["الف؟"]),
+            composer_reply(
+                json.dumps({"blocks": dive_blocks(pool)}, ensure_ascii=False)
+            ),
+        ],
+        recall_reply=reply,
+    )
+    job = run_dive_job_sync("پرسش اصلی؟", upstream)
+    assert job.state == "done"
+    # Round 1 plus exactly the starved section's one re-search — never a
+    # third round.
+    recalls = recall_calls(upstream)
+    assert len(recalls) == 2
+    assert [payload["query"] for _, payload in recalls] == ["الف؟", "الف؟"]
+    # The timeline: one gap event between searching and writing — the
+    # starved section was named once, not twice.
+    assert job.events == [
+        serve.DIVE_EVENT_PLANNING,
+        serve.DIVE_EVENT_SEARCHING,
+        serve._dive_gap_event(1),
+        serve.DIVE_EVENT_WRITING,
+        serve.DIVE_EVENT_DONE,
+    ]
+    # The starved section's round-1 passage is the pool the study wove.
+    blocks, truncated = job.result
+    assert truncated is False
+    quotes = [
+        part["quote"]
+        for block in blocks
+        if block["type"] == "paragraph"
+        for part in block["parts"]
+        if "quote" in part
+    ]
+    assert quotes == [SENTENCE]
+    assert blocks[-1] == {
+        "type": "references",
+        "items": ["chunk 1 of document tarhe-kolli"],
+    }
+
+
 def test_a_well_fed_dive_runs_a_single_retrieval_round():
     # Every searcher parses two passages: nothing is starved, so the
     # dive runs exactly one round — one recall call per sub-question —
