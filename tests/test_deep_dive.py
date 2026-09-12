@@ -801,6 +801,26 @@ def test_dive_job_fails_quietly_when_no_searcher_returns_evidence():
     assert len(recall_calls(upstream)) == 2
 
 
+def test_dive_job_fails_when_the_writer_leaves_no_usable_study():
+    # A synthesizer reply that is unparseable prose — or a verbatim guard
+    # that legitimately keeps nothing — used to land `done` with an EMPTY
+    # blocks list: the sheet rendered a silent blank phase-3 tab with the
+    # green dot and no error (2026-09-12). A done job never carries an
+    # empty study — it lands `failed` with the empty-study detail, the
+    # same settle surface as the no-evidence failure above.
+    upstream = DiveUpstream(
+        composer_replies=[
+            subquestions_reply(["زیرپرسش؟"]),
+            composer_reply("پاسخ نگارنده هیچ بلوکی قابل استفاده نداشت."),
+        ],
+    )
+    job = run_dive_job_sync("پرسش اصلی؟", upstream)
+    assert job.state == "failed"
+    assert job.error == dive.DIVE_EMPTY_STUDY_DETAIL
+    assert serve.DIVE_EVENT_FAILED in job.events
+    assert job.result is None
+
+
 GAP_PASSAGE = "نقلِ تازۀ دور دوم"
 GAP_REFERENCE = "chunk 50 of document 70143-336 (pages 3-4)"
 

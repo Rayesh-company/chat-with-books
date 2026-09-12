@@ -108,6 +108,12 @@ def test_readme_records_the_live_deep_dive_contract():
     assert "never counts" in section
     assert "stdlib-only" in section
     assert "ADR 0006" in section
+    # The failure details are recorded as written (2026-09-12): the
+    # no-evidence pool, and the empty study — a `done` job never
+    # carries an empty blocks list, so the sheet's blank phase-3 tab
+    # is never a done dive.
+    assert "مطالعۀ عمیق ناتمام ماند؛ نقل‌قولی از کتاب‌ها پیدا نشد." in section
+    assert "مطالعۀ عمیق ناتمام ماند؛ پاسخ نگارنده قابل استفاده نبود." in section
 
 
 def test_readme_records_the_searcher_pin_and_the_graph_completion_outcome():

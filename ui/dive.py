@@ -423,6 +423,13 @@ DIVE_BUSY_GLOBAL_DETAIL = (
 DIVE_NOT_FOUND_DETAIL = "چنین مطالعه‌ای پیدا نشد."
 DIVE_FAILED_DETAIL = "مطالعۀ عمیق ناتمام ماند؛ خطای غیرمنتظره."
 DIVE_NO_EVIDENCE_DETAIL = "مطالعۀ عمیق ناتمام ماند؛ نقل‌قولی از کتاب‌ها پیدا نشد."
+# A guarded study that kept nothing (a malformed writer reply, or the
+# verbatim guard legitimately keeping nothing) used to land `done` with
+# an empty blocks list — the sheet rendered a silent blank phase-3 tab
+# (2026-09-12). A done job never carries an empty study; it fails here.
+DIVE_EMPTY_STUDY_DETAIL = (
+    "مطالعۀ عمیق ناتمام ماند؛ پاسخ نگارنده قابل استفاده نبود."
+)
 
 # Farsi progress events, one appended at each state transition — the
 # status surface's observable timeline of the dive.
@@ -474,7 +481,7 @@ class DiveJob:
         self.done = threading.Event()
 
 
-def dive_retrieve(job: DiveJob, sub_questions) -> list:
+def dive_retrieve(job: DiveJob, sub_questions) -> tuple:
     """The bounded retrieval (issue #27): round 1 searches every
     sub-question; sections that come back quote-starved — fewer than
     DIVE_STARVED_PASSAGES parsed passages, too few to weave a quoted
@@ -486,14 +493,15 @@ def dive_retrieve(job: DiveJob, sub_questions) -> list:
     failure in the worker). The gap round is announced before it runs —
     a Farsi event naming the starved count, visible in the status
     events while the state remains "searching" — and the cancel flag is
-    checked between rounds so an abort lands promptly."""
+    checked between rounds so an abort lands promptly. Returns
+    (sources, rounds) — the merged pool and the rounds it took."""
     sources = []
     seen = set()
     pending = list(sub_questions)
     rounds = 0
     while pending and rounds < DIVE_MAX_RETRIEVAL_ROUNDS:
         if job.cancel.is_set():
-            return sources
+            return sources, rounds
         rounds += 1
         counts = run_dive_round(pending, sources, seen)
         pending = [
@@ -503,7 +511,7 @@ def dive_retrieve(job: DiveJob, sub_questions) -> list:
         ]
         if pending and rounds < DIVE_MAX_RETRIEVAL_ROUNDS:
             _dive_advance(job, event=_dive_gap_event(len(pending)))
-    return sources
+    return sources, rounds
 
 
 def run_dive_job(job: DiveJob) -> None:
@@ -513,13 +521,24 @@ def run_dive_job(job: DiveJob) -> None:
     never interrupted mid-call; it resolves within its own leash and the
     worker stops at the next boundary without writing a result. Any
     worker failure marks the job `failed` with a short Farsi detail; the
-    endpoint never 500s from this thread."""
+    endpoint never 500s from this thread. Each stage boundary also
+    prints one terse line (job id, counts — no prompt text, no secrets)
+    so the systemd journal diagnoses a live dive without the sheet."""
     try:
         sub_questions = plan_dive_subquestions(job.query)
+        print(
+            f"deep-dive {job.id}: planned {len(sub_questions)} sub-question(s)",
+            flush=True,
+        )
         if job.cancel.is_set():
             return
         _dive_advance(job, "searching", DIVE_EVENT_SEARCHING)
-        sources = dive_retrieve(job, sub_questions)
+        sources, rounds = dive_retrieve(job, sub_questions)
+        print(
+            f"deep-dive {job.id}: retrieved {len(sources)} passage(s) "
+            f"in {rounds} round(s)",
+            flush=True,
+        )
         if job.cancel.is_set():
             return
         if not sources:
@@ -527,6 +546,20 @@ def run_dive_job(job: DiveJob) -> None:
             return
         _dive_advance(job, "synthesizing", DIVE_EVENT_WRITING)
         blocks, truncated = compose_dive_study(job.query, sources)
+        print(
+            f"deep-dive {job.id}: writer kept {len(blocks)} block(s)"
+            + (" (truncated)" if truncated else ""),
+            flush=True,
+        )
+        if not blocks:
+            # A guarded study that kept nothing used to land `done`
+            # with an empty blocks list — the sheet's silent blank
+            # phase-3 tab (2026-09-12). A done job never carries an
+            # empty study: it fails here like any other unusable
+            # writer reply; the registry's settle-guard refuses a job
+            # an abort settled while the synthesizer wrote.
+            _dive_fail(job, DIVE_EMPTY_STUDY_DETAIL)
+            return
         with DIVE_REGISTRY_LOCK:
             # The abort may have landed while the synthesizer wrote —
             # every writer refuses a settled job, so a finished result
