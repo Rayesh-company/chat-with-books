@@ -655,16 +655,17 @@ def test_session_ui_shows_the_composer_phase_and_times_the_whole_pipeline():
     # PM call, 2026-09-10: a pulsing status line marks phase 2 while it
     # runs. PM brief, 2026-09-11: each phase gets its own switchable
     # section, phases 2 and 3 get a timer that freezes at their completion
-    # time, a line names the phase being generated, and the whole-pipeline
-    # elapsed clock still stops only at the final settle.
+    # time, and a line names the phase being generated. Issue #25: phase 2
+    # is the pipeline's end — the whole-pipeline elapsed clock stops when
+    # it settles; the dive is operator-timed by its own chip.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
     assert "در حال نوشتن پاسخ استنادی" in html
     assert 'className = "composer-status"' in html
     assert "composer-pulse" in html
     assert "const stopTimer" in html
     assert "clearInterval(tick)" in html
-    # Phase 2 settles into phase 3 — the pipeline clock stops there.
-    assert "renderQuotedAnswer(query, answer, citations, startNextTier)" in html
+    # Phase 2 settles and the pipeline clock stops — no phase-3 auto-start.
+    assert "renderQuotedAnswer(query, answer, citations, stopTimer)" in html
     # Per-phase machinery: the running-phase line, and the timer chips on
     # the phase 2 and 3 tabs.
     assert 'id="phase-now"' in html
@@ -677,18 +678,29 @@ def test_session_ui_shows_the_composer_phase_and_times_the_whole_pipeline():
     assert "stopPhaseTimer(3)" in html
 
 
-def test_session_ui_runs_the_graph_search_as_phase_3():
-    # Phase 3 (the graph-retrieval answer) runs in its own section after
-    # phase 2 settles — success, fallback, or skip. The search shape is
-    # pinned on the server; the sheet asks only with the query, and never
-    # names the search type (locked in test_session_ui.py).
+def test_session_ui_starts_the_deep_dive_from_the_phase_3_button():
+    # Phase 3 is the Deep dive (ADR 0006, issue #25): no ask auto-starts
+    # it — the operator's button does, starting the phase timer on press
+    # and POSTing the held /deep-dive request with only the query (every
+    # payload is pinned server-side). The recorded COT relay stays
+    # reachable server-side as the operator probe; the sheet never calls
+    # it, and the superseded startNextTier auto-start is gone.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
-    assert "/next-tier-recall" in html
-    assert 'id="panel-3"' in html
-    assert "در حال جست‌وجوی سطح بعدی" in html
-    assert "جست‌وجوی سطح بعدی" in html  # the tab's own name
-    assert "startNextTier" in html
-    assert "AbortController" in html  # a new ask aborts the previous phase 3
+    assert "/deep-dive" in html
+    assert "/next-tier-recall" not in html
+    assert 'id="dive-start"' in html
+    assert "شروع مطالعۀ عمیق" in html
+    assert "مطالعۀ عمیق" in html  # the tab's own name
+    assert "startNextTier" not in html
+    assert "startPhaseTimer(3)" in html
+    assert "diveAbort" in html
+    assert "AbortController" in html  # a new ask aborts an in-flight dive
+    assert "run !== citationRun" in html  # a stale study never lands
+    # Friendly Farsi failure in the panel; the study renders like phase
+    # 2's document, plus the closing server-built references list.
+    assert "مطالعۀ عمیق آماده نشد" in html
+    assert 'block.type === "references"' in html
+    assert "منابع" in html
 
 
 def test_session_ui_keeps_the_llm_key_off_the_sheet():

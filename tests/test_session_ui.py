@@ -19,7 +19,10 @@ def test_session_ui_pins_first_answer_recall_contract():
     assert "HYBRID_COMPLETION" in html
     assert "includeReferences" in html
     assert "tarhe-kolli" in html
-    assert "GRAPH_COMPLETION_COT" not in html
+    # The browser names no Cognee search type at all — the dive payloads
+    # are pinned server-side (issue #25). Tightened from the COT-only
+    # assertion: any GRAPH_COMPLETION* string must stay out of the sheet.
+    assert "GRAPH_COMPLETION" not in html
     assert "sessionId" not in html
 
 
@@ -41,7 +44,10 @@ def test_session_ui_splits_answers_into_three_switchable_sections():
         assert f'id="{panel}"' in html
     assert "پاسخ اول" in html
     assert "پاسخ استنادی" in html
-    assert "جست‌وجوی سطح بعدی" in html
+    # Phase 3 is the Deep dive now (CONTEXT.md: a second study) — the
+    # superseded «جست‌وجوی سطح بعدی» name is gone with the auto-start.
+    assert "مطالعۀ عمیق" in html
+    assert "جست‌وجوی سطح بعدی" not in html
     assert "selectPhase(" in html
     assert 'id="phase-now"' in html
 

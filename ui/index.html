@@ -469,7 +469,7 @@
             disabled
           >
             <span class="phase-dot" aria-hidden="true"></span>
-            <span class="phase-name">جست‌وجوی سطح بعدی</span>
+            <span class="phase-name">مطالعۀ عمیق</span>
             <span class="phase-timer" id="timer-3" hidden></span>
           </button>
         </div>
@@ -490,8 +490,13 @@
         </div>
 
         <div class="phase-panel" id="panel-3" role="tabpanel" aria-labelledby="tab-3" hidden>
-          <div id="next-tier-answer" class="answer"></div>
-          <div id="next-tier-citations"></div>
+          <!-- The Deep dive is operator-started (ADR 0006): the button
+               arms after the first answer exists; pressing it starts the
+               phase timer and the held /deep-dive request. -->
+          <div class="actions">
+            <button type="button" id="dive-start" disabled>شروع مطالعۀ عمیق</button>
+          </div>
+          <div id="dive-doc" class="answer"></div>
         </div>
       </section>
     </main>
@@ -508,15 +513,18 @@
       const citationsHeadingEl = document.getElementById("citations-heading");
       const statusEl = document.getElementById("status");
       const quotedDocEl = document.getElementById("quoted-doc");
-      const nextTierEl = document.getElementById("next-tier-answer");
-      const nextTierCitesEl = document.getElementById("next-tier-citations");
+      const diveStartEl = document.getElementById("dive-start");
+      const diveDocEl = document.getElementById("dive-doc");
       const phaseNowEl = document.getElementById("phase-now");
       // Bumped on every ask so a slow composer reply for an older question
       // is dropped instead of swapping the newer answer or its citations.
       let citationRun = 0;
-      // In-flight phase 2 / phase 3 fetches; aborted when a new ask starts.
+      // In-flight phase 2 / dive fetches; aborted when a new ask starts.
       let quotedAbort = null;
-      let nextTierAbort = null;
+      let diveAbort = null;
+      // The current ask's question — the dive is a study of the same
+      // question (CONTEXT.md), never of whatever the box holds later.
+      let diveQuery = null;
 
       // The three answering phases (PM brief, 2026-09-11): one switchable
       // section each, a pulsing dot on the phase being generated, a
@@ -525,7 +533,7 @@
       const PHASE_NAMES = {
         1: "پاسخ اول",
         2: "پاسخ استنادی",
-        3: "جست‌وجوی سطح بعدی",
+        3: "مطالعۀ عمیق",
       };
       const phaseEls = {
         1: { tab: document.getElementById("tab-1"), timer: null, interval: null, startedAt: null },
@@ -543,8 +551,9 @@
         phaseEls[n].tab.addEventListener("click", () => selectPhase(n));
       }
 
-      // idle = not started yet (tab disabled); running = being generated;
-      // done / failed / skipped = settled. Only settled tabs stay clickable.
+      // idle = not started yet (tab disabled); ready = waiting for the
+      // operator; running = being generated; done / failed / skipped =
+      // settled. Only idle tabs stay unclickable.
       function setPhaseState(n, state) {
         phaseEls[n].tab.dataset.state = state;
         phaseEls[n].tab.disabled = state === "idle";
@@ -850,6 +859,105 @@
         }
       }
 
+      // The Deep dive (ADR 0006): the phase-3 tab's operator-started
+      // study. No ask starts it — this button does; the phase timer
+      // starts on press, and the held /deep-dive request answers only
+      // when the study is ready (minutes are normal). The search shapes
+      // are pinned server-side: the sheet sends only the query and the
+      // phone, and names no Cognee search type.
+      async function startDive() {
+        const run = citationRun;
+        const query = diveQuery;
+        if (!query) return;
+        setPhaseState(3, "running");
+        startPhaseTimer(3);
+        setRunningPhase(3);
+        diveStartEl.disabled = true;
+        diveDocEl.replaceChildren();
+        // The dive is visible while it runs: a pulsing status in its own
+        // section, gone with the study (or with any failure note).
+        const status = document.createElement("p");
+        status.className = "composer-status";
+        status.textContent = "در حال نوشتن مطالعۀ عمیق…";
+        diveDocEl.append(status);
+        const failDive = (message) => {
+          setPhaseState(3, "failed");
+          stopPhaseTimer(3);
+          setRunningPhase(null);
+          setText(diveDocEl, message, "error");
+          diveStartEl.disabled = false;
+        };
+        try {
+          const res = await fetch("/deep-dive", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+              ...phoneHeader(),
+            },
+            body: JSON.stringify({ query }),
+            signal: diveAbort.signal,
+          });
+          if (run !== citationRun) return;
+          const payload = await res.json().catch(() => ({}));
+          if (run !== citationRun) return;
+          if (!res.ok) {
+            const detail = Array.isArray(payload.detail)
+              ? payload.detail.join(" ")
+              : payload.detail;
+            failDive(detail || "مطالعۀ عمیق آماده نشد؛ دوباره تلاش کنید.");
+            return;
+          }
+          const blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
+          if (!blocks.length) {
+            failDive("مطالعۀ عمیق آماده نشد؛ دوباره تلاش کنید.");
+            return;
+          }
+          const doc = document.createDocumentFragment();
+          // A study the continuation could not finish says so itself,
+          // above its sections — phase 2's note, reused.
+          if (payload.truncated) {
+            doc.append(truncatedNote());
+          }
+          for (const block of blocks) {
+            if (block.type === "heading") {
+              const heading = document.createElement("h3");
+              heading.className = "doc-heading";
+              heading.textContent = block.text;
+              doc.append(heading);
+            } else if (block.type === "paragraph") {
+              doc.append(paragraphNode(block));
+            } else if (block.type === "references") {
+              // The closing references list — built server-side from the
+              // passages the study actually quoted, never by the model.
+              const refHeading = document.createElement("h3");
+              refHeading.className = "doc-heading";
+              refHeading.textContent = "منابع";
+              doc.append(refHeading);
+              for (const item of Array.isArray(block.items) ? block.items : []) {
+                const ref = document.createElement("p");
+                ref.className = "cite";
+                ref.textContent = item;
+                doc.append(ref);
+              }
+            }
+          }
+          diveDocEl.replaceChildren(doc);
+          setPhaseState(3, "done");
+          stopPhaseTimer(3);
+          setRunningPhase(null);
+          // Bring the fresh study forward: each phase shows itself when
+          // it lands.
+          selectPhase(3);
+          diveStartEl.disabled = false;
+        } catch {
+          if (run !== citationRun) return;
+          // The dive unreachable or aborted: the first answer and the
+          // Quoted answer stay where they are.
+          failDive("ارتباط با سرویس مطالعۀ عمیق قطع شد.");
+        }
+      }
+      diveStartEl.addEventListener("click", startDive);
+
       async function readSse(res, onEvent) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -917,21 +1025,22 @@
           const seconds = Math.round((Date.now() - started) / 1000);
           elapsedEl.textContent = `${seconds} ثانیه`;
         }, 250);
-        // The clock times the WHOLE pipeline — stream, the composer phase,
-        // and the graph search — and stops only when the last phase
-        // settles (PM call, 2026-09-10; phase 3 added 2026-09-11).
+        // The clock times the whole pipeline — stream and the composer
+        // phase — and stops when phase 2 settles (PM call, 2026-09-10).
+        // Issue #25: the pipeline ends there — the Deep dive is
+        // operator-timed by its own chip, started on the button press.
         const stopTimer = () => {
           clearInterval(tick);
           const seconds = Math.round((Date.now() - started) / 1000);
           elapsedEl.textContent = `${seconds} ثانیه`;
         };
 
-        // A new ask owns the sheet: abort any in-flight phase 2 or 3 of
-        // the previous one, then reset all three sections to idle.
+        // A new ask owns the sheet: abort any in-flight phase 2 or dive
+        // of the previous one, then reset all three sections to idle.
         if (quotedAbort) quotedAbort.abort();
-        if (nextTierAbort) nextTierAbort.abort();
+        if (diveAbort) diveAbort.abort();
         quotedAbort = new AbortController();
-        nextTierAbort = new AbortController();
+        diveAbort = new AbortController();
         for (const n of [1, 2, 3]) {
           stopPhaseTimer(n);
           phaseEls[n].startedAt = null;
@@ -942,8 +1051,9 @@
         setRunningPhase(1);
         selectPhase(1);
         quotedDocEl.replaceChildren();
-        nextTierEl.replaceChildren();
-        nextTierCitesEl.replaceChildren();
+        diveDocEl.replaceChildren();
+        diveStartEl.disabled = true;
+        diveQuery = query;
         setText(answerEl, "در حال پرسیدن…", "empty");
         citationRun += 1;
         citationsEl.replaceChildren();
@@ -955,82 +1065,6 @@
         const textOf = (payload) =>
           Array.isArray(payload) ? payload[0]?.text || "" : payload.text || "";
 
-        // Phase 3: the graph-retrieval answer (the Next-tier search) on
-        // the same question. The search shape is pinned on the server —
-        // this asks only for the query. Slow is allowed here; its timer
-        // keeps the wait honest and its completion ends the pipeline.
-        const startNextTier = () => {
-          const run = citationRun;
-          setPhaseState(3, "running");
-          startPhaseTimer(3);
-          setRunningPhase(3);
-          nextTierEl.replaceChildren();
-          nextTierCitesEl.replaceChildren();
-          const status = document.createElement("p");
-          status.className = "composer-status";
-          status.textContent = "در حال جست‌وجوی سطح بعدی…";
-          nextTierEl.append(status);
-          const failNextTier = (message) => {
-            setPhaseState(3, "failed");
-            stopPhaseTimer(3);
-            setRunningPhase(null);
-            nextTierEl.className = "answer";
-            setText(nextTierEl, message, "error");
-            nextTierCitesEl.replaceChildren();
-            stopTimer();
-          };
-          fetch("/next-tier-recall", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json; charset=utf-8",
-              ...phoneHeader(),
-            },
-            body: JSON.stringify({ query }),
-            signal: nextTierAbort.signal,
-          })
-            .then(async (res) => {
-              if (run !== citationRun) return;
-              const payload = await res.json().catch(() => ({}));
-              if (run !== citationRun) return;
-              if (!res.ok) {
-                const detail = Array.isArray(payload.detail)
-                  ? payload.detail.join(" ")
-                  : payload.detail;
-                failNextTier(detail || "پاسخ نیامد.");
-                return;
-              }
-              const text = textOf(payload);
-              if (!text) {
-                failNextTier("پاسخ خالی برگشت.");
-                return;
-              }
-              const { answer: tierAnswer, citations: tierCites } = splitCitation(text);
-              nextTierEl.className = "answer";
-              renderMarkdown(nextTierEl, tierAnswer || text);
-              nextTierCitesEl.replaceChildren();
-              if (tierCites.length) {
-                const citesHeading = document.createElement("h2");
-                citesHeading.textContent = "استناد";
-                nextTierCitesEl.append(citesHeading);
-                for (const item of tierCites) {
-                  const p = document.createElement("p");
-                  p.className = "cite";
-                  p.textContent = item;
-                  nextTierCitesEl.append(p);
-                }
-              }
-              setPhaseState(3, "done");
-              stopPhaseTimer(3);
-              setRunningPhase(null);
-              selectPhase(3);
-              stopTimer();
-            })
-            .catch(() => {
-              if (run !== citationRun) return;
-              failNextTier("ارتباط با سرویس جست‌وجوی سطح بعدی قطع شد.");
-            });
-        };
-
         const renderFinal = (text) => {
           if (!text) {
             throw new Error("پاسخ خالی برگشت.");
@@ -1040,16 +1074,22 @@
           renderMarkdown(answerEl, answer || text);
           markFirstToken();
           setPhaseState(1, "done");
+          // The first answer exists — the ask has a question to dive on.
+          // From here the dive is the operator's call, never automatic
+          // (ADR 0006).
+          setPhaseState(3, "ready");
+          diveStartEl.disabled = false;
           citationsEl.replaceChildren();
           if (!citations.length) {
             const missing = document.createElement("p");
             missing.className = "error";
             missing.textContent = "استناد در پاسخ نبود.";
             citationsEl.append(missing);
-            // No Evidence pool means no Quoted answer, but the graph
-            // search never needed one — phase 3 still runs.
+            // No Evidence pool means no Quoted answer, but the dive
+            // never needed one — the operator may still start it.
             skipQuotedPhase();
-            startNextTier();
+            // Without a phase-2 run the pipeline still ends here.
+            stopTimer();
           } else {
             for (const item of citations) {
               const p = document.createElement("p");
@@ -1057,7 +1097,7 @@
               p.textContent = item;
               citationsEl.append(p);
             }
-            renderQuotedAnswer(query, answer, citations, startNextTier);
+            renderQuotedAnswer(query, answer, citations, stopTimer);
           }
         };
 
