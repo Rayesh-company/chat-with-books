@@ -86,6 +86,20 @@ def test_readme_records_the_live_deep_dive_contract():
     assert "HYBRID_COMPLETION" in section
     assert "2,000" in section and "4,000" in section
     assert "five to eight" in section
+    # The size counts are the Synthesizer's BRIEF, re-recorded as one
+    # (round-2 review, 2026-09-12): the brief asks glm-5.3 for them, the
+    # counts are never enforced by dropping or inventing content, and the
+    # recorded tracer study landed nine headings and a shorter body — the
+    # old "writes 2,000–4,000" guarantee reading stays retired. The
+    # prompt-level lock (build_dive_prompt asking for five to eight and
+    # 2,000/4,000) is test_deep_dive's and unchanged.
+    assert (
+        "asks glm-5.3 for 2,000–4,000 Farsi words in five to eight headed "
+        "sections" in section
+    )
+    assert "never enforced by dropping or inventing content" in section
+    assert "nine headings" in section
+    assert "writes 2,000" not in section
     # The references list is built server-side from the real pool.
     assert "references" in section
     assert "منابع" in section
