@@ -298,11 +298,7 @@ def guard_blocks(blocks, sources):
                     {
                         "quote": quote.strip(),
                         "source": index,
-                        "pages_label": pages_label(sources[index]["reference"]),
-                        "first_page_label": first_page_label(
-                            sources[index]["reference"]
-                        ),
-                        "book_label": book_label(sources[index]["reference"]),
+                        **_citation_labels(sources[index]["reference"]),
                     }
                 )
                 has_quote = True
@@ -357,6 +353,16 @@ def book_label(reference: str) -> str:
     return _BOOK_TITLES.get(document.group(1), document.group(1))
 
 
+def _citation_labels(reference: str) -> dict:
+    """The three Farsi labels a kept quote carries for exactly the
+    passage it claims — the chunk range, first page, and Book."""
+    return {
+        "pages_label": pages_label(reference),
+        "first_page_label": first_page_label(reference),
+        "book_label": book_label(reference),
+    }
+
+
 def salvage_blocks(content: str) -> list:
     """Decode the complete prefix of a blocks document cut mid-JSON.
 
@@ -390,35 +396,46 @@ def _strip_code_fence(content: str) -> str:
     return re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
 
 
+def _json_object(content):
+    """A model reply's JSON object, or None: code fence stripped,
+    json.loads with one brace-scoped retry for prose-wrapped JSON — the
+    parse conventions parse_quoted_reply and parse_picker_reply share;
+    the key check stays each caller's own."""
+    if not isinstance(content, str) or not content.strip():
+        return None
+    stripped = _strip_code_fence(content)
+    try:
+        parsed = json.loads(stripped)
+    except ValueError:
+        match = re.search(r"\{.*\}", stripped, re.DOTALL)
+        if not match:
+            return None
+        try:
+            parsed = json.loads(match.group(0))
+        except ValueError:
+            return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def parse_quoted_reply(content):
     """Pull the blocks list out of the composer's reply; [] when malformed.
 
     A reply cut by the output ceiling dies mid-JSON without closing
     braces; its complete block prefix is salvaged so a long document
     loses only its tail — compose_quoted_answer reads the cut off
-    finish_reason and continues the write past the salvage.
+    finish_reason and continues the write past the salvage. The fence
+    strip and the brace-scoped retry are _json_object's, shared with
+    the picker's parse.
     """
     if not isinstance(content, str) or not content.strip():
         return []
-    stripped = _strip_code_fence(content)
-    try:
-        parsed = json.loads(stripped)
-    except ValueError:
-        parsed = None
+    parsed = _json_object(content)
     if isinstance(parsed, dict) and isinstance(parsed.get("blocks"), list):
         return parsed["blocks"]
-    salvaged = salvage_blocks(stripped)
+    salvaged = salvage_blocks(_strip_code_fence(content))
     if salvaged:
         return salvaged
-    match = re.search(r"\{.*\}", stripped, re.DOTALL)
-    if not match:
-        return []
-    try:
-        parsed = json.loads(match.group(0))
-    except ValueError:
-        return []
-    blocks = parsed.get("blocks") if isinstance(parsed, dict) else None
-    return blocks if isinstance(blocks, list) else []
+    return []
 
 
 def framing_context(answer: str, plan: str = "") -> str:
@@ -440,12 +457,18 @@ def framing_context(answer: str, plan: str = "") -> str:
     )
 
 
-def build_quoted_prompt(question: str, answer: str, sources, plan: str = "") -> str:
-    """Build the writer prompt."""
-    passages = "\n".join(
+def _numbered_passages(sources) -> str:
+    """The pool as the numbered `[i] (reference) passage` lines every
+    composer prompt shares."""
+    return "\n".join(
         f"[{i}] ({source['reference']}) {source['passage']}"
         for i, source in enumerate(sources)
     )
+
+
+def build_quoted_prompt(question: str, answer: str, sources, plan: str = "") -> str:
+    """Build the writer prompt."""
+    passages = _numbered_passages(sources)
     context = framing_context(answer, plan)
     return (
         "You are writing a Farsi Quoted answer for a Q&A sheet over one "
@@ -489,10 +512,7 @@ def build_planner_prompt(question: str, sources) -> str:
     back (the writer still gets it when the planner fails) — and the
     plan itself is capped.
     """
-    passages = "\n".join(
-        f"[{i}] ({source['reference']}) {source['passage']}"
-        for i, source in enumerate(sources)
-    )
+    passages = _numbered_passages(sources)
     return (
         "You are planning a Farsi Quoted answer for a Q&A sheet over one "
         "Book.\n\n"
@@ -520,10 +540,7 @@ def build_continuation_prompt(
     framing, and passages as the writer prompt, plus the blocks that
     completed before the cut; the writer writes only what follows them.
     """
-    passages = "\n".join(
-        f"[{i}] ({source['reference']}) {source['passage']}"
-        for i, source in enumerate(sources)
-    )
+    passages = _numbered_passages(sources)
     written = json.dumps({"blocks": blocks}, ensure_ascii=False)
     return (
         "You are continuing a Farsi Quoted answer for a Q&A sheet over one "
@@ -694,10 +711,7 @@ def build_picker_prompt(question: str, sources) -> str:
     drift — and the reply shape is the selection list guard_sentences
     already consumes.
     """
-    passages = "\n".join(
-        f"[{i}] ({source['reference']}) {source['passage']}"
-        for i, source in enumerate(sources)
-    )
+    passages = _numbered_passages(sources)
     return (
         "You are selecting the Quote selection for a Farsi Q&A sheet "
         "over the Books.\n\n"
@@ -724,23 +738,11 @@ def parse_picker_reply(content):
     malformed.
 
     The parse conventions of parse_quoted_reply — code fence stripped,
-    json.loads with one brace-scoped retry for prose-wrapped JSON —
-    without the salvage: a picker reply is tiny, and a truncated one
-    would not survive the floor anyway.
+    json.loads with one brace-scoped retry for prose-wrapped JSON, the
+    shared _json_object — without the salvage: a picker reply is tiny,
+    and a truncated one would not survive the floor anyway.
     """
-    if not isinstance(content, str) or not content.strip():
-        return []
-    stripped = _strip_code_fence(content)
-    try:
-        parsed = json.loads(stripped)
-    except ValueError:
-        match = re.search(r"\{.*\}", stripped, re.DOTALL)
-        if not match:
-            return []
-        try:
-            parsed = json.loads(match.group(0))
-        except ValueError:
-            return []
+    parsed = _json_object(content)
     selections = parsed.get("selections") if isinstance(parsed, dict) else None
     return selections if isinstance(selections, list) else []
 
@@ -771,9 +773,7 @@ def pick_quote_selection(question: str, sources):
         {
             "text": item["text"],
             "reference": item["reference"],
-            "pages_label": pages_label(item["reference"]),
-            "first_page_label": first_page_label(item["reference"]),
-            "book_label": book_label(item["reference"]),
+            **_citation_labels(item["reference"]),
         }
         for item in kept
     ]
@@ -945,10 +945,7 @@ def run_dive_round(sub_questions, sources, seen) -> list:
 
 def build_dive_prompt(question: str, sources) -> str:
     """The Synthesizer's brief: the headed, quoted Farsi study."""
-    passages = "\n".join(
-        f"[{i}] ({source['reference']}) {source['passage']}"
-        for i, source in enumerate(sources)
-    )
+    passages = _numbered_passages(sources)
     return (
         "You are writing a Farsi Deep dive study for a Q&A sheet over a "
         "fixed set of Books.\n\n"
@@ -985,10 +982,7 @@ def build_dive_continuation_prompt(question: str, sources, blocks: list) -> str:
     """The dive's resume brief after a length-cut study: the same brief
     plus the blocks that completed before the cut; the writer writes
     only what follows them."""
-    passages = "\n".join(
-        f"[{i}] ({source['reference']}) {source['passage']}"
-        for i, source in enumerate(sources)
-    )
+    passages = _numbered_passages(sources)
     written = json.dumps({"blocks": blocks}, ensure_ascii=False)
     return (
         "You are continuing a Farsi Deep dive study for a Q&A sheet over "
@@ -1508,15 +1502,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             )
             return
         selections = pick_quote_selection(question, sources)
-        body = json.dumps(
-            {"selections": selections, "pool_size": len(sources)},
-            ensure_ascii=False,
-        ).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._send_json(200, {"selections": selections, "pool_size": len(sources)})
 
     def _deep_dive_status(self) -> None:
         """The dive's poll surface (issue #26): the sheet asks for a
