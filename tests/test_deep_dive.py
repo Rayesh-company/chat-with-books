@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import threading
+import time
 
 from tests.conftest import REPO_ROOT
 
@@ -93,11 +94,12 @@ class DiveUpstream:
     apart by URL. Thread-safe — the dive's searchers call it in
     parallel — with a lock around the call log and the reply queues."""
 
-    def __init__(self, composer_replies=(), recall_reply=None):
+    def __init__(self, composer_replies=(), recall_reply=None, gate=None):
         self.lock = threading.Lock()
         self.calls = []
         self.bodies = []
         self.timeouts = []
+        self.gate = gate
         self.composer_replies = [
             reply.encode("utf-8") if isinstance(reply, str) else reply
             for reply in composer_replies
@@ -124,6 +126,11 @@ class DiveUpstream:
                 self.calls.append(url)
                 self.bodies.append(body)
                 self.timeouts.append(timeout)
+        if self.gate is not None:
+            # The scripted call is in flight — logged, unanswered — until
+            # the test releases the gate. A bounded wait keeps a bug from
+            # hanging the suite; the finally blocks set the gate anyway.
+            self.gate.wait(timeout=30)
         if isinstance(reply, Exception):
             raise reply
 
@@ -176,6 +183,15 @@ def recall_calls(upstream):
         for url, body in zip(upstream.calls, upstream.bodies)
         if "/api/v1/recall" in url
     ]
+
+
+def run_dive_job_sync(question, upstream):
+    """Run the dive worker synchronously over a registry job — the
+    orchestration seam without the HTTP layer or the thread."""
+    job = serve.DiveJob(DIVE_PHONE, question)
+    serve.DIVE_REGISTRY[job.id] = job
+    with_upstream(upstream)(lambda: serve.run_dive_job(job))
+    return job
 
 
 # --- the pinned constants -------------------------------------------------
@@ -551,7 +567,7 @@ def test_with_dive_references_appends_nothing_when_nothing_was_quoted():
 # --- the whole dive ---------------------------------------------------------
 
 
-def test_compose_deep_dive_runs_planner_searchers_synthesizer_in_order():
+def test_deep_dive_job_runs_planner_searchers_synthesizer_in_order():
     sources = [
         {"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE},
         {"reference": "chunk 29 of document tarhe-kolli", "passage": OTHER_PASSAGE},
@@ -575,15 +591,15 @@ def test_compose_deep_dive_runs_planner_searchers_synthesizer_in_order():
         ],
         recall_reply=reply,
     )
-    blocks, truncated = with_upstream(upstream)(
-        lambda: serve.compose_deep_dive("پرسش اصلی؟")
-    )
+    job = run_dive_job_sync("پرسش اصلی؟", upstream)
     # Call order: the planner first, then the searchers, then the writer.
     assert "chat/completions" in upstream.calls[0]
     assert "/api/v1/recall" in upstream.calls[1]
     assert "/api/v1/recall" in upstream.calls[2]
     assert "chat/completions" in upstream.calls[3]
+    blocks, truncated = job.result
     assert truncated is False
+    assert job.state == "done"
     quotes = [
         part["quote"]
         for block in blocks
@@ -604,7 +620,7 @@ def test_compose_deep_dive_runs_planner_searchers_synthesizer_in_order():
     }
 
 
-def test_compose_deep_dive_caps_the_planned_subquestions_at_six():
+def test_dive_job_caps_the_planned_subquestions_at_six():
     upstream = DiveUpstream(
         composer_replies=[
             subquestions_reply([f"زیرپرسش {n}؟" for n in range(9)]),
@@ -619,8 +635,9 @@ def test_compose_deep_dive_caps_the_planned_subquestions_at_six():
             ),
         ]
     )
-    with_upstream(upstream)(lambda: serve.compose_deep_dive("پرسش اصلی؟"))
+    job = run_dive_job_sync("پرسش اصلی؟", upstream)
     recalls = recall_calls(upstream)
+    assert job.state == "done"
     assert len(recalls) == 6
     # The searchers run in parallel, so the call log may interleave;
     # the SET of queries is exactly the capped six.
@@ -629,7 +646,7 @@ def test_compose_deep_dive_caps_the_planned_subquestions_at_six():
     )
 
 
-def test_compose_deep_dive_falls_back_to_the_raw_question_when_planning_fails():
+def test_dive_job_falls_back_to_the_raw_question_when_planning_fails():
     upstream = DiveUpstream(
         composer_replies=[
             OSError("planner down"),
@@ -644,25 +661,51 @@ def test_compose_deep_dive_falls_back_to_the_raw_question_when_planning_fails():
             ),
         ]
     )
-    with_upstream(upstream)(lambda: serve.compose_deep_dive("پرسش اصلی؟"))
+    job = run_dive_job_sync("پرسش اصلی؟", upstream)
     recalls = recall_calls(upstream)
+    assert job.state == "done"
     # Exactly one searcher, carrying the raw question.
     assert len(recalls) == 1
     assert recalls[0][1]["query"] == "پرسش اصلی؟"
 
 
-def test_compose_deep_dive_dies_quietly_when_no_searcher_returns_evidence():
+def test_dive_job_fails_quietly_when_no_searcher_returns_evidence():
     upstream = DiveUpstream(
         composer_replies=[subquestions_reply(["الف؟"])],
         recall_reply=lambda payload: b"[]",
     )
-    blocks, truncated = with_upstream(upstream)(
-        lambda: serve.compose_deep_dive("پرسش اصلی؟")
-    )
-    # No Evidence pool means no study: the synthesizer never runs, and the
-    # endpoint answers empty blocks the sheet reports as a failed dive.
-    assert (blocks, truncated) == ([], False)
+    job = run_dive_job_sync("پرسش اصلی؟", upstream)
+    # No Evidence pool means no study: the job lands `failed` with the
+    # short Farsi detail — the sheet's «ناتمام ماند» message — and the
+    # synthesizer never runs.
+    assert job.state == "failed"
+    assert job.error == serve.DIVE_NO_EVIDENCE_DETAIL
+    assert serve.DIVE_EVENT_FAILED in job.events
     assert len(composer_calls(upstream)) == 1
+
+
+def test_dive_job_marks_failed_when_a_worker_call_raises():
+    # Any worker failure — exception, scripted or real — lands `failed`
+    # with a Farsi event; the endpoint never 500s from the worker thread.
+    upstream = DiveUpstream(composer_replies=[OSError("planner exploded")])
+    # The planner's failure is normally absorbed into the raw-question
+    # fallback; force the raise past it by breaking the registry itself.
+    job = serve.DiveJob(DIVE_PHONE, "پرسش؟")
+    serve.DIVE_REGISTRY[job.id] = job
+
+    def explode(_question):
+        raise RuntimeError("scripted worker failure")
+
+    original = serve.plan_dive_subquestions
+    serve.plan_dive_subquestions = explode
+    try:
+        with_upstream(upstream)(lambda: serve.run_dive_job(job))
+    finally:
+        serve.plan_dive_subquestions = original
+    assert job.state == "failed"
+    assert job.error == serve.DIVE_FAILED_DETAIL
+    assert serve.DIVE_EVENT_FAILED in job.events
+    assert job.done.is_set()
 
 
 # --- the /deep-dive endpoint -------------------------------------------------
@@ -672,14 +715,14 @@ def test_compose_deep_dive_dies_quietly_when_no_searcher_returns_evidence():
 # carries only the query, and the reply is the guarded study — the
 # request blocks until the study is ready.
 
-from tests.helpers import post, stop_gate, with_gate  # noqa: E402
+from tests.helpers import get, post, stop_gate, wait_job_done, with_gate  # noqa: E402
 
 DIVE_PHONE = "09120000021"
 
 ONE_SOURCE = [{"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE}]
 
 
-def dive_study_upstream():
+def dive_study_upstream(gate=None):
     """A full happy-path dive: planner, one searcher, synthesizer."""
     return DiveUpstream(
         composer_replies=[
@@ -691,6 +734,7 @@ def dive_study_upstream():
         recall_reply=lambda payload: cognee_payload(
             recall_text(SENTENCE, "chunk 1 of document tarhe-kolli")
         ),
+        gate=gate,
     )
 
 
@@ -730,13 +774,19 @@ def test_deep_dive_answers_the_guarded_study_and_never_counts_a_chat(tmp_path):
     try:
         serve.record_chat(DIVE_PHONE)
         status, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+        assert status == 202
+        wait_job_done(body["job_id"])
+        poll_status, payload = get(
+            base, f"/deep-dive/status?job={body['job_id']}", phone=DIVE_PHONE
+        )
     finally:
         stop_gate(server, original)
-    assert status == 200
-    assert body["truncated"] is False
+    assert poll_status == 200
+    assert payload["state"] == "done"
+    assert payload["truncated"] is False
     # The study: heading, the guarded quoting paragraph with its page
     # labels, and the closing references block built from the real pool.
-    assert body["blocks"] == [
+    assert payload["blocks"] == [
         {"type": "heading", "text": "بخش نخست"},
         {
             "type": "paragraph",
@@ -764,13 +814,15 @@ def test_deep_dive_runs_even_at_the_daily_limit(tmp_path):
     try:
         for _ in range(serve.DAILY_CHAT_LIMIT):
             serve.record_chat(DIVE_PHONE)
-        status, _ = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+        status, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+        assert status == 202
+        job = wait_job_done(body["job_id"])
     finally:
         stop_gate(server, original)
-    assert status == 200
+    assert job.state == "done"
 
 
-def test_deep_dive_answers_empty_blocks_when_no_searcher_finds_evidence(tmp_path):
+def test_deep_dive_job_fails_when_no_searcher_finds_evidence(tmp_path):
     upstream = DiveUpstream(
         composer_replies=[subquestions_reply(["زیرپرسش؟"])],
         recall_reply=lambda payload: b"[]",
@@ -779,12 +831,71 @@ def test_deep_dive_answers_empty_blocks_when_no_searcher_finds_evidence(tmp_path
     try:
         serve.record_chat(DIVE_PHONE)
         status, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+        assert status == 202
+        wait_job_done(body["job_id"])
+        poll_status, payload = get(
+            base, f"/deep-dive/status?job={body['job_id']}", phone=DIVE_PHONE
+        )
     finally:
         stop_gate(server, original)
-    # Held-request shape, phase-2 style: the sheet reads the empty
-    # blocks as a dive that did not prepare.
-    assert status == 200
-    assert body == {"blocks": [], "truncated": False}
+    # The sheet reads `failed` as a dive that did not prepare — the old
+    # empty-blocks reply, now a job state with its Farsi detail.
+    assert poll_status == 200
+    assert payload["state"] == "failed"
+    assert payload["detail"] == serve.DIVE_NO_EVIDENCE_DETAIL
+
+
+def test_deep_dive_status_gates_the_phone(tmp_path):
+    gate = threading.Event()
+    upstream = dive_study_upstream(gate=gate)
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        serve.record_chat(DIVE_PHONE)
+        _, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+        job_id = body["job_id"]
+        unknown_status, unknown = get(
+            base, "/deep-dive/status?job=does-not-exist", phone=DIVE_PHONE
+        )
+        # A running dive belongs to its phone: another number — and a
+        # request with no number at all — learns nothing, not even that
+        # the job exists.
+        other_status, other = get(
+            base, f"/deep-dive/status?job={job_id}", phone="09120000099"
+        )
+        no_phone_status, no_phone = get(base, f"/deep-dive/status?job={job_id}")
+        gate.set()
+        wait_job_done(job_id)
+    finally:
+        gate.set()
+        stop_gate(server, original)
+    for status, payload in (
+        (unknown_status, unknown),
+        (other_status, other),
+        (no_phone_status, no_phone),
+    ):
+        assert status == 404
+        assert payload["detail"] == serve.DIVE_NOT_FOUND_DETAIL
+
+
+def test_a_restart_empties_the_registry_so_old_job_ids_answer_404(tmp_path):
+    upstream = dive_study_upstream()
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        serve.record_chat(DIVE_PHONE)
+        _, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+        job_id = body["job_id"]
+        wait_job_done(job_id)
+        # A restart empties the in-process registry — the next server
+        # process starts with the same dict empty. The old id's status
+        # must report the failure (404), never hang.
+        serve.DIVE_REGISTRY.clear()
+        status, payload = get(
+            base, f"/deep-dive/status?job={job_id}", phone=DIVE_PHONE
+        )
+    finally:
+        stop_gate(server, original)
+    assert status == 404
+    assert payload["detail"] == serve.DIVE_NOT_FOUND_DETAIL
 
 
 def test_serve_pins_the_deep_dive_endpoint():
@@ -793,3 +904,83 @@ def test_serve_pins_the_deep_dive_endpoint():
     # The gate is the quoted-answer shape, not the ask gate — a dive
     # never records a chat.
     assert text.index('path == "/deep-dive"') < text.index("def _deep_dive")
+
+
+# --- the job registry (issue #26) ---------------------------------------------
+#
+# The held request becomes a job: the start answers 202 {"job_id": ...}
+# immediately while the dive runs on its own thread, and the sheet polls
+# /deep-dive/status for state, events, and — when done — the study.
+
+
+def test_deep_dive_start_returns_a_job_identity_immediately(tmp_path):
+    gate = threading.Event()
+    upstream = dive_study_upstream(gate=gate)
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        serve.record_chat(DIVE_PHONE)
+        status, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+        # The reply lands while the planner is still blocked inside the
+        # scripted upstream — the start never waits on the study.
+        assert status == 202
+        job_id = body["job_id"]
+        assert job_id in serve.DIVE_REGISTRY
+        assert "chat/completions" in upstream.calls[0]
+        # The status endpoint observes the first transition while the
+        # planner is still inside the fake.
+        poll_status, poll_body = get(
+            base, f"/deep-dive/status?job={job_id}", phone=DIVE_PHONE
+        )
+        assert poll_status == 200
+        assert poll_body["state"] == "planning"
+        gate.set()
+        job = wait_job_done(job_id)
+        assert job.state == "done"
+    finally:
+        gate.set()
+        stop_gate(server, original)
+
+
+def test_deep_dive_status_reports_transitions_events_and_the_study(tmp_path):
+    upstream = dive_study_upstream()
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        serve.record_chat(DIVE_PHONE)
+        _, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+        job_id = body["job_id"]
+        wait_job_done(job_id)
+        status, payload = get(
+            base, f"/deep-dive/status?job={job_id}", phone=DIVE_PHONE
+        )
+    finally:
+        stop_gate(server, original)
+    assert status == 200
+    assert payload["state"] == "done"
+    # The transitions land in order, each carrying its Farsi progress
+    # event — the status surface's observable timeline.
+    assert payload["events"] == [
+        serve.DIVE_EVENT_PLANNING,
+        serve.DIVE_EVENT_SEARCHING,
+        serve.DIVE_EVENT_WRITING,
+        serve.DIVE_EVENT_DONE,
+    ]
+    assert isinstance(payload["elapsed"], (int, float)) and payload["elapsed"] >= 0
+    # The study rides the terminal status reply, phase-2 payload shape.
+    assert payload["truncated"] is False
+    assert payload["blocks"] == [
+        {"type": "heading", "text": "بخش نخست"},
+        {
+            "type": "paragraph",
+            "parts": [
+                {"text": "می‌خوانیم که"},
+                {
+                    "quote": SENTENCE,
+                    "source": 0,
+                    "pages_label": "",
+                    "first_page_label": "",
+                    "book_label": "طرح کلی اندیشۀ اسلامی در قرآن",
+                },
+            ],
+        },
+        {"type": "references", "items": ["chunk 1 of document tarhe-kolli"]},
+    ]

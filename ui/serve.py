@@ -16,7 +16,11 @@ from pathlib import Path
 import re
 import sqlite3
 import sys
+import threading
+import time
+import uuid
 from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
 UI_DIR = Path(__file__).resolve().parent
@@ -964,24 +968,127 @@ def with_dive_references(blocks: list, sources) -> list:
     return blocks + [{"type": "references", "items": used}]
 
 
-def compose_deep_dive(question: str):
-    """One dive end-to-end; (blocks with the references list, truncated).
+# The dive is a job in an in-process registry (ADR-0006, issue #26), not
+# a held request: the start answers a job identity immediately, the sheet
+# polls the status endpoint, and multiple users get fair, independent
+# dives. Stdlib only — a dict, a lock, threads; no broker, no new
+# dependencies. A server restart empties the registry, so an unknown job
+# id after a restart IS the recorded failure surface (the sheet reports
+# the dive as unfinished, never a hang).
 
-    Planner (glm-5.3, thinking on) decomposes the question into up to
-    six Farsi sub-questions — the raw question alone when planning
-    fails — then as many searchers run in parallel on the second Cognee
-    service, their Evidence passages merging into one deduplicated
-    pool, then one Synthesizer call writes the guarded study. No
-    Evidence pool at all means no study: ([], False), and the sheet
-    says the dive did not prepare. No job registry or caps yet — those
-    follow (issues #26, #27).
-    """
-    sub_questions = plan_dive_subquestions(question)
-    sources = run_dive_searches(sub_questions)
-    if not sources:
-        return [], False
-    blocks, truncated = compose_dive_study(question, sources)
-    return with_dive_references(blocks, sources), truncated
+DIVE_TERMINAL_STATES = {"done", "failed", "aborted"}
+DIVE_MAX_CONCURRENT = 3
+DIVE_BUSY_PHONE_DETAIL = (
+    "یک مطالعۀ عمیق برای این شماره هم‌اکنون در جریان است؛ لطفاً صبور باشید."
+)
+DIVE_BUSY_GLOBAL_DETAIL = (
+    "هم‌اکنون چند مطالعۀ عمیق در جریان است؛ کمی بعد دوباره تلاش کنید."
+)
+DIVE_NOT_FOUND_DETAIL = "چنین مطالعه‌ای پیدا نشد."
+DIVE_FAILED_DETAIL = "مطالعۀ عمیق ناتمام ماند؛ خطای غیرمنتظره."
+DIVE_NO_EVIDENCE_DETAIL = "مطالعۀ عمیق ناتمام ماند؛ نقل‌قولی از کتاب‌ها پیدا نشد."
+
+# Farsi progress events, one appended at each state transition — the
+# status surface's observable timeline of the dive.
+DIVE_EVENT_PLANNING = "برنامه‌ریزی مطالعه…"
+DIVE_EVENT_SEARCHING = "جست‌وجوی کتاب‌ها…"
+DIVE_EVENT_WRITING = "نوشتن مطالعۀ عمیق…"
+DIVE_EVENT_DONE = "مطالعۀ عمیق آماده شد."
+DIVE_EVENT_FAILED = "مطالعۀ عمیق ناتمام ماند."
+DIVE_EVENT_ABORTED = "مطالعۀ عمیق لغو شد."
+
+DIVE_REGISTRY = {}
+DIVE_REGISTRY_LOCK = threading.Lock()
+
+
+class DiveJob:
+    """One dive in the registry: identity, ownership, the observable
+    timeline (state + Farsi events), the outcome, and the cooperative
+    cancel flag. `done` is set when the worker thread has fully exited —
+    the tests' leash on dive threads leaking across tests."""
+
+    def __init__(self, phone: str, query: str):
+        self.id = uuid.uuid4().hex
+        self.phone = phone
+        self.query = query
+        self.state = "planning"
+        self.events = [DIVE_EVENT_PLANNING]
+        self.result = None
+        self.error = None
+        self.started_at = time.monotonic()
+        self.cancel = threading.Event()
+        self.done = threading.Event()
+
+
+def run_dive_job(job: DiveJob) -> None:
+    """The dive worker: the orchestration stages above with the job's
+    state transitions and cancel flag interleaved at the stage
+    boundaries. Cancellation is cooperative — an in-flight urlopen is
+    never interrupted mid-call; it resolves within its own leash and the
+    worker stops at the next boundary without writing a result. Any
+    worker failure marks the job `failed` with a short Farsi detail; the
+    endpoint never 500s from this thread."""
+    try:
+        sub_questions = plan_dive_subquestions(job.query)
+        if job.cancel.is_set():
+            return
+        _dive_advance(job, "searching", DIVE_EVENT_SEARCHING)
+        sources = run_dive_searches(sub_questions)
+        if job.cancel.is_set():
+            return
+        if not sources:
+            _dive_fail(job, DIVE_NO_EVIDENCE_DETAIL)
+            return
+        _dive_advance(job, "synthesizing", DIVE_EVENT_WRITING)
+        blocks, truncated = compose_dive_study(job.query, sources)
+        with DIVE_REGISTRY_LOCK:
+            if job.cancel.is_set():
+                return
+            job.result = (with_dive_references(blocks, sources), truncated)
+            job.state = "done"
+            job.events.append(DIVE_EVENT_DONE)
+    except Exception:
+        _dive_fail(job, DIVE_FAILED_DETAIL)
+    finally:
+        job.done.set()
+
+
+def _dive_advance(job: DiveJob, state: str, event: str) -> None:
+    with DIVE_REGISTRY_LOCK:
+        job.state = state
+        job.events.append(event)
+
+
+def _dive_fail(job: DiveJob, detail: str) -> None:
+    with DIVE_REGISTRY_LOCK:
+        if job.state in DIVE_TERMINAL_STATES:
+            return
+        job.state = "failed"
+        job.error = detail
+        job.events.append(DIVE_EVENT_FAILED)
+
+
+def abort_dive_job(job: DiveJob) -> bool:
+    """Abort one dive: the cancel flag and the `aborted` state land
+    together under the lock, so the status surface reads the abort right
+    away while the worker exits at its next boundary. A settled job is
+    never re-marked."""
+    with DIVE_REGISTRY_LOCK:
+        if job.state in DIVE_TERMINAL_STATES:
+            return False
+        job.cancel.set()
+        job.state = "aborted"
+        job.events.append(DIVE_EVENT_ABORTED)
+        return True
+
+
+def _start_dive_job(phone: str, query: str) -> DiveJob:
+    """Create the registry job and spawn its daemon worker."""
+    job = DiveJob(phone, query)
+    with DIVE_REGISTRY_LOCK:
+        DIVE_REGISTRY[job.id] = job
+    threading.Thread(target=run_dive_job, args=(job,), daemon=True).start()
+    return job
 
 
 class SessionHandler(SimpleHTTPRequestHandler):
@@ -1014,6 +1121,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
         if path == "/health":
             self._proxy("GET")
             return
+        if path == "/deep-dive/status":
+            self._deep_dive_status()
+            return
         super().do_GET()
 
     def _drain_request_body(self) -> None:
@@ -1031,7 +1141,13 @@ class SessionHandler(SimpleHTTPRequestHandler):
 
     def _json_error(self, status: int, detail: str) -> None:
         self._drain_request_body()
-        body = json.dumps({"detail": detail}, ensure_ascii=False).encode("utf-8")
+        self._send_json(status, {"detail": detail})
+
+    def _send_json(self, status: int, payload: dict) -> None:
+        """One JSON reply. The caller must have consumed the request body
+        already (or never had one) — unlike _json_error this does not
+        drain, so a second read cannot block on bytes already taken."""
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -1080,9 +1196,10 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self._quoted_answer()
             return
         if path == "/deep-dive":
-            if self._quoted_phone() is None:
+            phone = self._quoted_phone()
+            if phone is None:
                 return
-            self._deep_dive()
+            self._deep_dive(phone)
             return
         if path == "/next-tier-recall":
             if self._quoted_phone() is None:
@@ -1126,14 +1243,49 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _deep_dive(self) -> None:
-        """The Deep dive (ADR-0006): a held request in the /quoted-answer
-        shape — it blocks until the study is ready and answers
-        {"blocks": [...], "truncated": bool}. The body carries only the
-        query; every upstream payload is pinned server-side. The gate is
-        the phase-2 shape exactly — the dive belongs to the chat phase 1
+    def _deep_dive_status(self) -> None:
+        """The dive's poll surface (issue #26): the sheet asks for a
+        job's state, Farsi events, and elapsed seconds — and, when the
+        job settled, its outcome. `done` carries the study payload
+        ({"blocks", "truncated"}), `failed` a short Farsi detail, and an
+        unknown id (a restart emptied the registry, or a foreign phone)
+        answers 404 — the recorded failure surface, never a hang. The
+        phone must match the job's: one user's poll never reads another
+        user's dive."""
+        phone = normalize_phone(self.headers.get("X-Session-Phone", ""))
+        query = parse_qs(urlparse(self.path).query)
+        job_id = (query.get("job") or [""])[0]
+        payload = None
+        with DIVE_REGISTRY_LOCK:
+            job = DIVE_REGISTRY.get(job_id)
+            if job is not None and job.phone == phone:
+                payload = {
+                    "state": job.state,
+                    "events": list(job.events),
+                    "elapsed": round(time.monotonic() - job.started_at, 1),
+                }
+                if job.state == "done":
+                    blocks, truncated = job.result
+                    payload["blocks"] = blocks
+                    payload["truncated"] = truncated
+                elif job.state == "failed":
+                    payload["detail"] = job.error
+        if payload is None:
+            self._json_error(404, DIVE_NOT_FOUND_DETAIL)
+            return
+        self._send_json(200, payload)
+
+    def _deep_dive(self, phone: str) -> None:
+        """The Deep dive start (ADR-0006, issue #26): the gate is the
+        phase-2 shape exactly — the dive belongs to the chat phase 1
         recorded, so it needs a phone with at least one chat today and
-        never counts or checks the limit."""
+        never counts or checks the limit. The body carries only the
+        query; every upstream payload is pinned server-side. The dive
+        runs on its own registry job and this handler answers the job
+        identity immediately: 202 {"job_id": ...} — the sheet polls
+        /deep-dive/status for state, events, and the study. Nothing is
+        ever queued: a busy phone (or a full registry) is rejected, not
+        deferred."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -1141,26 +1293,12 @@ class SessionHandler(SimpleHTTPRequestHandler):
             if not isinstance(query, str) or not query.strip():
                 raise ValueError("query is required")
         except (ValueError, KeyError, TypeError):
-            # The body is already read above, so the plain JSON error is
-            # safe — _json_error would drain a second time and block.
-            body = json.dumps(
-                {"detail": "پرسش را بنویسید."}, ensure_ascii=False
-            ).encode("utf-8")
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            # The body is already read above, so _send_json is safe —
+            # _json_error would drain a second time and block.
+            self._send_json(400, {"detail": "پرسش را بنویسید."})
             return
-        blocks, truncated = compose_deep_dive(query.strip())
-        body = json.dumps(
-            {"blocks": blocks, "truncated": truncated}, ensure_ascii=False
-        ).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        job = _start_dive_job(phone, query.strip())
+        self._send_json(202, {"job_id": job.id})
 
     def _next_tier_recall(self) -> None:
         """The recorded Next-tier COT relay (ADR-0005), kept live as the
