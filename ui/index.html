@@ -373,6 +373,15 @@
         color: var(--mute);
       }
 
+      /* The collapsed Evidence pool (issue #28): the summary reads as a
+         quiet disclosure under the Quote selection. */
+      details summary {
+        cursor: pointer;
+        color: var(--mute);
+        font-size: 0.85rem;
+        margin: 0.75rem 0 0.5rem;
+      }
+
       .error {
         color: var(--bad);
       }
@@ -479,10 +488,16 @@
           <div id="answer" class="answer">
             <p class="empty">هنوز پرسشی نپرسیده‌اید.</p>
           </div>
-          <h2 id="citations-heading">استناد</h2>
-          <div id="citations">
-            <p class="empty">پس از پاسخ، استناد اینجا می‌آید: هویت کتاب و عبارت نقل‌شده.</p>
-          </div>
+          <!-- The Evidence pool stays visible, collapsed (issue #28):
+               the Quote selection renders as the first answer above it
+               and the pool remains phase 2's exact payload. -->
+          <details id="evidence-pool">
+            <summary>همۀ نقل‌قول‌های بازیابی‌شده</summary>
+            <h2 id="citations-heading">استناد</h2>
+            <div id="citations">
+              <p class="empty">پس از پاسخ، استناد اینجا می‌آید: هویت کتاب و عبارت نقل‌شده.</p>
+            </div>
+          </details>
         </div>
 
         <div class="phase-panel" id="panel-2" role="tabpanel" aria-labelledby="tab-2" hidden>
@@ -511,6 +526,7 @@
       const answerEl = document.getElementById("answer");
       const citationsEl = document.getElementById("citations");
       const citationsHeadingEl = document.getElementById("citations-heading");
+      const evidencePoolEl = document.getElementById("evidence-pool");
       const statusEl = document.getElementById("status");
       const quotedDocEl = document.getElementById("quoted-doc");
       const diveStartEl = document.getElementById("dive-start");
@@ -694,6 +710,19 @@
         return sources;
       }
 
+      // The tooltip's Citation text: Book identity plus the passage's
+      // first page (resolved server-side from the Evidence locator) —
+      // a passage without page markers cites the Book alone, never an
+      // invented page.
+      function citationRef(item) {
+        if (item.book_label) {
+          return item.first_page_label
+            ? `${item.book_label} — ${item.first_page_label}`
+            : item.book_label;
+        }
+        return item.first_page_label || "کتاب";
+      }
+
       // One paragraph = AI text with embedded verbatim quotes (PM format,
       // 2026-09-10). Each quote sentence hovers to the Citation of exactly
       // the passage it claims — on that passage's first page — and the
@@ -724,14 +753,10 @@
             span.className = "cite-sent";
             span.tabIndex = 0;
             span.textContent = part.quote;
-            // Book identity comes per quote from the server (resolved from
-            // the Evidence locator's document name) — with two Books the
-            // attribution can no longer be implied.
-            span.dataset.ref = part.book_label
-              ? part.first_page_label
-                ? `${part.book_label} — ${part.first_page_label}`
-                : part.book_label
-              : part.first_page_label || "کتاب";
+            // Book identity arrives per quote from the server (resolved
+            // from the Evidence locator's document name) — with two
+            // Books the attribution can no longer be implied.
+            span.dataset.ref = citationRef(part);
             appendPart(span);
             if (part.pages_label && !labels.includes(part.pages_label)) {
               labels.push(part.pages_label);
@@ -858,6 +883,85 @@
           // Composer unreachable: phase 1's answer and Evidence citations stay.
           failQuotedPhase();
           onSettled();
+        }
+      }
+
+      // The Quote selection (ADR 0006, issue #28): the first answer is
+      // the Evidence pool's verbatim Book sentences — ten aimed,
+      // guarded 4-12 — picked server-side by EXACTLY ONE glm-5.3-flash
+      // call. The streamed prose is no longer the displayed answer (it
+      // still feeds the Quoted answer's framing), and an empty or
+      // failed selection falls back to the prose render: the sheet is
+      // never left empty. This runs in parallel with phase 2, which
+      // receives the same pool as its payload; each lands in its own
+      // tab. A new ask aborts this fetch with the rest (quotedAbort).
+      async function renderQuoteSelection(question, prose, citations) {
+        const run = citationRun;
+        const sources = evidenceSources(citations);
+        answerEl.replaceChildren();
+        const status = document.createElement("p");
+        status.className = "composer-status";
+        status.textContent = "در حال انتخاب نقل‌قول‌ها…";
+        answerEl.append(status);
+        const fallbackToProse = () => {
+          answerEl.className = "answer";
+          renderMarkdown(answerEl, prose);
+          const note = document.createElement("p");
+          note.className = "empty";
+          note.textContent = "انتخاب نقل‌قول‌ها آماده نشد؛ پاسخ جریانیافته به‌جای آن می‌ماند.";
+          answerEl.append(note);
+        };
+        try {
+          const res = await fetch("/quote-selection", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+              ...phoneHeader(),
+            },
+            body: JSON.stringify({ question, sources }),
+            signal: quotedAbort.signal,
+          });
+          if (run !== citationRun) {
+            return;
+          }
+          const payload = res.ok ? await res.json() : {};
+          if (run !== citationRun) {
+            return;
+          }
+          const selections = Array.isArray(payload.selections)
+            ? payload.selections
+            : [];
+          if (!selections.length) {
+            fallbackToProse();
+            return;
+          }
+          const doc = document.createDocumentFragment();
+          for (const item of selections) {
+            const sentence = document.createElement("p");
+            sentence.className = "doc-para";
+            const span = document.createElement("span");
+            span.className = "cite-sent";
+            span.tabIndex = 0;
+            span.textContent = item.text;
+            // Same tooltip contract as the Quoted paragraph's quotes:
+            // Book identity plus the passage's first page.
+            span.dataset.ref = citationRef(item);
+            sentence.append(span);
+            if (item.pages_label) {
+              const pages = document.createElement("span");
+              pages.className = "cite-pages";
+              pages.textContent = ` [${item.pages_label}]`;
+              sentence.append(pages);
+            }
+            doc.append(sentence);
+          }
+          answerEl.className = "answer";
+          answerEl.replaceChildren(doc);
+        } catch {
+          if (run !== citationRun) {
+            return;
+          }
+          fallbackToProse();
         }
       }
 
@@ -1207,6 +1311,9 @@
         diveQuery = query;
         setText(answerEl, "در حال پرسیدن…", "empty");
         citationRun += 1;
+        // The collapsed pool starts the ask closed — a previous ask's
+        // no-citations error note must not sit open on the new one.
+        evidencePoolEl.open = false;
         citationsEl.replaceChildren();
         const waiting = document.createElement("p");
         waiting.className = "empty";
@@ -1221,8 +1328,9 @@
             throw new Error("پاسخ خالی برگشت.");
           }
           const { answer, citations } = splitCitation(text);
-          answerEl.className = "answer";
-          renderMarkdown(answerEl, answer || text);
+          // The prose is kept for phase 2's framing — it is no longer
+          // the displayed first answer (issue #28).
+          const prose = answer || text;
           markFirstToken();
           setPhaseState(1, "done");
           // The first answer exists — the ask has a question to dive on.
@@ -1232,10 +1340,17 @@
           diveStartEl.disabled = false;
           citationsEl.replaceChildren();
           if (!citations.length) {
+            // No pool, no picker: the streamed prose stays the answer,
+            // exactly as before the Quote selection (issue #28).
+            answerEl.className = "answer";
+            renderMarkdown(answerEl, prose);
             const missing = document.createElement("p");
             missing.className = "error";
             missing.textContent = "استناد در پاسخ نبود.";
             citationsEl.append(missing);
+            // The failure note must stay readable — open the collapsed
+            // pool for it, then close again on the next ask.
+            evidencePoolEl.open = true;
             // No Evidence pool means no Quoted answer, but the dive
             // never needed one — the operator may still start it.
             skipQuotedPhase();
@@ -1248,7 +1363,13 @@
               p.textContent = item;
               citationsEl.append(p);
             }
+            // Phase 2 starts right here on the same pool (its exact
+            // payload) and runs in PARALLEL with the picker (issue #28):
+            // each lands in its own tab.
             renderQuotedAnswer(query, answer, citations, stopTimer);
+            // The Quote selection replaces the prose as the first
+            // answer (issue #28).
+            renderQuoteSelection(query, prose, citations);
           }
         };
 
@@ -1282,9 +1403,10 @@
                   "empty"
                 );
               } else if (name === "delta") {
+                // The prose preview is no longer painted (issue #28):
+                // deltas still arrive and still drive the TTFT readout
+                // — «نخستین توکن» is first token ARRIVAL.
                 preview += JSON.parse(data).text;
-                answerEl.className = "answer";
-                renderMarkdown(answerEl, preview);
                 markFirstToken();
               } else if (name === "reset") {
                 preview = "";
