@@ -21,8 +21,8 @@ except ImportError:  # the container runs serve.py as a script beside the module
 # interleaved document (paragraphs of AI text with embedded verbatim Book
 # quotes) that replaces the streamed answer on the sheet (ADR-0003).
 # glm-5.3-flash here — the first-answer path and phase 2 (ADR-0002);
-# glm-5.3 is the Deep dive's model (DIVE_MODEL below — the dive's
-# Planner and Synthesizer, issue #25), and the second service's own
+# glm-5.3 is the Deep dive's model (DIVE_MODEL in ui/dive.py — the
+# dive's Planner and Synthesizer, issue #25), and the second service's own
 # compose env keeps glm-5.3 for the COT probe on 8001. The pin changes
 # only here, after the README's /chat/completions smoke rule — never
 # via env.
