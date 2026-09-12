@@ -103,6 +103,32 @@ def test_readme_records_streaming_seam():
     assert "accumulated prose" not in text
 
 
+def test_readme_records_the_missing_key_fallbacks_truthfully():
+    # Round-2 review (2026-09-12): "without it the Quoted answer falls
+    # back to the Evidence list" was false on both ends — the Evidence
+    # pool is never rendered as an answer (CONTEXT.md retires the name
+    # too), and the live contract is the picker's prose fallback in
+    # phase 1 (its recorded note) and an empty phase 2 whose tab lands
+    # nothing while phase 1's answer stands. The sentence's true half —
+    # start-ui.ps1 reads the key into the process env, serve.py takes it
+    # from the host env — stays locked.
+    text = README.read_text(encoding="utf-8")
+    assert (
+        "`start-ui.ps1` reads `LLM_API_KEY` from `.env` into the process env"
+        in text
+    )
+    assert (
+        "takes the key from the host env, never from `.env` "
+        "(that file is compose-only)" in text
+    )
+    assert "neither the Quote-selection picker nor the phase-2 composer can run" in text
+    assert "falls back to the streamed prose with its recorded note" in text
+    assert "land nothing in phase 2's tab" in text
+    assert "The Evidence pool is never rendered as a fallback" in text
+    # The retired false claim never returns.
+    assert "falls back to the Evidence list" not in text
+
+
 def test_session_ui_never_serves_from_stale_cache():
     # A browser that heuristically cached the page kept rendering the
     # pre-tab sheet after the container switchover (2026-09-11): every

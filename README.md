@@ -25,7 +25,7 @@ A Farsi-first sheet for the whole answer pipeline — it shows the three phases 
 powershell -ExecutionPolicy Bypass -File start-ui.ps1
 ```
 
-`start-ui.ps1` reads `LLM_API_KEY` from `.env` into the process env — `serve.py` takes the key from the host env, never from `.env` (that file is compose-only), and without it the Quoted answer falls back to the Evidence list — then runs `python ui/serve.py`.
+`start-ui.ps1` reads `LLM_API_KEY` from `.env` into the process env — `serve.py` takes the key from the host env, never from `.env` (that file is compose-only) — then runs `python ui/serve.py`. Without the key neither the Quote-selection picker nor the phase-2 composer can run: the picker's empty reply falls back to the streamed prose with its recorded note, and the composer's empty blocks land nothing in phase 2's tab — phase 1's answer stands either way. The Evidence pool is never rendered as a fallback.
 
 The same sheet also runs as a container, under the `session` profile:
 
