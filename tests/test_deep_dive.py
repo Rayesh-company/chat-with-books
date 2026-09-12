@@ -1399,3 +1399,84 @@ def test_deep_dive_status_reports_transitions_events_and_the_study(tmp_path):
         },
         {"type": "references", "items": ["chunk 1 of document tarhe-kolli"]},
     ]
+
+
+def test_deep_dive_status_shows_the_gap_round_while_still_searching(tmp_path):
+    # The gap round is observable through the live poll surface (issue
+    # #27): while the re-searched section's call is still in flight, the
+    # status endpoint already names it in `events` — and the state
+    # remains "searching". The final timeline shows the gap event
+    # between the searching and writing events.
+    gap_in_flight = threading.Event()
+    release_gap = threading.Event()
+    alf_round_one = {"done": False}
+    lock = threading.Lock()
+
+    def reply(payload):
+        if payload["query"] != "الف؟":
+            return cognee_payload(
+                recall_text(NOISY_PASSAGE, "chunk 40 of document tarhe-kolli")
+                + f"\n- chunk 29 of document tarhe-kolli: \"{OTHER_PASSAGE}\""
+            )
+        with lock:
+            first = not alf_round_one["done"]
+            alf_round_one["done"] = True
+        if first:
+            # Round 1: one parsed passage — quote-starved.
+            return cognee_payload(
+                recall_text(SENTENCE, "chunk 1 of document tarhe-kolli")
+            )
+        # The gap round, held in flight until the test has polled.
+        gap_in_flight.set()
+        release_gap.wait(timeout=30)
+        return cognee_payload(recall_text(GAP_PASSAGE, GAP_REFERENCE))
+
+    pool = [
+        {"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE},
+        {"reference": "chunk 40 of document tarhe-kolli", "passage": NOISY_PASSAGE},
+        {"reference": "chunk 29 of document tarhe-kolli", "passage": OTHER_PASSAGE},
+        {"reference": GAP_REFERENCE, "passage": GAP_PASSAGE},
+    ]
+    upstream = DiveUpstream(
+        composer_replies=[
+            subquestions_reply(["الف؟", "ب؟"]),
+            composer_reply(
+                json.dumps({"blocks": dive_blocks(pool)}, ensure_ascii=False)
+            ),
+        ],
+        recall_reply=reply,
+    )
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        serve.record_chat(DIVE_PHONE)
+        _, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+        job_id = body["job_id"]
+        assert gap_in_flight.wait(timeout=30)
+        poll_status, payload = get(
+            base, f"/deep-dive/status?job={job_id}", phone=DIVE_PHONE
+        )
+        assert poll_status == 200
+        # Mid-gap-round: announced, and still "searching".
+        assert payload["state"] == "searching"
+        assert payload["events"] == [
+            serve.DIVE_EVENT_PLANNING,
+            serve.DIVE_EVENT_SEARCHING,
+            serve._dive_gap_event(1),
+        ]
+        release_gap.set()
+        wait_job_done(job_id)
+        status, payload = get(
+            base, f"/deep-dive/status?job={job_id}", phone=DIVE_PHONE
+        )
+    finally:
+        release_gap.set()
+        stop_gate(server, original)
+    assert status == 200
+    assert payload["state"] == "done"
+    assert payload["events"] == [
+        serve.DIVE_EVENT_PLANNING,
+        serve.DIVE_EVENT_SEARCHING,
+        serve._dive_gap_event(1),
+        serve.DIVE_EVENT_WRITING,
+        serve.DIVE_EVENT_DONE,
+    ]
