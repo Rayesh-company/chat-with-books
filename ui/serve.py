@@ -1582,14 +1582,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
             if not isinstance(query, str) or not query.strip():
                 raise ValueError("query is required")
         except (ValueError, KeyError, TypeError):
-            # The body is already read above, so the plain JSON error is
-            # safe — _json_error would drain a second time and block.
-            body = json.dumps({"detail": "پرسش را بنویسید."}, ensure_ascii=False).encode("utf-8")
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            # The body is already read above, so _send_json is safe —
+            # _json_error would drain a second time and block.
+            self._send_json(400, {"detail": "پرسش را بنویسید."})
             return
         body = json.dumps(
             {
