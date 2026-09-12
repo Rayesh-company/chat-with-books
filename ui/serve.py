@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Serve the Farsi Session sheet, proxy first-answer recall to Cognee,
-relay phase 3 (the Next-tier graph search) to cognee-next-tier, and
-compose the Quoted answer for phase 2."""
+relay the recorded Next-tier COT probe to cognee-next-tier (the sheet no
+longer calls it — the operator probe remains), compose the Quoted answer
+for phase 2, and orchestrate the Deep dive (ADR-0006): Planner, parallel
+searchers on the second Cognee service, Synthesizer."""
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 import datetime
 import json
@@ -35,6 +38,24 @@ ALLOWED_PROXY = {"/health", "/api/v1/recall"}
 # here — never in the browser (README, Next-tier search).
 BOOK_DATASETS = ["tarhe-kolli", "70143-336"]
 NEXT_TIER_SEARCH_TYPE = "GRAPH_COMPLETION_COT"
+
+# Deep dive (ADR-0006, tracer bullet issue #25): the study orchestration
+# runs here, server-side — the browser names no Cognee search type. Each
+# searcher pins its recall shape below (GRAPH_COMPLETION over the Book
+# set, references on — not FEELING_LUCKY, not AGENTIC_COMPLETION, which
+# needs exactly one dataset), riding the second Cognee service so a
+# multi-minute dive never blocks the first-answer path on 8000. The
+# Planner and Synthesizer run glm-5.3 (the next-tier model, ADR-0002),
+# pinned in source like every model pin — never via env.
+DIVE_MODEL = "glm-5.3"
+DIVE_SEARCH_TYPE = "GRAPH_COMPLETION"
+# A graph-backed search can sit minutes on the second service; each
+# searcher gets its own leash (the COT probe's four rounds fit inside
+# ten minutes on live logs, and a decomposition pass is lighter).
+DIVE_SEARCH_TIMEOUT = 600
+# The Planner decomposes the question into at most this many Farsi
+# sub-questions; as many searchers run in parallel.
+DIVE_MAX_SUB_QUESTIONS = 6
 
 # Phone gate (PM call, 2026-09-10, for the public VPS deploy): the sheet
 # identifies a Customer by a phone number and each number gets
@@ -195,7 +216,13 @@ def guard_blocks(blocks, sources):
         if not isinstance(block, dict):
             continue
         kind = block.get("type")
-        if kind == "heading":
+        if kind == "references":
+            # The dive's closing references list is built server-side and
+            # rides in guarded output untouched — no passage claims to
+            # guard, and the sheet renders it as the «منابع» list.
+            if isinstance(block.get("items"), list):
+                kept.append(block)
+        elif kind == "heading":
             text = block.get("text")
             if isinstance(text, str) and text.strip():
                 kept.append({"type": "heading", "text": text.strip()})
@@ -319,6 +346,10 @@ def salvage_blocks(content: str) -> list:
     return blocks
 
 
+def _strip_code_fence(content: str) -> str:
+    return re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+
+
 def parse_quoted_reply(content):
     """Pull the blocks list out of the composer's reply; [] when malformed.
 
@@ -329,7 +360,7 @@ def parse_quoted_reply(content):
     """
     if not isinstance(content, str) or not content.strip():
         return []
-    stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+    stripped = _strip_code_fence(content)
     try:
         parsed = json.loads(stripped)
     except ValueError:
@@ -483,27 +514,29 @@ def build_continuation_prompt(
     )
 
 
-def _composer_reply(message: str, thinking_type: str):
+def _composer_reply(message: str, thinking_type: str, model: str = COMPOSER_MODEL):
     """One POST to the composer endpoint; raises on any failure.
 
-    thinking_type "enabled" for the planner — reasoning structures the
-    document and the cross-passage weaving (PM call, 2026-09-10) — and
-    "disabled" for the writer, so copied sentences survive the verbatim
-    guard. Both calls run at the endpoint's default temperature (the
-    writer's "temperature": 0 pin was dropped the same call: final
-    synthesizing, not extraction). Interleaving AI text with verbatim
-    quotes is light writing plus copy-matching, not reasoning;
-    glm-5.3-flash's default thinking adds ~70s for identical output
-    (measured 2026-09-10: 84.2s -> 16.5s on the writing task). Both calls
-    pin COMPOSER_MAX_TOKENS — the unpinned endpoint default left a long
-    document out of room mid-write (2026-09-10). glm-5.3-flash
-    only (ADR-0002).
+    thinking_type "enabled" for reasoning passes — the phase-2 planner
+    and the dive's Planner (reasoning structures the decomposition and
+    the cross-passage weaving, PM call, 2026-09-10) — and "disabled" for
+    every writer, so copied sentences survive the verbatim guard. All
+    calls run at the endpoint's default temperature (the writer's
+    "temperature": 0 pin was dropped the same call: final synthesizing,
+    not extraction). The Quoted answer runs glm-5.3-flash; the dive's
+    two calls run glm-5.3 (DIVE_MODEL, ADR-0002's next-tier model).
+    Interleaving AI text with verbatim quotes is light writing plus
+    copy-matching, not reasoning; glm-5.3-flash's default thinking adds
+    ~70s for identical output (measured 2026-09-10: 84.2s -> 16.5s on
+    the writing task). Every call pins COMPOSER_MAX_TOKENS — the
+    unpinned endpoint default left a long document out of room
+    mid-write (2026-09-10).
     """
     request = Request(
         COMPOSER_URL,
         data=json.dumps(
             {
-                "model": COMPOSER_MODEL,
+                "model": model,
                 "thinking": {"type": thinking_type},
                 "max_tokens": COMPOSER_MAX_TOKENS,
                 "messages": [{"role": "user", "content": message}],
@@ -592,6 +625,335 @@ def compose_quoted_answer(question: str, answer: str, sources):
         question, answer, sources, plan, blocks
     )
     return guard_blocks(blocks, sources), truncated
+
+
+# Deep dive (ADR-0006, tracer bullet issue #25): the study orchestration.
+# Module-level functions over the injectable urlopen, the same seam the
+# Quoted answer tests script — one dive is Planner -> parallel searchers
+# -> Synthesizer, and every upstream payload is pinned here, server-side;
+# the sheet sends only the question.
+
+
+def parse_evidence_sources(text) -> list:
+    """Pull (reference, passage) pairs out of one recall reply's text.
+
+    The server-side twin of the sheet's Evidence parsing: the reply's
+    answer is followed by an `Evidence:` block of bullets, each bullet
+    `locator: "quoted passage"`. Malformed bullets drop; a reply with no
+    Evidence block yields [] — never an invented passage.
+    """
+    if not isinstance(text, str):
+        return []
+    at = text.find("Evidence:")
+    if at == -1:
+        return []
+    rest = text[at + len("Evidence:"):]
+    sources = []
+    for bullet in re.split(r"\n-\s+", rest):
+        item = bullet.strip()
+        at_quote = item.find(': "')
+        if at_quote == -1:
+            continue
+        reference = item[:at_quote].strip()
+        passage = item[at_quote + 3:]
+        if passage.endswith('"'):
+            passage = passage[:-1]
+        passage = passage.strip()
+        if reference and passage:
+            sources.append({"reference": reference, "passage": passage})
+    return sources
+
+
+def build_dive_planner_prompt(question: str) -> str:
+    """The dive Planner's brief: decompose the question, not answer it."""
+    return (
+        "You are planning a Farsi Deep dive study over a fixed set of "
+        "Books.\n\n"
+        f"Question: {question}\n\n"
+        "Task: decompose the question into distinct Farsi sub-questions "
+        "whose answers together cover it — the facets, sub-themes, and "
+        "cross-checks a scholarly study of the Books would need. Up to "
+        "six sub-questions; fewer when the question is narrow. Each "
+        "sub-question must be answerable from the Books on its own. "
+        "Never answer them yourself.\n\n"
+        "Reply with ONLY a JSON array of Farsi strings, no prose, no "
+        "code fence:\n"
+        '["زیرپرسش اول؟", "زیرپرسش دوم؟"]'
+    )
+
+
+def dive_subquestions_from_reply(content, question: str) -> list:
+    """Guard the Planner's reply into sub-questions; [question] if unusable.
+
+    Parse the JSON list (a code fence is stripped first), keep the
+    non-empty string items, cap at DIVE_MAX_SUB_QUESTIONS. A reply that
+    is not a usable list — or one with nothing left after the guard —
+    falls back to the raw question, so a dive never dies at planning.
+    """
+    stripped = _strip_code_fence(content) if isinstance(content, str) else ""
+    parsed = None
+    try:
+        parsed = json.loads(stripped)
+    except ValueError:
+        match = re.search(r"\[.*\]", stripped, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group(0))
+            except ValueError:
+                parsed = None
+    if not isinstance(parsed, list):
+        return [question]
+    sub_questions = [
+        item.strip()
+        for item in parsed
+        if isinstance(item, str) and item.strip()
+    ]
+    return sub_questions[:DIVE_MAX_SUB_QUESTIONS] or [question]
+
+
+def plan_dive_subquestions(question: str) -> list:
+    """One Planner call (glm-5.3, thinking on); the sub-questions.
+
+    On any planner failure the fallback is the raw question alone —
+    the same never-empty shape as the phase-2 planner (AC-4): a dive
+    degrades to a single search, it never dies at planning.
+    """
+    try:
+        reply = _composer_reply(
+            build_dive_planner_prompt(question), "enabled", DIVE_MODEL
+        )
+        content = reply["choices"][0]["message"]["content"]
+    except (KeyError, ValueError, OSError):
+        return [question]
+    return dive_subquestions_from_reply(content, question)
+
+
+def dive_recall(sub_question: str) -> list:
+    """One searcher: the pinned recall on the second Cognee service.
+
+    The search shape is pinned HERE, never in the browser:
+    GRAPH_COMPLETION over the Book set with references on — not
+    FEELING_LUCKY, not AGENTIC_COMPLETION (it requires exactly one
+    dataset; the Book set is two). On any failure the searcher
+    contributes nothing; the dive continues on its siblings' pools.
+    """
+    request = Request(
+        f"{NEXT_TIER_URL}/api/v1/recall",
+        data=json.dumps(
+            {
+                "searchType": DIVE_SEARCH_TYPE,
+                "query": sub_question,
+                "datasets": list(BOOK_DATASETS),
+                "includeReferences": True,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=DIVE_SEARCH_TIMEOUT) as response:
+            payload = json.load(response)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    sources = []
+    for item in payload:
+        if isinstance(item, dict) and isinstance(item.get("text"), str):
+            sources.extend(parse_evidence_sources(item["text"]))
+    return sources
+
+
+def run_dive_searches(sub_questions) -> list:
+    """Run the sub-questions' searches in parallel; one merged pool.
+
+    As many searchers as sub-questions run at once (stdlib threads),
+    each on its own DIVE_SEARCH_TIMEOUT leash. The pools merge in
+    sub-question order and identical passages deduplicate — one
+    passage in the pool no matter how many searchers surfaced it.
+    """
+    sources = []
+    seen = set()
+    workers = max(1, len(sub_questions))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for result in pool.map(dive_recall, sub_questions):
+            for source in result:
+                passage = source["passage"]
+                if passage in seen:
+                    continue
+                seen.add(passage)
+                sources.append(source)
+    return sources
+
+
+def build_dive_prompt(question: str, sources) -> str:
+    """The Synthesizer's brief: the headed, quoted Farsi study."""
+    passages = "\n".join(
+        f"[{i}] ({source['reference']}) {source['passage']}"
+        for i, source in enumerate(sources)
+    )
+    return (
+        "You are writing a Farsi Deep dive study for a Q&A sheet over a "
+        "fixed set of Books.\n\n"
+        f"Question: {question}\n\n"
+        "Passages (numbered, retrieved from the Books' Evidence per "
+        "sub-question; text-layer noise like \\b backspaces may appear "
+        "between words):\n"
+        f"{passages}\n\n"
+        "Task: write the study as a multi-section document of 2,000 to "
+        "4,000 Farsi words in five to eight headed sections.\n"
+        "Every body paragraph is one unit: your own Farsi text with "
+        "quoted sentences embedded inside it — your text, then a quoted "
+        "sentence, then more of your text, as the argument needs. "
+        "Introduce each section, connect the quotes, and summarize what "
+        "they establish; never state a Book claim the passages do not "
+        "support. A paragraph may quote from more than one passage. Each "
+        "quoted sentence is a complete Farsi sentence copied VERBATIM "
+        "from exactly ONE passage (ignore the \\b noise; write proper "
+        "Farsi). Do not paraphrase, do not merge, do not shorten. Never "
+        "write a paragraph without at least one quoted sentence, and "
+        "never a paragraph of bare quotes without your connective text. "
+        "Never invent a quote.\n"
+        "Do NOT write a references list or a references section — the "
+        "sheet appends the references itself from the real passages.\n\n"
+        "Reply with ONLY a JSON object, no prose, no code fence:\n"
+        '{"blocks": [{"type": "heading", "text": "..."}, '
+        '{"type": "paragraph", "parts": [{"text": "..."}, '
+        '{"quote": "<verbatim sentence>", "source": <passage index>}, '
+        '{"text": "..."}]}]}'
+    )
+
+
+def build_dive_continuation_prompt(question: str, sources, blocks: list) -> str:
+    """The dive's resume brief after a length-cut study: the same brief
+    plus the blocks that completed before the cut; the writer writes
+    only what follows them."""
+    passages = "\n".join(
+        f"[{i}] ({source['reference']}) {source['passage']}"
+        for i, source in enumerate(sources)
+    )
+    written = json.dumps({"blocks": blocks}, ensure_ascii=False)
+    return (
+        "You are continuing a Farsi Deep dive study for a Q&A sheet over "
+        "a fixed set of Books.\n\n"
+        f"Question: {question}\n\n"
+        "Passages (numbered, retrieved from the Books' Evidence per "
+        "sub-question; text-layer noise like \\b backspaces may appear "
+        "between words):\n"
+        f"{passages}\n\n"
+        "A previous write of this study was cut by a reply length "
+        "limit. The blocks that completed before the cut (JSON):\n"
+        f"{written}\n\n"
+        "Task: continue that SAME document. Write ONLY the blocks that "
+        "come AFTER the last block above — the remaining headings and "
+        "interleaved paragraphs, in the same JSON object shape. Every "
+        "paragraph follows the same rule as before: your own Farsi text "
+        "with quoted sentences embedded inside it, each quoted sentence "
+        "a complete Farsi sentence copied VERBATIM from exactly ONE "
+        "passage (ignore the \\b noise; write proper Farsi). Do not "
+        "paraphrase, do not merge. Never repeat a block that is already "
+        "written; never invent or paraphrase a quote. Do NOT write a "
+        'references list. If nothing is missing, reply with an empty '
+        'list: {"blocks": []}.\n\n'
+        "Reply with ONLY a JSON object, no prose, no code fence:\n"
+        '{"blocks": [{"type": "heading", "text": "..."}, '
+        '{"type": "paragraph", "parts": [{"text": "..."}, '
+        '{"quote": "<verbatim sentence>", "source": <passage index>}, '
+        '{"text": "..."}]}]}'
+    )
+
+
+def continue_dive_study(question: str, sources, blocks: list):
+    """One continuation call past a length-cut study; (blocks, truncated).
+
+    The same single-continuation shape as phase 2: a continuation cut
+    again (or failed) rides on as the salvaged prefix, truncated True.
+    """
+    try:
+        reply = _composer_reply(
+            build_dive_continuation_prompt(question, sources, blocks),
+            "disabled",
+            DIVE_MODEL,
+        )
+        choice = reply["choices"][0]
+        content = choice["message"]["content"]
+    except (KeyError, ValueError, OSError):
+        return blocks, True
+    extra = parse_quoted_reply(content)
+    return blocks + extra, choice.get("finish_reason") == "length"
+
+
+def compose_dive_study(question: str, sources):
+    """One Synthesizer call (glm-5.3, thinking disabled) writes the
+    study; (guarded blocks, truncated).
+
+    Thinking stays off for the same reason as the phase-2 writer:
+    copied sentences must survive the verbatim guard. A reply cut by
+    the output ceiling is salvaged and continued ONCE — a doubly-cut
+    study lands the guarded prefix, flagged. The guard is phase 2's,
+    as-is.
+    """
+    try:
+        reply = _composer_reply(
+            build_dive_prompt(question, sources), "disabled", DIVE_MODEL
+        )
+        choice = reply["choices"][0]
+        content = choice["message"]["content"]
+    except (KeyError, ValueError, OSError):
+        return [], False
+    blocks = parse_quoted_reply(content)
+    if choice.get("finish_reason") != "length":
+        return guard_blocks(blocks, sources), False
+    blocks, truncated = continue_dive_study(question, sources, blocks)
+    return guard_blocks(blocks, sources), truncated
+
+
+def with_dive_references(blocks: list, sources) -> list:
+    """Append the closing references block, built server-side.
+
+    The items are the references of the passages the guarded study
+    actually quoted, in order of first use — guaranteed real, never
+    model-invented. An empty study (the guard kept nothing) appends
+    nothing: there is no study to close.
+    """
+    if not blocks:
+        return blocks
+    used = []
+    for block in blocks:
+        if block.get("type") != "paragraph":
+            continue
+        for part in block.get("parts", []):
+            index = part.get("source")
+            if (
+                isinstance(index, int)
+                and not isinstance(index, bool)
+                and 0 <= index < len(sources)
+            ):
+                reference = sources[index]["reference"]
+                if reference not in used:
+                    used.append(reference)
+    return blocks + [{"type": "references", "items": used}]
+
+
+def compose_deep_dive(question: str):
+    """One dive end-to-end; (blocks with the references list, truncated).
+
+    Planner (glm-5.3, thinking on) decomposes the question into up to
+    six Farsi sub-questions — the raw question alone when planning
+    fails — then as many searchers run in parallel on the second Cognee
+    service, their Evidence passages merging into one deduplicated
+    pool, then one Synthesizer call writes the guarded study. No
+    Evidence pool at all means no study: ([], False), and the sheet
+    says the dive did not prepare. No job registry or caps yet — those
+    follow (issues #26, #27).
+    """
+    sub_questions = plan_dive_subquestions(question)
+    sources = run_dive_searches(sub_questions)
+    if not sources:
+        return [], False
+    blocks, truncated = compose_dive_study(question, sources)
+    return with_dive_references(blocks, sources), truncated
 
 
 class SessionHandler(SimpleHTTPRequestHandler):
