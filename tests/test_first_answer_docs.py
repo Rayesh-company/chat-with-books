@@ -31,6 +31,40 @@ def test_readme_new_question_starts_a_new_first_answer():
     assert "GRAPH_COMPLETION_COT" not in recall_json
 
 
+def test_readme_records_the_quote_selection_as_the_first_answer():
+    # Issue #28 (ADR-0006): the rendered first answer is the Quote
+    # selection, not the streamed prose. Recall and the Evidence pool
+    # are untouched; the contract below is re-recorded.
+    text = README.read_text(encoding="utf-8")
+    section = text.split("## First answer", 1)[1].split("## Tests", 1)[0]
+    assert "Quote selection" in section
+    assert "/quote-selection" in section
+    # Exactly one picker call, the existing composer pin, thinking
+    # disabled — copy-matching, not reasoning.
+    assert "glm-5.3-flash" in section
+    assert "thinking disabled" in section
+    assert "ONE" in section
+    # Ten aimed, guarded 4-12.
+    assert "aim" in section
+    assert "VERBATIM" in section
+    # The verbatim guard drops paraphrases and wrong-index claims.
+    assert "wrong index" in section
+    # Per-sentence Citation: Book identity plus first page.
+    assert "first page" in section
+    # The pool stays visible-collapsed and stays phase 2's exact payload.
+    assert "collapsed" in section
+    assert "exact payload" in section
+    # The prose is no longer displayed but still feeds the Quoted answer.
+    assert "no longer" in section
+    assert "/quoted-answer" in section
+    # The picker's gate: a chat today, never counted.
+    assert "never records or counts" in section
+    # TTFT still measures first token arrival without the painted preview.
+    assert "first token" in section
+    # The sheet is never left empty: prose fallback.
+    assert "never left empty" in section
+
+
 def test_sheet_calls_the_quote_selection_picker_with_the_pool():
     # Issue #28: with citations present the sheet POSTs the pool exactly
     # as it parsed it to the picker, under a pulsing Farsi status.
