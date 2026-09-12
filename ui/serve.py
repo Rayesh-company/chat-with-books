@@ -997,6 +997,10 @@ DIVE_EVENT_DONE = "مطالعۀ عمیق آماده شد."
 DIVE_EVENT_FAILED = "مطالعۀ عمیق ناتمام ماند."
 DIVE_EVENT_ABORTED = "مطالعۀ عمیق لغو شد."
 
+# Recorded limit (YAGNI): terminal jobs are never reaped — they linger
+# in this dict by design. The caps scan non-terminal jobs only, and a
+# server restart empties the registry, so growth is bounded by one
+# restart cycle. Revisit pruning with the durable-execution upgrade.
 DIVE_REGISTRY = {}
 DIVE_REGISTRY_LOCK = threading.Lock()
 

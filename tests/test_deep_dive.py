@@ -942,8 +942,9 @@ def test_a_fourth_concurrent_start_is_rejected_and_nothing_is_queued(tmp_path):
     gate = threading.Event()
     phones = [f"0912000003{n}" for n in range(4)]
     # One planner reply per allowed dive — each job pops its own while
-    # the gate holds it; the synthesizer replies are queued only after
-    # all three planners are parked, so pops stay deterministic.
+    # the gate holds it; the synthesizer replies are held back and
+    # released only after all three planners are parked, so pops stay
+    # deterministic.
     upstream = DiveUpstream(
         composer_replies=[subquestions_reply(["زیرپرسش؟"]) for _ in range(3)],
         gate=gate,
