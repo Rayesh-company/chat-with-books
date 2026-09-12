@@ -5,10 +5,11 @@ from tests.conftest import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from ui import serve  # noqa: E402
+from ui import composer, serve  # noqa: E402
 from tests.helpers import run_call_with_replies  # noqa: E402
 
 SERVE = REPO_ROOT / "ui" / "serve.py"
+COMPOSER = REPO_ROOT / "ui" / "composer.py"
 README = REPO_ROOT / "README.md"
 
 # The Book's text layer separates words with real backspace characters and
@@ -267,12 +268,12 @@ def test_compose_returns_empty_list_when_the_composer_is_unreachable():
     def boom(request, timeout=None):
         raise OSError("composer down")
 
-    original = serve.urlopen
-    serve.urlopen = boom
+    original = composer.urlopen
+    composer.urlopen = boom
     try:
         assert serve.compose_quoted_answer("پرسش؟", "پاسخ", SOURCES) == ([], False)
     finally:
-        serve.urlopen = original
+        composer.urlopen = original
 
 
 # The writer's guarded reply, shared by the two-call tests below.
@@ -536,12 +537,13 @@ def test_serve_pins_the_composer_endpoint_and_model():
     text = SERVE.read_text(encoding="utf-8")
     assert "/quoted-answer" in text
     assert "/citation-paragraph" not in text
-    assert "glm-5.3-flash" in text
-    assert "api.z.ai/api/coding/paas/v4" in text
-    assert "LLM_API_KEY" in text
-    # The model pin changes only by editing this file (smoke rule first),
-    # never through an env override.
-    assert 'environ.get("COMPOSER_MODEL"' not in text
+    # The endpoint pins live in the composer module now — still pinned in
+    # source (smoke rule first), never through an env override.
+    composer_text = COMPOSER.read_text(encoding="utf-8")
+    assert "glm-5.3-flash" in composer_text
+    assert "api.z.ai/api/coding/paas/v4" in composer_text
+    assert "LLM_API_KEY" in composer_text
+    assert 'environ.get("COMPOSER_MODEL"' not in composer_text
 
 
 def test_session_ui_renders_the_quoted_answer():

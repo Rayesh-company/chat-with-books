@@ -17,7 +17,7 @@ from tests.conftest import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from ui import quotas, serve  # noqa: E402
+from ui import composer, quotas, serve  # noqa: E402
 
 
 def post(base, path, payload, phone=None):
@@ -97,7 +97,8 @@ def run_call_with_replies(call, replies):
     return (its result, captured payloads, captured timeouts) — the
     unit-level fake-upstream seam under the real sheet server's. Each
     queued reply is POSTed in order (a raised Exception stands in for a
-    failed call) against the patched urlopen with the test key set."""
+    failed call) against the patched composer urlopen — the owning
+    module's seam — with the test key set."""
     captured = {"payloads": [], "timeouts": []}
     queue = [
         reply.encode("utf-8") if isinstance(reply, str) else reply
@@ -112,13 +113,13 @@ def run_call_with_replies(call, replies):
             raise item
         return FakeResponse(item)
 
-    original = serve.urlopen
-    serve.urlopen = fake_urlopen
+    original = composer.urlopen
+    composer.urlopen = fake_urlopen
     os.environ["LLM_API_KEY"] = "test-key"
     try:
         result = call()
     finally:
-        serve.urlopen = original
+        composer.urlopen = original
         del os.environ["LLM_API_KEY"]
     return result, captured
 
@@ -199,21 +200,25 @@ def with_gate(tmp_path, upstream):
     return (base URL, server, original urlopen). The tests' finally blocks
     must shut the server down and restore both patches. The quota DB is
     patched at its owning module (ui.quotas reads it per connection), the
-    dive registry starts empty — a server restart is what empties it in
-    production."""
+    fake stands at every owning module's urlopen seam — the facade's own
+    relay/proxy and the composer's — one upstream told apart by URL, as
+    before. The dive registry starts empty — a server restart is what
+    empties it in production."""
     quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
     serve.DIVE_REGISTRY.clear()
-    original = serve.urlopen
-    serve.urlopen = upstream
+    originals = [(module, module.urlopen) for module in (serve, composer)]
+    for module, _ in originals:
+        module.urlopen = upstream
     os.environ["LLM_API_KEY"] = "test-key"
     server = GateServer(("127.0.0.1", 0), serve.SessionHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    return f"http://127.0.0.1:{server.server_address[1]}", server, original
+    return f"http://127.0.0.1:{server.server_address[1]}", server, originals
 
 
 def stop_gate(server, original):
     server.shutdown()
     server.server_close()
-    serve.urlopen = original
+    for module, urlopen_original in original:
+        module.urlopen = urlopen_original
     os.environ.pop("LLM_API_KEY", None)

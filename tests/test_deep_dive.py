@@ -21,7 +21,7 @@ from tests.conftest import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from ui import serve  # noqa: E402
+from ui import composer, serve  # noqa: E402
 
 SERVE = REPO_ROOT / "ui" / "serve.py"
 
@@ -170,16 +170,22 @@ class DiveUpstream:
 
 
 def with_upstream(upstream):
-    """Patch serve.urlopen for one orchestration call; restores after."""
+    """Patch the urlopen seams for one orchestration call; restores
+    after — the composer module's (the dive's Planner and Synthesizer
+    ride the shared composer call shape) and the facade's (the
+    searchers' recall still reads serve.urlopen)."""
 
     def run(fn):
-        original = serve.urlopen
+        serve_original = serve.urlopen
+        composer_original = composer.urlopen
         serve.urlopen = upstream
+        composer.urlopen = upstream
         os.environ["LLM_API_KEY"] = "test-key"
         try:
             return fn()
         finally:
-            serve.urlopen = original
+            serve.urlopen = serve_original
+            composer.urlopen = composer_original
             del os.environ["LLM_API_KEY"]
 
     return run
