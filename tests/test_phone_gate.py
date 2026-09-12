@@ -475,7 +475,16 @@ def test_serve_pins_the_gate_shape():
 
 
 def test_readme_records_the_phone_gate():
-    text = README.read_text(encoding="utf-8")
-    assert "X-Session-Phone" in text
-    assert "five chats a day" in text
-    assert "no SMS verification" in text
+    section = (
+        README.read_text(encoding="utf-8")
+        .split("### Phone gate", 1)[1]
+        .split("\n### ", 1)[0]
+    )
+    assert "X-Session-Phone" in section
+    assert "five chats a day" in section
+    assert "no SMS verification" in section
+    # The header rides on every chat-owned call — the picker and the
+    # dive's status poll included, not only the ask and phase 2
+    # (full-spec review, 2026-09-12).
+    assert "/quote-selection" in section
+    assert "/deep-dive/status" in section

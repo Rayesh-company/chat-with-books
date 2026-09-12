@@ -1,5 +1,4 @@
 import json
-import os
 import sys
 
 from tests.conftest import REPO_ROOT
@@ -7,6 +6,7 @@ from tests.conftest import REPO_ROOT
 sys.path.insert(0, str(REPO_ROOT))
 
 from ui import serve  # noqa: E402
+from tests.helpers import run_call_with_replies  # noqa: E402
 
 SERVE = REPO_ROOT / "ui" / "serve.py"
 README = REPO_ROOT / "README.md"
@@ -313,20 +313,6 @@ WRITER_KEPT = [
 PLAN_MARKER = "طرح: بندها و بافت‌دهی میان قطعه‌ها"
 
 
-class FakeResponse:
-    def __init__(self, body):
-        self._body = body
-
-    def read(self):
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
 def writer_reply():
     content = json.dumps({"blocks": WRITER_BLOCKS}, ensure_ascii=False)
     return json.dumps({"choices": [{"message": {"content": content}}]})
@@ -339,25 +325,10 @@ def planner_reply(plan):
 def run_compose_with_replies(replies):
     """Run compose_quoted_answer against per-call canned replies; return
     (kept blocks, truncated flag, captured payloads, captured timeouts)."""
-    captured = {"payloads": [], "timeouts": []}
-    queue = [reply.encode("utf-8") if isinstance(reply, str) else reply for reply in replies]
-
-    def fake_urlopen(request, timeout=None):
-        captured["payloads"].append(json.loads(request.data.decode("utf-8")))
-        captured["timeouts"].append(timeout)
-        item = queue.pop(0)
-        if isinstance(item, Exception):
-            raise item
-        return FakeResponse(item)
-
-    original = serve.urlopen
-    serve.urlopen = fake_urlopen
-    os.environ["LLM_API_KEY"] = "test-key"
-    try:
-        kept, truncated = serve.compose_quoted_answer("پرسش؟", "پیش‌نویس پاسخ", SOURCES)
-    finally:
-        serve.urlopen = original
-        del os.environ["LLM_API_KEY"]
+    (kept, truncated), captured = run_call_with_replies(
+        lambda: serve.compose_quoted_answer("پرسش؟", "پیش‌نویس پاسخ", SOURCES),
+        replies,
+    )
     return kept, truncated, captured
 
 
@@ -722,3 +693,14 @@ def test_readme_records_the_quoted_answer_contract():
     assert "thinking enabled" in text
     assert "thinking disabled" in text
     assert "output ceiling" in text
+    # Phase 1 is the Quote selection (issue #28); the stale "streamed
+    # answer plus its Evidence list" description is retired — CONTEXT.md
+    # retires the phrase (full-spec review, 2026-09-12).
+    assert "streamed answer plus its Evidence list" not in text
+    assert "the Quote selection — ten verbatim sentences" in text
+    # The tabbed sheet never swaps: the guarded document lands in phase
+    # 2's own tab or not at all — phase 1's answer stays.
+    assert "the sheet can swap it" not in text
+    assert "the streamed answer stays put" not in text
+    assert "the streamed answer and the Evidence citations stay" not in text
+    assert "lands in phase 2's tab" in text
