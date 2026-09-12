@@ -1,6 +1,7 @@
 """Shared sheet-test helpers: the POST client the gate tests read, the
 real sheet server behind a patched quota DB and a fake upstream, and the
-composer fakes the picker tests read. Lives outside the test modules so
+fake-upstream seam (FakeResponse plus the canned-reply runner) the
+picker and composer unit tests read. Lives outside the test modules so
 no test module is another's library."""
 
 import json
@@ -91,10 +92,12 @@ class FakeResponse:
         return False
 
 
-def run_pick_with_replies(replies, question="پرسش؟", sources=POOL):
-    """Run pick_quote_selection against per-call canned replies; return
-    (selections, captured payloads, captured timeouts) — the unit-level
-    fake-upstream seam under the real sheet server's."""
+def run_call_with_replies(call, replies):
+    """Run one composer-shaped callable against per-call canned replies;
+    return (its result, captured payloads, captured timeouts) — the
+    unit-level fake-upstream seam under the real sheet server's. Each
+    queued reply is POSTed in order (a raised Exception stands in for a
+    failed call) against the patched urlopen with the test key set."""
     captured = {"payloads": [], "timeouts": []}
     queue = [
         reply.encode("utf-8") if isinstance(reply, str) else reply
@@ -113,10 +116,20 @@ def run_pick_with_replies(replies, question="پرسش؟", sources=POOL):
     serve.urlopen = fake_urlopen
     os.environ["LLM_API_KEY"] = "test-key"
     try:
-        selections = serve.pick_quote_selection(question, sources)
+        result = call()
     finally:
         serve.urlopen = original
         del os.environ["LLM_API_KEY"]
+    return result, captured
+
+
+def run_pick_with_replies(replies, question="پرسش؟", sources=POOL):
+    """Run pick_quote_selection against per-call canned replies; return
+    (selections, captured payloads, captured timeouts) — the unit-level
+    fake-upstream seam under the real sheet server's."""
+    selections, captured = run_call_with_replies(
+        lambda: serve.pick_quote_selection(question, sources), replies
+    )
     return selections, captured
 
 
