@@ -1053,6 +1053,57 @@ def test_a_new_ask_by_another_phone_never_aborts_someone_elses_dive(tmp_path):
     assert job.result is not None
 
 
+def test_an_abort_landing_before_the_next_advance_is_never_overwritten():
+    # The worker's cancel checks run outside the registry lock, so an
+    # abort can land between a check and the next stage write. The write
+    # must refuse a settled job: overwritten to "searching", the job
+    # would never reach a terminal state again — a zombie holding the
+    # one-per-phone and three-global caps until restart.
+    job = serve.DiveJob(DIVE_PHONE, "پرسش؟")
+    serve.DIVE_REGISTRY[job.id] = job
+    assert serve.abort_dive_job(job) is True
+    serve._dive_advance(job, "searching", serve.DIVE_EVENT_SEARCHING)
+    assert job.state == "aborted"
+    assert job.state in serve.DIVE_TERMINAL_STATES
+    assert serve.DIVE_EVENT_SEARCHING not in job.events
+
+
+def test_an_abort_landing_before_the_done_write_is_never_resurrected():
+    # The same race at the worker's last write: the abort lands while
+    # the synthesizer is still composing (injected inside the fake —
+    # the worker's own thread, no timing window). The finished result
+    # must be discarded under the lock, never resurrecting the job
+    # to `done` after the operator aborted it.
+    sources = ONE_SOURCE
+    inner = DiveUpstream(
+        composer_replies=[
+            subquestions_reply(["زیرپرسش؟"]),
+            composer_reply(
+                json.dumps({"blocks": dive_blocks(sources)}, ensure_ascii=False)
+            ),
+        ],
+        recall_reply=lambda payload: cognee_payload(
+            recall_text(SENTENCE, "chunk 1 of document tarhe-kolli")
+        ),
+    )
+    job = serve.DiveJob(DIVE_PHONE, "پرسش؟")
+    serve.DIVE_REGISTRY[job.id] = job
+
+    def aborting_upstream(request, timeout=None):
+        if "chat/completions" in request.full_url and len(inner.calls) >= 2:
+            # The synthesizer call is in flight — planner and one
+            # recall are already logged — so the abort lands between
+            # the "synthesizing" advance and the done-write.
+            serve.abort_dive_job(job)
+        return inner(request, timeout=timeout)
+
+    with_upstream(aborting_upstream)(lambda: serve.run_dive_job(job))
+    assert job.state == "aborted"
+    assert job.result is None
+    assert serve.DIVE_EVENT_DONE not in job.events
+    assert job.done.is_set()
+
+
 def test_serve_pins_the_deep_dive_endpoint():
     text = SERVE.read_text(encoding="utf-8")
     assert 'path == "/deep-dive"' in text

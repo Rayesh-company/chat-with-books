@@ -1042,7 +1042,10 @@ def run_dive_job(job: DiveJob) -> None:
         _dive_advance(job, "synthesizing", DIVE_EVENT_WRITING)
         blocks, truncated = compose_dive_study(job.query, sources)
         with DIVE_REGISTRY_LOCK:
-            if job.cancel.is_set():
+            # The abort may have landed while the synthesizer wrote —
+            # every writer refuses a settled job, so a finished result
+            # is discarded, never resurrecting the dive to `done`.
+            if job.state in DIVE_TERMINAL_STATES:
                 return
             job.result = (with_dive_references(blocks, sources), truncated)
             job.state = "done"
@@ -1054,7 +1057,14 @@ def run_dive_job(job: DiveJob) -> None:
 
 
 def _dive_advance(job: DiveJob, state: str, event: str) -> None:
+    """One non-terminal stage write, under the lock. A settled job is
+    never overwritten: the worker's cancel checks run outside the lock,
+    so an abort can land between a check and this write — clobbering
+    `aborted` here would leave a zombie job holding the caps until
+    restart."""
     with DIVE_REGISTRY_LOCK:
+        if job.state in DIVE_TERMINAL_STATES:
+            return
         job.state = state
         job.events.append(event)
 
