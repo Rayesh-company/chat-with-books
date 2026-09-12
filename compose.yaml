@@ -44,9 +44,12 @@ services:
       LLM_MODEL: openai/glm-5.3-flash
       LLM_ENDPOINT: https://api.z.ai/api/coding/paas/v4
       EMBEDDING_PROVIDER: openai_compatible
-      EMBEDDING_MODEL: text-embedding-3-large
+      # The embedder is frozen into the ingested pgvector tables — a
+      # stack whose data predates ADR 0004 pins small/1536 in .env
+      # (README, VPS deploy).
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-large}
       EMBEDDING_ENDPOINT: https://api.avalai.ir/v1
-      EMBEDDING_DIMENSIONS: "3072"
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-"3072"}
       EMBEDDING_BATCH_SIZE: "32"
       EMBEDDING_RATE_LIMIT_ENABLED: "true"
       EMBEDDING_RATE_LIMIT_REQUESTS: "120"
@@ -109,9 +112,12 @@ services:
       LLM_MODEL: openai/glm-5.3
       LLM_ENDPOINT: https://api.z.ai/api/coding/paas/v4
       EMBEDDING_PROVIDER: openai_compatible
-      EMBEDDING_MODEL: text-embedding-3-large
+      # The embedder is frozen into the ingested pgvector tables — a
+      # stack whose data predates ADR 0004 pins small/1536 in .env
+      # (README, VPS deploy).
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-large}
       EMBEDDING_ENDPOINT: https://api.avalai.ir/v1
-      EMBEDDING_DIMENSIONS: "3072"
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-"3072"}
       EMBEDDING_BATCH_SIZE: "8"
       EMBEDDING_RATE_LIMIT_ENABLED: "true"
       EMBEDDING_RATE_LIMIT_REQUESTS: "8"

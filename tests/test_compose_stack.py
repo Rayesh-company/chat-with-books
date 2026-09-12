@@ -53,8 +53,39 @@ def test_compose_pins_z_ai_for_chat_and_avalai_for_embeddings():
     assert env["LLM_MODEL"] == "openai/glm-5.3-flash"
     assert env["EMBEDDING_PROVIDER"] == "openai_compatible"
     assert env["EMBEDDING_ENDPOINT"] == "https://api.avalai.ir/v1"
-    assert env["EMBEDDING_MODEL"] == "text-embedding-3-large"
+    assert env["EMBEDDING_MODEL"] == "${EMBEDDING_MODEL:-text-embedding-3-large}"
     assert "EMBEDDING_API_KEY" not in env
+
+
+def test_compose_keeps_the_embedder_env_overridable_on_both_tiers():
+    # The 2026-09-12 incident: the hard-coded embedder meant a
+    # `docker compose up -d` recreated the containers with
+    # text-embedding-3-large/3072 over pgvector tables ingested at
+    # small/1536 — every search errored "expected 1536 dimensions, not
+    # 3072". The model and dimensions are therefore env-overridable by
+    # interpolation (the recorded ADR 0004 default preserved), so a
+    # stack whose data was ingested with a different embedder pins it
+    # in .env instead of being silently mismatched.
+    compose = _load_compose()
+    for tier in ("cognee", "cognee-next-tier"):
+        env = compose["services"][tier]["environment"]
+        assert env["EMBEDDING_MODEL"] == "${EMBEDDING_MODEL:-text-embedding-3-large}"
+        assert env["EMBEDDING_DIMENSIONS"] == '${EMBEDDING_DIMENSIONS:-"3072"}'
+
+
+def test_readme_records_the_vps_embedder_pin_and_real_search_verification():
+    # The incident class is recorded where deployers read it: the
+    # embedder is frozen into the ingested data, a pre-ADR 0004 stack
+    # pins small/1536 in .env, and post-deploy verification includes
+    # one real recall search — health probes stayed green through the
+    # 2026-09-12 mismatch.
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    vps = readme.split("\n## VPS deploy", 1)[1].split("\n## ", 1)[0]
+    assert "frozen into the ingested data" in vps
+    assert "text-embedding-3-small" in vps and "1536" in vps
+    assert "expected 1536 dimensions, not 3072" in vps
+    assert "/api/v1/recall" in vps
+    assert "2026-09-12" in vps
 
 
 def test_compose_allows_avalai_class_embedding_throughput():
