@@ -179,8 +179,13 @@ def test_sheet_stores_the_dive_job_for_a_refresh_reconnect():
 
 def test_sheet_reports_busy_failed_and_aborted_dives_in_farsi():
     html = UI.read_text(encoding="utf-8")
+    # A failed dive settles on the server's own Farsi detail — the
+    # no-evidence «نقل‌قولی از کتاب‌ها پیدا نشد» note among them — and
+    # falls back to the generic «ناتمام ماند» message only when the
+    # payload carried no detail.
     assert "مطالعۀ عمیق ناتمام ماند" in html
     assert "مطالعۀ عمیق لغو شد." in html
+    assert "settleDive(detail ||" in html
 
 
 def test_a_new_ask_stops_the_dive_polling_without_an_abort_endpoint():

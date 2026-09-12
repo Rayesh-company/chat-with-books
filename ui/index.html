@@ -996,7 +996,13 @@
             return;
           }
           if (payload.state === "failed") {
-            settleDive("مطالعۀ عمیق ناتمام ماند؛ دوباره تلاش کنید.");
+            // The server names why the dive did not prepare (the
+            // no-evidence note among them) — the generic message is
+            // only the fallback when no detail rode the payload.
+            const detail = Array.isArray(payload.detail)
+              ? payload.detail.join(" ")
+              : payload.detail;
+            settleDive(detail || "مطالعۀ عمیق ناتمام ماند؛ دوباره تلاش کنید.");
             return;
           }
           if (payload.state === "aborted") {
