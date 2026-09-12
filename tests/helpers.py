@@ -17,7 +17,7 @@ from tests.conftest import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from ui import serve  # noqa: E402
+from ui import quotas, serve  # noqa: E402
 
 
 def post(base, path, payload, phone=None):
@@ -197,9 +197,11 @@ class GateServer(ThreadingHTTPServer):
 def with_gate(tmp_path, upstream):
     """Run a real sheet server against a patched quota DB and upstream;
     return (base URL, server, original urlopen). The tests' finally blocks
-    must shut the server down and restore both patches. The dive registry
-    starts empty — a server restart is what empties it in production."""
-    serve.QUOTA_DB = tmp_path / "usage.sqlite3"
+    must shut the server down and restore both patches. The quota DB is
+    patched at its owning module (ui.quotas reads it per connection), the
+    dive registry starts empty — a server restart is what empties it in
+    production."""
+    quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
     serve.DIVE_REGISTRY.clear()
     original = serve.urlopen
     serve.urlopen = upstream

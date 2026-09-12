@@ -16,7 +16,7 @@ import sys  # noqa: E402
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from ui import serve  # noqa: E402
+from ui import quotas, serve  # noqa: E402
 
 # A minimal non-streaming recall reply: one answer with an Evidence block.
 COGNEE_REPLY = json.dumps(
@@ -205,9 +205,9 @@ def test_gate_rejection_reads_the_request_body_before_answering(tmp_path):
 
 
 def test_yesterday_chats_do_not_count_against_today(tmp_path):
-    serve.QUOTA_DB = tmp_path / "usage.sqlite3"
+    quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
     assert serve.chats_today("09120000003") == 0  # also creates the table
-    conn = sqlite3.connect(str(serve.QUOTA_DB))
+    conn = sqlite3.connect(str(quotas.QUOTA_DB))
     try:
         conn.execute(
             "INSERT INTO chats (phone, day) VALUES (?, ?)",
@@ -397,7 +397,7 @@ def test_next_tier_relay_survives_a_slow_search(tmp_path, monkeypatch):
         serve, "NEXT_TIER_URL", f"http://127.0.0.1:{slow.server_address[1]}"
     )
     monkeypatch.setattr(serve, "NEXT_TIER_TIMEOUT", 5)
-    serve.QUOTA_DB = tmp_path / "usage.sqlite3"
+    quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
     serve.record_chat("09120000012")
     sheet = GateServer(("127.0.0.1", 0), serve.SessionHandler)
     threading.Thread(target=sheet.serve_forever, daemon=True).start()
@@ -428,7 +428,7 @@ def test_next_tier_relay_reports_a_timed_out_search(tmp_path, monkeypatch):
         serve, "NEXT_TIER_URL", f"http://127.0.0.1:{slow.server_address[1]}"
     )
     monkeypatch.setattr(serve, "NEXT_TIER_TIMEOUT", 1)
-    serve.QUOTA_DB = tmp_path / "usage.sqlite3"
+    quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
     serve.record_chat("09120000013")
     sheet = GateServer(("127.0.0.1", 0), serve.SessionHandler)
     threading.Thread(target=sheet.serve_forever, daemon=True).start()
@@ -468,14 +468,17 @@ def test_sheet_sends_the_phone_and_shows_the_gate():
 
 def test_serve_pins_the_gate_shape():
     text = (REPO_ROOT / "ui" / "serve.py").read_text(encoding="utf-8")
+    quotas_text = (REPO_ROOT / "ui" / "quotas.py").read_text(encoding="utf-8")
     assert "X-Session-Phone" in text
-    assert "DAILY_CHAT_LIMIT = 5" in text
     assert "SESSION_UI_HOST" in text
-    assert "usage.sqlite3" in text
+    # The limit and its database live in the quota module now — still
+    # pinned in source, never via env.
+    assert "DAILY_CHAT_LIMIT = 5" in quotas_text
+    assert "usage.sqlite3" in quotas_text
     # The retired swap noun stays out of the gate comment (round-2
     # review, 2026-09-12): the 5th chat's own Quoted answer must pass.
-    assert "the 5th chat's own Quoted answer" in text
-    assert "swap must pass" not in text
+    assert "the 5th chat's own Quoted answer" in quotas_text
+    assert "swap must pass" not in text + quotas_text
 
 
 def test_readme_records_the_phone_gate():
