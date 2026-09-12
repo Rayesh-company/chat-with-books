@@ -238,6 +238,15 @@ def test_dive_planner_prompt_asks_for_farsi_subquestions_as_json():
     assert "JSON" in prompt
 
 
+def test_dive_planner_prompt_derives_the_count_from_the_pinned_cap(monkeypatch):
+    # The prompt's count word is DIVE_MAX_SUB_QUESTIONS spelled out — the
+    # wording and the parser's cap are one constant, so they cannot drift.
+    monkeypatch.setattr(serve, "DIVE_MAX_SUB_QUESTIONS", 3)
+    prompt = serve.build_dive_planner_prompt("پرسش؟")
+    assert "three" in prompt
+    assert "six" not in prompt
+
+
 def test_dive_subquestions_parser_keeps_strings_and_caps_at_six():
     subs = serve.dive_subquestions_from_reply(
         json.dumps([f"زیرپرسش {n}؟" for n in range(9)], ensure_ascii=False),
@@ -492,6 +501,22 @@ def test_guard_blocks_passes_a_references_block_through_untouched():
         )
 
 
+def test_guard_blocks_drops_an_empty_references_block():
+    # A references block with no items renders as a bare «منابع» heading
+    # with nothing under it — not renderable content, so it drops like
+    # any other malformed block.
+    sources = [{"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE}]
+    heading = {"type": "heading", "text": "بخش"}
+    paragraph = {
+        "type": "paragraph",
+        "parts": [{"text": "متن."}, {"quote": SENTENCE, "source": 0}],
+    }
+    guarded = serve.guard_blocks([heading, paragraph], sources)
+    assert serve.guard_blocks(
+        [heading, paragraph, {"type": "references", "items": []}], sources
+    ) == guarded
+
+
 def test_with_dive_references_appends_the_actually_used_pool():
     sources = [
         {"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE},
@@ -512,6 +537,15 @@ def test_with_dive_references_appends_the_actually_used_pool():
     }
     # A pool no quote survived appends nothing — the study has failed anyway.
     assert serve.with_dive_references([], sources) == []
+
+
+def test_with_dive_references_appends_nothing_when_nothing_was_quoted():
+    # The docstring's contract: a study with nothing left to reference —
+    # the guard kept only headings, every paragraph dropped — appends
+    # nothing. An empty references block would render a bare «منابع».
+    sources = [{"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE}]
+    headings_only = [{"type": "heading", "text": "بخش تنها"}]
+    assert serve.with_dive_references(headings_only, sources) == headings_only
 
 
 # --- the whole dive ---------------------------------------------------------
@@ -638,7 +672,7 @@ def test_compose_deep_dive_dies_quietly_when_no_searcher_returns_evidence():
 # carries only the query, and the reply is the guarded study — the
 # request blocks until the study is ready.
 
-from tests.test_phone_gate import post, stop_gate, with_gate  # noqa: E402
+from tests.helpers import post, stop_gate, with_gate  # noqa: E402
 
 DIVE_PHONE = "09120000021"
 
