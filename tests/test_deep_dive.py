@@ -629,3 +629,133 @@ def test_compose_deep_dive_dies_quietly_when_no_searcher_returns_evidence():
     # endpoint answers empty blocks the sheet reports as a failed dive.
     assert (blocks, truncated) == ([], False)
     assert len(composer_calls(upstream)) == 1
+
+
+# --- the /deep-dive endpoint -------------------------------------------------
+#
+# A held request in the /quoted-answer shape: the gate is the phase-2
+# shape exactly (a valid phone with at least one chat today), the body
+# carries only the query, and the reply is the guarded study — the
+# request blocks until the study is ready.
+
+from tests.test_phone_gate import post, stop_gate, with_gate  # noqa: E402
+
+DIVE_PHONE = "09120000021"
+
+ONE_SOURCE = [{"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE}]
+
+
+def dive_study_upstream():
+    """A full happy-path dive: planner, one searcher, synthesizer."""
+    return DiveUpstream(
+        composer_replies=[
+            subquestions_reply(["زیرپرسش؟"]),
+            composer_reply(
+                json.dumps({"blocks": dive_blocks(ONE_SOURCE)}, ensure_ascii=False)
+            ),
+        ],
+        recall_reply=lambda payload: cognee_payload(
+            recall_text(SENTENCE, "chunk 1 of document tarhe-kolli")
+        ),
+    )
+
+
+def test_deep_dive_endpoint_needs_the_chat_today_gate(tmp_path):
+    # Phase 2's gate shape: no phone -> 400; a phone with no chat today
+    # -> 429; the upstream never runs for a rejected dive.
+    upstream = dive_study_upstream()
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        status_no_phone, _ = post(base, "/deep-dive", {"query": "پرسش؟"})
+        status_no_chat, payload = post(
+            base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE
+        )
+    finally:
+        stop_gate(server, original)
+    assert status_no_phone == 400
+    assert status_no_chat == 429
+    assert "گفتگو" in payload["detail"]
+    assert upstream.calls == []
+
+
+def test_deep_dive_rejects_an_empty_query(tmp_path):
+    upstream = dive_study_upstream()
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        serve.record_chat(DIVE_PHONE)
+        status, _ = post(base, "/deep-dive", {"query": "   "}, phone=DIVE_PHONE)
+    finally:
+        stop_gate(server, original)
+    assert status == 400
+    assert upstream.calls == []
+
+
+def test_deep_dive_answers_the_guarded_study_and_never_counts_a_chat(tmp_path):
+    upstream = dive_study_upstream()
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        serve.record_chat(DIVE_PHONE)
+        status, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+    finally:
+        stop_gate(server, original)
+    assert status == 200
+    assert body["truncated"] is False
+    # The study: heading, the guarded quoting paragraph with its page
+    # labels, and the closing references block built from the real pool.
+    assert body["blocks"] == [
+        {"type": "heading", "text": "بخش نخست"},
+        {
+            "type": "paragraph",
+            "parts": [
+                {"text": "می‌خوانیم که"},
+                {
+                    "quote": SENTENCE,
+                    "source": 0,
+                    "pages_label": "",
+                    "first_page_label": "",
+                    "book_label": "طرح کلی اندیشۀ اسلامی در قرآن",
+                },
+            ],
+        },
+        {"type": "references", "items": ["chunk 1 of document tarhe-kolli"]},
+    ]
+    # The dive belongs to a chat that already started: it neither counts
+    # nor checks the five-per-day limit.
+    assert serve.chats_today(DIVE_PHONE) == 1
+
+
+def test_deep_dive_runs_even_at_the_daily_limit(tmp_path):
+    upstream = dive_study_upstream()
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        for _ in range(serve.DAILY_CHAT_LIMIT):
+            serve.record_chat(DIVE_PHONE)
+        status, _ = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+    finally:
+        stop_gate(server, original)
+    assert status == 200
+
+
+def test_deep_dive_answers_empty_blocks_when_no_searcher_finds_evidence(tmp_path):
+    upstream = DiveUpstream(
+        composer_replies=[subquestions_reply(["زیرپرسش؟"])],
+        recall_reply=lambda payload: b"[]",
+    )
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        serve.record_chat(DIVE_PHONE)
+        status, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+    finally:
+        stop_gate(server, original)
+    # Held-request shape, phase-2 style: the sheet reads the empty
+    # blocks as a dive that did not prepare.
+    assert status == 200
+    assert body == {"blocks": [], "truncated": False}
+
+
+def test_serve_pins_the_deep_dive_endpoint():
+    text = SERVE.read_text(encoding="utf-8")
+    assert 'path == "/deep-dive"' in text
+    # The gate is the quoted-answer shape, not the ask gate — a dive
+    # never records a chat.
+    assert text.index('path == "/deep-dive"') < text.index("def _deep_dive")

@@ -1051,6 +1051,11 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 return
             self._quoted_answer()
             return
+        if path == "/deep-dive":
+            if self._quoted_phone() is None:
+                return
+            self._deep_dive()
+            return
         if path == "/next-tier-recall":
             if self._quoted_phone() is None:
                 return
@@ -1093,13 +1098,50 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _deep_dive(self) -> None:
+        """The Deep dive (ADR-0006): a held request in the /quoted-answer
+        shape — it blocks until the study is ready and answers
+        {"blocks": [...], "truncated": bool}. The body carries only the
+        query; every upstream payload is pinned server-side. The gate is
+        the phase-2 shape exactly — the dive belongs to the chat phase 1
+        recorded, so it needs a phone with at least one chat today and
+        never counts or checks the limit."""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            query = payload["query"]
+            if not isinstance(query, str) or not query.strip():
+                raise ValueError("query is required")
+        except (ValueError, KeyError, TypeError):
+            # The body is already read above, so the plain JSON error is
+            # safe — _json_error would drain a second time and block.
+            body = json.dumps(
+                {"detail": "پرسش را بنویسید."}, ensure_ascii=False
+            ).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        blocks, truncated = compose_deep_dive(query.strip())
+        body = json.dumps(
+            {"blocks": blocks, "truncated": truncated}, ensure_ascii=False
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _next_tier_recall(self) -> None:
-        """Phase 3: the graph-retrieval answer — the Next-tier search —
-        relayed to the second Cognee service. The search shape is pinned
-        here, never chosen in the browser: GRAPH_COMPLETION_COT over the
-        Book set, references on, not streamed (the Session operator waits
-        for the JSON). Same chat as phase 1 — the gate only checks a chat
-        happened today and never counts."""
+        """The recorded Next-tier COT relay (ADR-0005), kept live as the
+        Session operator's probe of the second service — the sheet no
+        longer calls it (the dive replaced the auto-start). The search
+        shape is pinned here, never chosen in the browser:
+        GRAPH_COMPLETION_COT over the Book set, references on, not
+        streamed (the operator waits for the JSON). Same chat as phase 1
+        — the gate only checks a chat happened today and never counts."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -1210,6 +1252,7 @@ def main() -> None:
     print(f"Session sheet http://{HOST}:{PORT}", flush=True)
     print(f"Proxying /api/v1/recall and /health to {COGNEE_URL}", flush=True)
     print(f"Relaying /next-tier-recall to {NEXT_TIER_URL}", flush=True)
+    print(f"Orchestrating /deep-dive against {NEXT_TIER_URL}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
