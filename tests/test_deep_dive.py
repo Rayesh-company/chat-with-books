@@ -1,7 +1,10 @@
 """The Deep dive tracer bullet (issue #25, ADR 0006): one dive runs
 Planner (glm-5.3, thinking on) -> up to six parallel searchers on the
-second Cognee service -> one Synthesizer call (glm-5.3) writing the
-study, guarded like phase 2, with the references appended server-side.
+second Cognee service, plus at most one gap round re-searching the
+quote-starved sections — two retrieval rounds total, the caps locked in
+test_serve_pins_the_dive_constants_in_source (issue #27) -> one
+Synthesizer call (glm-5.3) writing the study, guarded like phase 2, with
+the references appended server-side.
 
 The dive payloads are pinned server-side — the browser names no Cognee
 search type — and the orchestration core follows the compose_quoted_answer
@@ -44,6 +47,17 @@ RECALL_TEXT_B = (
 
 def recall_text(passage, reference="chunk 1 of document tarhe-kolli"):
     return f"پاسخ.\n\nEvidence:\n- {reference}: \"{passage}\""
+
+
+# The well-fed reply (issue #27): two Evidence bullets per searcher — no
+# section starves, so a plain dive runs a single retrieval round. The
+# fake upstream's default: tests that mean the well-fed dive get it for
+# free, and a starved round must be scripted on purpose.
+FED_RECALL_TEXT = (
+    "پاسخ.\n\nEvidence:\n"
+    f"- chunk 1 of document tarhe-kolli: \"{SENTENCE}\"\n"
+    f"- chunk 29 of document tarhe-kolli: \"{OTHER_PASSAGE}\""
+)
 
 
 def cognee_payload(text):
@@ -105,7 +119,7 @@ class DiveUpstream:
             for reply in composer_replies
         ]
         self.recall_reply = recall_reply or (
-            lambda payload: cognee_payload(RECALL_TEXT_A)
+            lambda payload: cognee_payload(FED_RECALL_TEXT)
         )
 
     def __call__(self, request, timeout=None):
@@ -210,6 +224,13 @@ def test_serve_pins_the_dive_constants_in_source():
     # The registry's capacity is a source pin too (issue #26).
     assert serve.DIVE_MAX_CONCURRENT == 3
     assert 'environ.get("DIVE_MAX_CONCURRENT"' not in text
+    # The gap round's locks are source pins too (issue #27): starvation
+    # is fewer than two parsed passages, and the whole topology runs at
+    # most two retrieval rounds — never env-tunable.
+    assert serve.DIVE_STARVED_PASSAGES == 2
+    assert 'environ.get("DIVE_STARVED_PASSAGES"' not in text
+    assert serve.DIVE_MAX_RETRIEVAL_ROUNDS == 2
+    assert 'environ.get("DIVE_MAX_RETRIEVAL_ROUNDS"' not in text
 
 
 # --- the server-side Evidence parser ---------------------------------------
@@ -338,7 +359,7 @@ def test_dive_recall_returns_an_empty_pool_on_failure():
     assert with_upstream(upstream)(lambda: serve.dive_recall("زیرپرسش؟")) == []
 
 
-def test_run_dive_searches_fans_out_in_parallel():
+def test_run_dive_round_fans_out_in_parallel():
     # Three searchers must be inside the fake at the same time — a
     # sequential loop deadlocks the barrier until its timeout breaks it.
     barrier = threading.Barrier(3, timeout=10)
@@ -352,14 +373,18 @@ def test_run_dive_searches_fans_out_in_parallel():
         return cognee_payload(recall_text(f"نقلِ {payload['query']}"))
 
     upstream = DiveUpstream(recall_reply=parallel_reply)
-    sources = with_upstream(upstream)(
-        lambda: serve.run_dive_searches(["الف؟", "ب؟", "پ؟"])
+    sources = []
+    counts = with_upstream(upstream)(
+        lambda: serve.run_dive_round(["الف؟", "ب؟", "پ؟"], sources, set())
     )
     assert sorted(seen) == ["الف؟", "ب؟", "پ؟"]
+    # One parsed count per sub-question, in order — the starvation
+    # measure (issue #27).
+    assert counts == [1, 1, 1]
     assert len(sources) == 3
 
 
-def test_run_dive_searches_merges_pools_and_dedupes_identical_passages():
+def test_run_dive_round_merges_pools_and_dedupes_identical_passages():
     def reply(payload):
         if payload["query"] == "الف؟":
             return cognee_payload(
@@ -373,9 +398,11 @@ def test_run_dive_searches_merges_pools_and_dedupes_identical_passages():
         )
 
     upstream = DiveUpstream(recall_reply=reply)
-    sources = with_upstream(upstream)(
-        lambda: serve.run_dive_searches(["الف؟", "ب؟"])
+    sources = []
+    counts = with_upstream(upstream)(
+        lambda: serve.run_dive_round(["الف؟", "ب؟"], sources, set())
     )
+    assert counts == [2, 2]
     assert sources == [
         {"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE},
         {"reference": "chunk 29 of document tarhe-kolli", "passage": OTHER_PASSAGE},
@@ -579,12 +606,16 @@ def test_deep_dive_job_runs_planner_searchers_synthesizer_in_order():
     ]
 
     def reply(payload):
+        # Both sections well-fed: two parsed passages each, the same two
+        # passages — a single retrieval round, one two-passage pool.
         if payload["query"] == "الف؟":
             return cognee_payload(
                 recall_text(SENTENCE, "chunk 1 of document tarhe-kolli")
+                + f"\n- chunk 29 of document tarhe-kolli: \"{OTHER_PASSAGE}\""
             )
         return cognee_payload(
             recall_text(OTHER_PASSAGE, "chunk 29 of document tarhe-kolli")
+            + f"\n- chunk 1 of document tarhe-kolli: \"{SENTENCE}\""
         )
 
     upstream = DiveUpstream(
@@ -687,6 +718,183 @@ def test_dive_job_fails_quietly_when_no_searcher_returns_evidence():
     assert job.error == serve.DIVE_NO_EVIDENCE_DETAIL
     assert serve.DIVE_EVENT_FAILED in job.events
     assert len(composer_calls(upstream)) == 1
+    # One starved sub-question still gets its one gap round before the
+    # failure — two recall calls, never a third round (issue #27).
+    assert len(recall_calls(upstream)) == 2
+
+
+GAP_PASSAGE = "نقلِ تازۀ دور دوم"
+GAP_REFERENCE = "chunk 50 of document 70143-336 (pages 3-4)"
+
+
+def test_one_starved_section_researches_once_and_only_that_section():
+    # الف's round-1 searcher parses one passage — quote-starved, too few
+    # to weave a quoted paragraph pair — while ب is well-fed. Exactly one
+    # gap round runs, carrying exactly the starved section's query; the
+    # fed section is never searched again; the fresh passages append to
+    # the pool and weave into the study.
+    calls = {"الف؟": 0}
+    lock = threading.Lock()
+
+    def reply(payload):
+        if payload["query"] != "الف؟":
+            return cognee_payload(
+                recall_text(NOISY_PASSAGE, "chunk 40 of document tarhe-kolli")
+                + f"\n- chunk 29 of document tarhe-kolli: \"{OTHER_PASSAGE}\""
+            )
+        with lock:
+            calls["الف؟"] += 1
+            first = calls["الف؟"] == 1
+        if first:
+            return cognee_payload(
+                recall_text(SENTENCE, "chunk 1 of document tarhe-kolli")
+            )
+        return cognee_payload(recall_text(GAP_PASSAGE, GAP_REFERENCE))
+
+    pool = [
+        {"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE},
+        {"reference": "chunk 40 of document tarhe-kolli", "passage": NOISY_PASSAGE},
+        {"reference": "chunk 29 of document tarhe-kolli", "passage": OTHER_PASSAGE},
+        {"reference": GAP_REFERENCE, "passage": GAP_PASSAGE},
+    ]
+    upstream = DiveUpstream(
+        composer_replies=[
+            subquestions_reply(["الف؟", "ب؟"]),
+            composer_reply(
+                json.dumps({"blocks": dive_blocks(pool)}, ensure_ascii=False)
+            ),
+        ],
+        recall_reply=reply,
+    )
+    job = run_dive_job_sync("پرسش اصلی؟", upstream)
+    assert job.state == "done"
+    recalls = recall_calls(upstream)
+    # Round 1 searched both sections once; the gap round is exactly one
+    # more call, carrying exactly the starved section's query — the fed
+    # section is never re-searched.
+    assert len(recalls) == 3
+    assert sorted(payload["query"] for _, payload in recalls[:2]) == [
+        "الف؟",
+        "ب؟",
+    ]
+    assert recalls[-1][1]["query"] == "الف؟"
+    assert recalls[-1][1]["searchType"] == serve.DIVE_SEARCH_TYPE
+    # The gap round is announced on the job's timeline, before it runs.
+    assert job.events == [
+        serve.DIVE_EVENT_PLANNING,
+        serve.DIVE_EVENT_SEARCHING,
+        serve._dive_gap_event(1),
+        serve.DIVE_EVENT_WRITING,
+        serve.DIVE_EVENT_DONE,
+    ]
+    # The gap round's passages appended and the study quoted them: the
+    # pool's indices stayed stable through the merge.
+    blocks, truncated = job.result
+    assert truncated is False
+    quotes = [
+        part["quote"]
+        for block in blocks
+        if block["type"] == "paragraph"
+        for part in block["parts"]
+        if "quote" in part
+    ]
+    assert quotes == [SENTENCE, NOISY_PASSAGE, OTHER_PASSAGE, GAP_PASSAGE]
+    assert blocks[-1] == {
+        "type": "references",
+        "items": [
+            "chunk 1 of document tarhe-kolli",
+            "chunk 40 of document tarhe-kolli",
+            "chunk 29 of document tarhe-kolli",
+            GAP_REFERENCE,
+        ],
+    }
+
+
+def test_an_always_starved_dive_stops_at_exactly_two_retrieval_rounds():
+    # The pathological upstream: every searcher reply parses zero
+    # passages. Three sub-questions yield exactly six recall calls —
+    # round 1 plus one gap round over all three — never a third round —
+    # and then the dive proceeds to the no-evidence failure. This is the
+    # lock that keeps the dive from growing an unbounded agentic loop.
+    upstream = DiveUpstream(
+        composer_replies=[subquestions_reply(["الف؟", "ب؟", "پ؟"])],
+        recall_reply=lambda payload: b"[]",
+    )
+    job = run_dive_job_sync("پرسش اصلی؟", upstream)
+    assert job.state == "failed"
+    assert job.error == serve.DIVE_NO_EVIDENCE_DETAIL
+    assert len(composer_calls(upstream)) == 1
+    recalls = recall_calls(upstream)
+    assert len(recalls) == 6
+    assert sorted(payload["query"] for _, payload in recalls) == [
+        "الف؟",
+        "الف؟",
+        "ب؟",
+        "ب؟",
+        "پ؟",
+        "پ؟",
+    ]
+    # One gap event, naming all three starved sections, between the
+    # searching stage and the failure.
+    assert job.events == [
+        serve.DIVE_EVENT_PLANNING,
+        serve.DIVE_EVENT_SEARCHING,
+        serve._dive_gap_event(3),
+        serve.DIVE_EVENT_FAILED,
+    ]
+
+
+def test_a_well_fed_dive_runs_a_single_retrieval_round():
+    # Every searcher parses two passages: nothing is starved, so the
+    # dive runs exactly one round — one recall call per sub-question —
+    # and no gap event ever lands on the timeline.
+    pool = [
+        {"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE},
+        {"reference": "chunk 29 of document tarhe-kolli", "passage": OTHER_PASSAGE},
+    ]
+    upstream = DiveUpstream(
+        composer_replies=[
+            subquestions_reply(["الف؟", "ب؟", "پ؟"]),
+            composer_reply(
+                json.dumps({"blocks": dive_blocks(pool)}, ensure_ascii=False)
+            ),
+        ],
+    )
+    job = run_dive_job_sync("پرسش اصلی؟", upstream)
+    assert job.state == "done"
+    recalls = recall_calls(upstream)
+    assert len(recalls) == 3
+    assert sorted(payload["query"] for _, payload in recalls) == [
+        "الف؟",
+        "ب؟",
+        "پ؟",
+    ]
+    assert job.events == [
+        serve.DIVE_EVENT_PLANNING,
+        serve.DIVE_EVENT_SEARCHING,
+        serve.DIVE_EVENT_WRITING,
+        serve.DIVE_EVENT_DONE,
+    ]
+
+
+def test_the_gap_round_is_capped_at_six_searchers_too():
+    # A pathological planner replying nine sub-questions: round 1 runs
+    # the capped six, and the gap round — every section starved —
+    # re-searches exactly those six, never the uncapped nine and never a
+    # third round. (The first six logged calls are round 1: the gap
+    # round starts only after every round-1 searcher has returned.)
+    upstream = DiveUpstream(
+        composer_replies=[subquestions_reply([f"زیرپرسش {n}؟" for n in range(9)])],
+        recall_reply=lambda payload: b"[]",
+    )
+    job = run_dive_job_sync("پرسش اصلی؟", upstream)
+    assert job.state == "failed"
+    assert job.error == serve.DIVE_NO_EVIDENCE_DETAIL
+    recalls = recall_calls(upstream)
+    assert len(recalls) == 12
+    round_one = sorted(payload["query"] for _, payload in recalls[:6])
+    assert round_one == [f"زیرپرسش {n}؟" for n in range(6)]
+    assert sorted(payload["query"] for _, payload in recalls[6:]) == round_one
 
 
 def test_dive_job_marks_failed_when_a_worker_call_raises():
@@ -728,7 +936,9 @@ ONE_SOURCE = [{"reference": "chunk 1 of document tarhe-kolli", "passage": SENTEN
 
 
 def dive_study_upstream(gate=None):
-    """A full happy-path dive: planner, one searcher, synthesizer."""
+    """A full happy-path dive: planner, one searcher, synthesizer — one
+    well-fed retrieval round (the searcher parses two passages, no gap
+    round follows)."""
     return DiveUpstream(
         composer_replies=[
             subquestions_reply(["زیرپرسش؟"]),
@@ -736,9 +946,7 @@ def dive_study_upstream(gate=None):
                 json.dumps({"blocks": dive_blocks(ONE_SOURCE)}, ensure_ascii=False)
             ),
         ],
-        recall_reply=lambda payload: cognee_payload(
-            recall_text(SENTENCE, "chunk 1 of document tarhe-kolli")
-        ),
+        recall_reply=lambda payload: cognee_payload(FED_RECALL_TEXT),
         gate=gate,
     )
 

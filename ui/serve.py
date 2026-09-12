@@ -2,8 +2,10 @@
 """Serve the Farsi Session sheet, proxy first-answer recall to Cognee,
 relay the recorded Next-tier COT probe to cognee-next-tier (the sheet no
 longer calls it — the operator probe remains), compose the Quoted answer
-for phase 2, and orchestrate the Deep dive (ADR-0006): Planner, parallel
-searchers on the second Cognee service, Synthesizer."""
+for phase 2, and orchestrate the Deep dive (ADR-0006): Planner, the
+bounded retrieval (round 1 plus at most one gap round over the
+quote-starved sections, issue #27) on the second Cognee service,
+Synthesizer."""
 
 from __future__ import annotations
 
@@ -61,6 +63,18 @@ DIVE_SEARCH_TIMEOUT = 600
 # sub-questions; as many searchers run in parallel. The planner prompt's
 # count wording is derived from this constant — the two cannot drift.
 DIVE_MAX_SUB_QUESTIONS = 6
+# Starvation (issue #27): a section is quote-starved when round 1's
+# searcher for it parsed FEWER than this many passages. Fewer than two
+# passages cannot weave the quoted paragraph pair the study's body
+# paragraphs are made of. The count is each searcher's own parsed
+# Evidence pool — not the guard, which runs post-synthesizer — and a
+# fed section is never re-searched.
+DIVE_STARVED_PASSAGES = 2
+# The topology's round lock (issue #27): round 1 plus at most one gap
+# round over the starved sections. This is the bound that keeps the
+# dive from growing an unbounded agentic loop — a pathological upstream
+# that starves every section gets exactly two rounds, never a third.
+DIVE_MAX_RETRIEVAL_ROUNDS = 2
 
 # Small counts as English words, for the prompt wording derived from the
 # caps above; anything past the table reads as digits.
@@ -662,9 +676,10 @@ def compose_quoted_answer(question: str, answer: str, sources):
 
 # Deep dive (ADR-0006, tracer bullet issue #25): the study orchestration.
 # Module-level functions over the injectable urlopen, the same seam the
-# Quoted answer tests script — one dive is Planner -> parallel searchers
-# -> Synthesizer, and every upstream payload is pinned here, server-side;
-# the sheet sends only the question.
+# Quoted answer tests script — one dive is Planner -> at most two
+# retrieval rounds (the second only for quote-starved sections, issue
+# #27) -> Synthesizer, and every upstream payload is pinned here,
+# server-side; the sheet sends only the question.
 
 
 def parse_evidence_sources(text) -> list:
@@ -799,26 +814,28 @@ def dive_recall(sub_question: str) -> list:
     return sources
 
 
-def run_dive_searches(sub_questions) -> list:
-    """Run the sub-questions' searches in parallel; one merged pool.
+def run_dive_round(sub_questions, sources, seen) -> list:
+    """One retrieval round: as many searchers as sub-questions run at
+    once (stdlib threads), each on its own DIVE_SEARCH_TIMEOUT leash.
 
-    As many searchers as sub-questions run at once (stdlib threads),
-    each on its own DIVE_SEARCH_TIMEOUT leash. The pools merge in
-    sub-question order and identical passages deduplicate — one
-    passage in the pool no matter how many searchers surfaced it.
+    Every searcher's parsed pool merges into `sources` in sub-question
+    order — APPEND only, never re-ordering, so the passage indices the
+    synthesizer prompt shows stay stable across rounds — and identical
+    passages deduplicate against everything already pooled. Returns one
+    parsed count per sub-question, in order, taken from each searcher's
+    own Evidence pool before dedupe: the starvation measure (issue #27).
     """
-    sources = []
-    seen = set()
     workers = max(1, len(sub_questions))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for result in pool.map(dive_recall, sub_questions):
-            for source in result:
-                passage = source["passage"]
-                if passage in seen:
-                    continue
-                seen.add(passage)
-                sources.append(source)
-    return sources
+        pools = list(pool.map(dive_recall, sub_questions))
+    for result in pools:
+        for source in result:
+            passage = source["passage"]
+            if passage in seen:
+                continue
+            seen.add(passage)
+            sources.append(source)
+    return [len(result) for result in pools]
 
 
 def build_dive_prompt(question: str, sources) -> str:
@@ -997,6 +1014,19 @@ DIVE_EVENT_DONE = "مطالعۀ عمیق آماده شد."
 DIVE_EVENT_FAILED = "مطالعۀ عمیق ناتمام ماند."
 DIVE_EVENT_ABORTED = "مطالعۀ عمیق لغو شد."
 
+# The gap round's progress event (issue #27), announced BEFORE the
+# re-search runs while the state remains "searching" — the sheet renders
+# the latest event, so the operator sees the second round start. The
+# count lands in Persian digits: «۱ بخشِ کم‌نقل دوباره جست‌وجو می‌شود…» /
+# «۲ بخشِ کم‌نقل دوباره جست‌وجو می‌شوند…».
+_FARSI_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def _dive_gap_event(starved: int) -> str:
+    digits = str(starved).translate(_FARSI_DIGITS)
+    verb = "می‌شود" if starved == 1 else "می‌شوند"
+    return f"{digits} بخشِ کم‌نقل دوباره جست‌وجو {verb}…"
+
 # Recorded limit (YAGNI): terminal jobs are never reaped — they linger
 # in this dict by design. The caps scan non-terminal jobs only, and a
 # server restart empties the registry, so growth is bounded by one
@@ -1024,6 +1054,38 @@ class DiveJob:
         self.done = threading.Event()
 
 
+def dive_retrieve(job: DiveJob, sub_questions) -> list:
+    """The bounded retrieval (issue #27): round 1 searches every
+    sub-question; sections that come back quote-starved — fewer than
+    DIVE_STARVED_PASSAGES parsed passages, too few to weave a quoted
+    paragraph pair — re-search AT MOST ONCE, in parallel, only the
+    starved ones. DIVE_MAX_RETRIEVAL_ROUNDS is the lock that keeps the
+    dive from growing an unbounded agentic loop: an always-starved
+    upstream gets exactly two rounds, never a third, and the dive
+    proceeds on whatever pooled (an empty pool lands the no-evidence
+    failure in the worker). The gap round is announced before it runs —
+    a Farsi event naming the starved count, visible in the status
+    events while the state remains "searching" — and the cancel flag is
+    checked between rounds so an abort lands promptly."""
+    sources = []
+    seen = set()
+    pending = list(sub_questions)
+    rounds = 0
+    while pending and rounds < DIVE_MAX_RETRIEVAL_ROUNDS:
+        if job.cancel.is_set():
+            return sources
+        rounds += 1
+        counts = run_dive_round(pending, sources, seen)
+        pending = [
+            question
+            for question, count in zip(pending, counts)
+            if count < DIVE_STARVED_PASSAGES
+        ]
+        if pending and rounds < DIVE_MAX_RETRIEVAL_ROUNDS:
+            _dive_note(job, _dive_gap_event(len(pending)))
+    return sources
+
+
 def run_dive_job(job: DiveJob) -> None:
     """The dive worker: the orchestration stages above with the job's
     state transitions and cancel flag interleaved at the stage
@@ -1037,7 +1099,7 @@ def run_dive_job(job: DiveJob) -> None:
         if job.cancel.is_set():
             return
         _dive_advance(job, "searching", DIVE_EVENT_SEARCHING)
-        sources = run_dive_searches(sub_questions)
+        sources = dive_retrieve(job, sub_questions)
         if job.cancel.is_set():
             return
         if not sources:
@@ -1070,6 +1132,17 @@ def _dive_advance(job: DiveJob, state: str, event: str) -> None:
         if job.state in DIVE_TERMINAL_STATES:
             return
         job.state = state
+        job.events.append(event)
+
+
+def _dive_note(job: DiveJob, event: str) -> None:
+    """A mid-stage progress event, under the lock — the state stays at
+    the live stage (the gap round is announced from inside
+    "searching"). A settled job is never overwritten, the same refusal
+    as _dive_advance."""
+    with DIVE_REGISTRY_LOCK:
+        if job.state in DIVE_TERMINAL_STATES:
+            return
         job.events.append(event)
 
 
