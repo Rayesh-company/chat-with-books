@@ -1083,7 +1083,7 @@ def dive_retrieve(job: DiveJob, sub_questions) -> list:
             if count < DIVE_STARVED_PASSAGES
         ]
         if pending and rounds < DIVE_MAX_RETRIEVAL_ROUNDS:
-            _dive_note(job, _dive_gap_event(len(pending)))
+            _dive_advance(job, event=_dive_gap_event(len(pending)))
     return sources
 
 
@@ -1123,37 +1123,42 @@ def run_dive_job(job: DiveJob) -> None:
         job.done.set()
 
 
-def _dive_advance(job: DiveJob, state: str, event: str) -> None:
-    """One non-terminal stage write, under the lock. A settled job is
-    never overwritten: the worker's cancel checks run outside the lock,
-    so an abort can land between a check and this write — clobbering
-    `aborted` here would leave a zombie job holding the caps until
-    restart."""
+def _dive_write(
+    job: DiveJob,
+    state: str | None = None,
+    event: str | None = None,
+    error: str | None = None,
+) -> bool:
+    """One atomic non-terminal write under the registry lock: the state,
+    the error detail, and the timeline event land together or not at
+    all. A settled job is never overwritten — the worker's cancel checks
+    run outside the lock, so an abort can land between a check and this
+    write — clobbering `aborted` here would leave a zombie job holding
+    the caps until restart. Returns whether the write landed."""
     with DIVE_REGISTRY_LOCK:
         if job.state in DIVE_TERMINAL_STATES:
-            return
-        job.state = state
-        job.events.append(event)
+            return False
+        if state is not None:
+            job.state = state
+        if error is not None:
+            job.error = error
+        if event is not None:
+            job.events.append(event)
+        return True
 
 
-def _dive_note(job: DiveJob, event: str) -> None:
-    """A mid-stage progress event, under the lock — the state stays at
-    the live stage (the gap round is announced from inside
-    "searching"). A settled job is never overwritten, the same refusal
-    as _dive_advance."""
-    with DIVE_REGISTRY_LOCK:
-        if job.state in DIVE_TERMINAL_STATES:
-            return
-        job.events.append(event)
+def _dive_advance(
+    job: DiveJob, state: str | None = None, event: str | None = None
+) -> None:
+    """One non-terminal stage write, under the lock. With a state it
+    marks the stage transition; with only an event it is a mid-stage
+    note — the state stays at the live stage (the gap round is announced
+    from inside "searching")."""
+    _dive_write(job, state, event)
 
 
 def _dive_fail(job: DiveJob, detail: str) -> None:
-    with DIVE_REGISTRY_LOCK:
-        if job.state in DIVE_TERMINAL_STATES:
-            return
-        job.state = "failed"
-        job.error = detail
-        job.events.append(DIVE_EVENT_FAILED)
+    _dive_write(job, "failed", DIVE_EVENT_FAILED, error=detail)
 
 
 def abort_dive_job(job: DiveJob) -> bool:
