@@ -224,9 +224,13 @@ def test_serve_pins_the_dive_constants_in_source():
     # The registry's capacity is a source pin too (issue #26).
     assert serve.DIVE_MAX_CONCURRENT == 3
     assert 'environ.get("DIVE_MAX_CONCURRENT"' not in text
-    # The gap round's locks are source pins too (issue #27): starvation
-    # is fewer than two parsed passages, and the whole topology runs at
-    # most two retrieval rounds — never env-tunable.
+    # The gap round's locks are source pins too (issue #27): the
+    # six-searcher cap is one constant shared by the planner prompt's
+    # count wording and the parser, starvation is fewer than two parsed
+    # passages, and the whole topology runs at most two retrieval rounds
+    # — never env-tunable.
+    assert serve.DIVE_MAX_SUB_QUESTIONS == 6
+    assert 'environ.get("DIVE_MAX_SUB_QUESTIONS"' not in text
     assert serve.DIVE_STARVED_PASSAGES == 2
     assert 'environ.get("DIVE_STARVED_PASSAGES"' not in text
     assert serve.DIVE_MAX_RETRIEVAL_ROUNDS == 2
