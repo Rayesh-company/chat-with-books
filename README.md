@@ -132,6 +132,8 @@ The public deployment is one Ubuntu VPS running the full stack behind **https://
 
 Deploy is tarball-shaped (the VPS copy is not a git checkout): tar the tree locally excluding `.git`, `.env`, the Book PDF and caches, `pscp`/`scp` it over, swap the tree (keep the remote `.env`), then `sudo systemctl restart cwb-session`. If `docker/enable_farsi_evidence.py` changed, restart the Cognee container too (`docker restart chat-with-books-cognee`) — the snippet window applies at search time, so no re-ingest is needed; the bind mount re-reads the file on container start.
 
+Two VPS-only compose facts, recorded 2026-09-12 when next-tier came up there: the stack's compose project is **`chat-withbooks`** (no dashes — the identity the running containers and the data volumes `chat-withbooks_postgres_data` / `chat-withbooks_cognee_*` carry, where the ingested memory lives), so the stack comes up with `docker compose -p chat-withbooks up -d` — a bare `up` in the swapped tree would invent a `chat-with-books` project and collide on container names. And the repo's compose publishes `0.0.0.0` for local dev, while the VPS runs every host port loopback-bound: after a tree swap, prefix the compose's host ports with `127.0.0.1:` before `up` (Docker publishes bypass ufw — an unprefixed `8001` would face the internet). The tarball swap also carries `ui/usage.sqlite3` and `.env` over from the previous tree (quota counts and keys), and `cognee-next-tier` is created on first `up` — the Deep dive's searchers need it on `127.0.0.1:8001`.
+
 The Book datasets are ingested once (`DATASET_PROCESSING_COMPLETED` in `/api/v1/datasets/status`); re-ingest is not part of a code deploy.
 
 ## Tests
