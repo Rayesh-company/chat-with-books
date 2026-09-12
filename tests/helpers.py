@@ -1,6 +1,7 @@
-"""Shared sheet-test helpers: the POST client the gate tests read, and
-the real sheet server behind a patched quota DB and a fake upstream.
-Lives outside both test modules so neither is the other's library."""
+"""Shared sheet-test helpers: the POST client the gate tests read, the
+real sheet server behind a patched quota DB and a fake upstream, and the
+composer fakes the picker tests read. Lives outside the test modules so
+no test module is another's library."""
 
 import json
 import os
@@ -46,6 +47,114 @@ def get(base, path, phone=None):
             return response.status, json.load(response)
     except urllib.error.HTTPError as exc:
         return exc.code, json.load(exc)
+
+
+# The Book's text layer separates words with real backspace characters
+# and carries kashida and ZWNJ — the noise the verbatim guard collapses
+# (recorded shape, tests.test_quoted_answer).
+BS = "\b"
+POOL_PASSAGE = (
+    f"سـخن{BS}در{BS}این{BS}اسـت؛ "
+    f"قرآن{BS}کتابی{BS}اسـت{BS}برای{BS}زندگی؛ "
+    f"انسان{BS}در{BS}جامعه{BS}می‌زیید؛ "
+    f"عـدل{BS}اساس{BS}اجتماع{BS}اسـت."
+)
+OTHER_PASSAGE = "این جمله از قطعهٔ دیگری است."
+
+# The Evidence pool the picker seam runs against: the first passage
+# carries page markers, the second does not.
+POOL = [
+    {
+        "reference": "chunk 101 of document tarhe-kolli (pages 740-745)",
+        "passage": POOL_PASSAGE,
+    },
+    {
+        "reference": "chunk 29 of document tarhe-kolli",
+        "passage": OTHER_PASSAGE,
+    },
+]
+
+
+class FakeResponse:
+    """Stands in for a urlopen reply: a readable body in a with-block."""
+
+    def __init__(self, body):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def run_pick_with_replies(replies, question="پرسش؟", sources=POOL):
+    """Run pick_quote_selection against per-call canned replies; return
+    (selections, captured payloads, captured timeouts) — the unit-level
+    fake-upstream seam under the real sheet server's."""
+    captured = {"payloads": [], "timeouts": []}
+    queue = [
+        reply.encode("utf-8") if isinstance(reply, str) else reply
+        for reply in replies
+    ]
+
+    def fake_urlopen(request, timeout=None):
+        captured["payloads"].append(json.loads(request.data.decode("utf-8")))
+        captured["timeouts"].append(timeout)
+        item = queue.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return FakeResponse(item)
+
+    original = serve.urlopen
+    serve.urlopen = fake_urlopen
+    os.environ["LLM_API_KEY"] = "test-key"
+    try:
+        selections = serve.pick_quote_selection(question, sources)
+    finally:
+        serve.urlopen = original
+        del os.environ["LLM_API_KEY"]
+    return selections, captured
+
+
+class FakeComposer:
+    """Stands in for the composer endpoint. Captures every call and
+    scripts the replies in order."""
+
+    def __init__(self, replies=()):
+        self.calls = []
+        self.payloads = []
+        self.timeouts = []
+        self.replies = list(replies)
+
+    def __call__(self, request, timeout=None):
+        self.calls.append(request.full_url)
+        self.payloads.append(json.loads(request.data.decode("utf-8")))
+        self.timeouts.append(timeout)
+        item = self.replies.pop(0)
+        if isinstance(item, Exception):
+            raise item
+
+        class Response:
+            status = 200
+            headers = {"Content-Type": "application/json"}
+
+            def __init__(self, body):
+                self._body = body
+
+            def read(self):
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        return Response(item)
 
 
 def wait_job_done(job_id, timeout=15):

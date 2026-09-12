@@ -5,7 +5,6 @@ gate is phase 2's shape — the picker belongs to the chat phase 1
 recorded — and it never records or counts a chat."""
 
 import json
-import os
 import sys
 
 from tests.conftest import REPO_ROOT
@@ -13,18 +12,16 @@ from tests.conftest import REPO_ROOT
 sys.path.insert(0, str(REPO_ROOT))
 
 from ui import serve  # noqa: E402
-
-# The Book's text layer separates words with real backspace characters
-# and carries kashida and ZWNJ — the noise the verbatim guard collapses
-# (recorded shape, tests.test_quoted_answer).
-BS = "\b"
-POOL_PASSAGE = (
-    f"سـخن{BS}در{BS}این{BS}اسـت؛ "
-    f"قرآن{BS}کتابی{BS}اسـت{BS}برای{BS}زندگی؛ "
-    f"انسان{BS}در{BS}جامعه{BS}می‌زیید؛ "
-    f"عـدل{BS}اساس{BS}اجتماع{BS}اسـت."
+from tests.helpers import (  # noqa: E402
+    OTHER_PASSAGE,
+    POOL,
+    POOL_PASSAGE,
+    FakeComposer,
+    post,
+    run_pick_with_replies,
+    stop_gate,
+    with_gate,
 )
-OTHER_PASSAGE = "این جمله از قطعهٔ دیگری است."
 
 # Four complete Farsi sentences of the first passage, verbatim (modulo
 # the text-layer noise the guard normalizes away).
@@ -35,17 +32,6 @@ SENTENCES = [
     "عدل اساس اجتماع است.",
 ]
 PARAPHRASE = "قرآن برای زندگی انسان‌ها کتابی است"  # reworded — not in the passage
-
-POOL = [
-    {
-        "reference": "chunk 101 of document tarhe-kolli (pages 740-745)",
-        "passage": POOL_PASSAGE,
-    },
-    {
-        "reference": "chunk 29 of document tarhe-kolli",
-        "passage": OTHER_PASSAGE,
-    },
-]
 
 # What the guard + label attachment return for the four verbatim
 # sentences of POOL[0]: the labels of exactly the claimed passage.
@@ -75,49 +61,6 @@ def verbatim_selections(count):
 
 
 # --- the picker pipeline, unit level -----------------------------------
-
-
-class FakeResponse:
-    def __init__(self, body):
-        self._body = body
-
-    def read(self):
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-def run_pick_with_replies(replies, question="پرسش؟", sources=POOL):
-    """Run pick_quote_selection against per-call canned replies; return
-    (selections, captured payloads, captured timeouts) — the
-    run_compose_with_replies pattern."""
-    captured = {"payloads": [], "timeouts": []}
-    queue = [
-        reply.encode("utf-8") if isinstance(reply, str) else reply
-        for reply in replies
-    ]
-
-    def fake_urlopen(request, timeout=None):
-        captured["payloads"].append(json.loads(request.data.decode("utf-8")))
-        captured["timeouts"].append(timeout)
-        item = queue.pop(0)
-        if isinstance(item, Exception):
-            raise item
-        return FakeResponse(item)
-
-    original = serve.urlopen
-    serve.urlopen = fake_urlopen
-    os.environ["LLM_API_KEY"] = "test-key"
-    try:
-        selections = serve.pick_quote_selection(question, sources)
-    finally:
-        serve.urlopen = original
-        del os.environ["LLM_API_KEY"]
-    return selections, captured
 
 
 def test_picker_prompt_carries_question_passages_and_reply_shape():
@@ -205,45 +148,6 @@ def test_pick_failure_returns_empty():
 
 
 # --- the endpoint, over the real sheet server --------------------------
-
-from tests.helpers import post, stop_gate, with_gate  # noqa: E402
-
-
-class FakeComposer:
-    """Stands in for the composer endpoint. Captures every call and
-    scripts the picker's replies in order."""
-
-    def __init__(self, replies=()):
-        self.calls = []
-        self.payloads = []
-        self.timeouts = []
-        self.replies = list(replies)
-
-    def __call__(self, request, timeout=None):
-        self.calls.append(request.full_url)
-        self.payloads.append(json.loads(request.data.decode("utf-8")))
-        self.timeouts.append(timeout)
-        item = self.replies.pop(0)
-        if isinstance(item, Exception):
-            raise item
-
-        class Response:
-            status = 200
-            headers = {"Content-Type": "application/json"}
-
-            def __init__(self, body):
-                self._body = body
-
-            def read(self):
-                return self._body
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-        return Response(item)
 
 
 def quote_payload(question="پرسش؟", sources=POOL):
