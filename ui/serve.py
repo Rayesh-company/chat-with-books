@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Serve the Farsi Session sheet, proxy first-answer recall to Cognee,
-relay the recorded Next-tier COT probe to cognee-next-tier (the sheet no
-longer calls it — the operator probe remains), compose the Quoted answer
-for phase 2, and orchestrate the Deep dive (ADR-0006): Planner, the
-bounded retrieval (round 1 plus at most one gap round over the
-quote-starved sections, issue #27) on the second Cognee service,
-Synthesizer."""
+pick the Quote selection — the first answer rendered on the sheet
+(ADR-0006, issue #28) — relay the recorded Next-tier COT probe to
+cognee-next-tier (the sheet no longer calls it — the operator probe
+remains), compose the Quoted answer for phase 2, and orchestrate the
+Deep dive (ADR-0006): Planner, the bounded retrieval (round 1 plus at
+most one gap round over the quote-starved sections, issue #27) on the
+second Cognee service, Synthesizer."""
 
 from __future__ import annotations
 
@@ -674,6 +675,110 @@ def compose_quoted_answer(question: str, answer: str, sources):
     return guard_blocks(blocks, sources), truncated
 
 
+# Quote selection (ADR-0006, issue #28): the first answer rendered on
+# the sheet is the Evidence pool's Quote selection — verbatim Book
+# sentences, no AI prose — picked by EXACTLY ONE composer call. The
+# model is the existing COMPOSER_MODEL pin (glm-5.3-flash, ADR-0002);
+# thinking disabled for the phase-2 writer's measured reason:
+# copy-matching, not reasoning. The pool itself is untouched — the same
+# (reference, passage) pairs stay phase 2's exact input.
+QUOTE_SELECTION_AIM = 10
+QUOTE_SELECTION_CEILING = 12
+QUOTE_SELECTION_FLOOR = 4
+
+
+def build_picker_prompt(question: str, sources) -> str:
+    """The picker's brief: select, don't write.
+
+    The aim wording is derived from QUOTE_SELECTION_AIM — the two cannot
+    drift — and the reply shape is the selection list guard_sentences
+    already consumes.
+    """
+    passages = "\n".join(
+        f"[{i}] ({source['reference']}) {source['passage']}"
+        for i, source in enumerate(sources)
+    )
+    return (
+        "You are selecting the Quote selection for a Farsi Q&A sheet "
+        "over the Books.\n\n"
+        f"Question: {question}\n\n"
+        "Passages (numbered, from the Books' retrieved Evidence; "
+        "text-layer noise like \\b backspaces may appear between "
+        "words):\n"
+        f"{passages}\n\n"
+        "Task: select the Farsi sentences that together best answer "
+        f"the question — aim for {_count_word(QUOTE_SELECTION_AIM)}; "
+        "fewer only when the passages hold fewer. Each selection is a "
+        "complete Farsi sentence copied VERBATIM from exactly ONE "
+        "passage (ignore the \\b noise; write proper Farsi). Do not "
+        "paraphrase, do not merge, do not shorten. Never invent a "
+        "sentence.\n\n"
+        "Reply with ONLY a JSON object, no prose, no code fence:\n"
+        '{"selections": [{"text": "<verbatim sentence>", '
+        '"source": <passage index>}]}'
+    )
+
+
+def parse_picker_reply(content):
+    """Pull the selections list out of the picker's reply; [] when
+    malformed.
+
+    The parse conventions of parse_quoted_reply — code fence stripped,
+    json.loads with one brace-scoped retry for prose-wrapped JSON —
+    without the salvage: a picker reply is tiny, and a truncated one
+    would not survive the floor anyway.
+    """
+    if not isinstance(content, str) or not content.strip():
+        return []
+    stripped = _strip_code_fence(content)
+    try:
+        parsed = json.loads(stripped)
+    except ValueError:
+        match = re.search(r"\{.*\}", stripped, re.DOTALL)
+        if not match:
+            return []
+        try:
+            parsed = json.loads(match.group(0))
+        except ValueError:
+            return []
+    selections = parsed.get("selections") if isinstance(parsed, dict) else None
+    return selections if isinstance(selections, list) else []
+
+
+def pick_quote_selection(question: str, sources):
+    """One picker call over the pool; the guarded selections, or [].
+
+    Exactly ONE composer call (glm-5.3-flash, thinking disabled,
+    COMPOSER_MAX_TOKENS, endpoint-default temperature). The reply runs
+    the existing verbatim letter-stream guard — a paraphrase, or a
+    verbatim sentence claiming the wrong index, drops; the survivors cap
+    at QUOTE_SELECTION_CEILING, and fewer than QUOTE_SELECTION_FLOOR of
+    them means the picker missed the floor: [] — the same empty shape a
+    call failure returns, so the sheet's fallback is one uniform shape.
+    Every kept sentence carries the labels of exactly the passage it
+    claims, attached server-side like guard_blocks does.
+    """
+    try:
+        reply = _composer_reply(build_picker_prompt(question, sources), "disabled")
+        content = _composer_content(reply)
+    except (KeyError, ValueError, OSError):
+        return []
+    kept = guard_sentences(parse_picker_reply(content), sources)
+    kept = kept[:QUOTE_SELECTION_CEILING]
+    if len(kept) < QUOTE_SELECTION_FLOOR:
+        return []
+    return [
+        {
+            "text": item["text"],
+            "reference": item["reference"],
+            "pages_label": pages_label(item["reference"]),
+            "first_page_label": first_page_label(item["reference"]),
+            "book_label": book_label(item["reference"]),
+        }
+        for item in kept
+    ]
+
+
 # Deep dive (ADR-0006, tracer bullet issue #25): the study orchestration.
 # Module-level functions over the injectable urlopen, the same seam the
 # Quoted answer tests script — one dive is Planner -> at most two
@@ -1315,6 +1420,11 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 return
             self._quoted_answer()
             return
+        if path == "/quote-selection":
+            if self._quoted_phone() is None:
+                return
+            self._quote_selection()
+            return
         if path == "/deep-dive":
             phone = self._quoted_phone()
             if phone is None:
@@ -1356,6 +1466,51 @@ class SessionHandler(SimpleHTTPRequestHandler):
         blocks, truncated = compose_quoted_answer(question, answer, sources)
         body = json.dumps(
             {"blocks": blocks, "truncated": truncated}, ensure_ascii=False
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _quote_selection(self) -> None:
+        """Pick the Quote selection (ADR-0006, issue #28): the pool
+        exactly as the sheet parsed it, one picker call, the guarded
+        selections back. The gate is phase 2's shape — the picker
+        belongs to the chat phase 1 recorded — so it needs a phone with
+        at least one chat today and never records or counts one. A
+        malformed body or an empty pool answers 400 (a JSON detail, the
+        gate's shape) before any upstream call; a picker failure or a
+        below-floor selection answers 200 {"selections": []} — the one
+        uniform empty shape the sheet's prose fallback consumes, never
+        a 5xx."""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            question = payload["question"]
+            sources = [
+                {
+                    "reference": source["reference"],
+                    "passage": source["passage"],
+                }
+                for source in payload["sources"]
+                if isinstance(source, dict)
+                and isinstance(source.get("reference"), str)
+                and isinstance(source.get("passage"), str)
+            ]
+            if not isinstance(question, str) or not question.strip() or not sources:
+                raise ValueError("question and sources are required")
+        except (ValueError, KeyError, TypeError):
+            # The body is already read above, so _send_json is safe —
+            # _json_error would drain a second time and block.
+            self._send_json(
+                400, {"detail": "پرسش و استنادهای بازیابی‌شده را بفرستید."}
+            )
+            return
+        selections = pick_quote_selection(question, sources)
+        body = json.dumps(
+            {"selections": selections, "pool_size": len(sources)},
+            ensure_ascii=False,
         ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
