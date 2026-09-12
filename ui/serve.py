@@ -1199,8 +1199,22 @@ class SessionHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         if path == "/api/v1/recall":
-            if self._gate_phone() is None:
+            phone = self._gate_phone()
+            if phone is None:
                 return
+            # A new ask owns the sheet (issue #26): after the gate has
+            # recorded the chat, the phone's own in-flight dive is
+            # aborted — cooperatively; the worker exits at its next
+            # boundary. Another phone's dive is never touched.
+            with DIVE_REGISTRY_LOCK:
+                own_dives = [
+                    job
+                    for job in DIVE_REGISTRY.values()
+                    if job.phone == phone
+                    and job.state not in DIVE_TERMINAL_STATES
+                ]
+            for job in own_dives:
+                abort_dive_job(job)
             self._proxy("POST")
             return
         if path == "/quoted-answer":

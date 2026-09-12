@@ -126,10 +126,12 @@ class DiveUpstream:
                 self.calls.append(url)
                 self.bodies.append(body)
                 self.timeouts.append(timeout)
-        if self.gate is not None:
-            # The scripted call is in flight — logged, unanswered — until
-            # the test releases the gate. A bounded wait keeps a bug from
-            # hanging the suite; the finally blocks set the gate anyway.
+        if self.gate is not None and "chat/completions" in url:
+            # The scripted composer call is in flight — logged,
+            # unanswered — until the test releases the gate. Composer
+            # only: a proxied first-answer recall through the same fake
+            # must pass freely. A bounded wait keeps a bug from hanging
+            # the suite; the finally blocks set the gate anyway.
             self.gate.wait(timeout=30)
         if isinstance(reply, Exception):
             raise reply
@@ -983,6 +985,72 @@ def test_a_fourth_concurrent_start_is_rejected_and_nothing_is_queued(tmp_path):
     # rejected, never queued.
     assert calls_before == calls_after == 3
     assert phones[3] not in [job.phone for job in serve.DIVE_REGISTRY.values()]
+
+
+# --- abort by a new ask (issue #26) ---------------------------------------------
+#
+# A new ask by the same phone aborts the phone's in-flight dive — the
+# server-side half of the sheet's "new ask owns the sheet" rule. The
+# abort is the requester-side marking: the status surface reads it right
+# away while the worker exits at its next boundary, cooperatively.
+
+
+def test_a_new_ask_by_the_same_phone_aborts_its_running_dive(tmp_path):
+    gate = threading.Event()
+    upstream = dive_study_upstream(gate=gate)
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        serve.record_chat(DIVE_PHONE)
+        _, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+        job_id = body["job_id"]
+        # The new ask: phase 1 records the chat, and that same POST
+        # aborts the phone's in-flight dive.
+        ask_status, _ = post(
+            base, "/api/v1/recall", {"query": "پرسش جدید؟"}, phone=DIVE_PHONE
+        )
+        assert ask_status == 200
+        assert serve.chats_today(DIVE_PHONE) == 2
+        poll_status, payload = get(
+            base, f"/deep-dive/status?job={job_id}", phone=DIVE_PHONE
+        )
+        assert poll_status == 200
+        assert payload["state"] == "aborted"
+        assert serve.DIVE_EVENT_ABORTED in payload["events"]
+        # Release the parked planner: the worker must exit at its next
+        # boundary without writing a result.
+        gate.set()
+        job = wait_job_done(job_id)
+    finally:
+        gate.set()
+        stop_gate(server, original)
+    assert job.state == "aborted"
+    assert job.result is None
+
+
+def test_a_new_ask_by_another_phone_never_aborts_someone_elses_dive(tmp_path):
+    gate = threading.Event()
+    upstream = dive_study_upstream(gate=gate)
+    other_phone = "09120000077"
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        serve.record_chat(DIVE_PHONE)
+        serve.record_chat(other_phone)
+        _, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+        job_id = body["job_id"]
+        post(base, "/api/v1/recall", {"query": "پرسش دیگر؟"}, phone=other_phone)
+        poll_status, payload = get(
+            base, f"/deep-dive/status?job={job_id}", phone=DIVE_PHONE
+        )
+        assert poll_status == 200
+        assert payload["state"] == "planning"
+        gate.set()
+        job = wait_job_done(job_id)
+    finally:
+        gate.set()
+        stop_gate(server, original)
+    # The foreign ask left the dive alone; it lands done.
+    assert job.state == "done"
+    assert job.result is not None
 
 
 def test_serve_pins_the_deep_dive_endpoint():
