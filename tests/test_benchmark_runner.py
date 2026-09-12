@@ -11,6 +11,7 @@ import sys
 import urllib.request
 
 from tests.conftest import REPO_ROOT
+from tests.helpers import FakeResponse
 
 spec = importlib.util.spec_from_file_location(
     "run_benchmark", REPO_ROOT / "benchmark" / "run_benchmark.py"
@@ -64,18 +65,7 @@ def test_pick_selection_posts_pool_with_session_phone(monkeypatch):
         body = json.dumps(
             {"selections": [{"text": "جملهٔ برگزیده"}], "pool_size": 2}
         ).encode("utf-8")
-
-        class Resp:
-            def read(self):
-                return body
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-        return Resp()
+        return FakeResponse(body)
 
     monkeypatch.setattr(runner, "urlopen", fake_urlopen)
     payload, wall = runner.pick_selection(
