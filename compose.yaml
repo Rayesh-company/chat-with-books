@@ -44,13 +44,26 @@ services:
       LLM_MODEL: openai/glm-5.3-flash
       LLM_ENDPOINT: https://api.z.ai/api/coding/paas/v4
       EMBEDDING_PROVIDER: openai_compatible
-      EMBEDDING_MODEL: text-embedding-3-small
+      EMBEDDING_MODEL: text-embedding-3-large
       EMBEDDING_ENDPOINT: https://api.avalai.ir/v1
-      EMBEDDING_DIMENSIONS: "1536"
-      EMBEDDING_BATCH_SIZE: "8"
+      EMBEDDING_DIMENSIONS: "3072"
+      EMBEDDING_BATCH_SIZE: "32"
       EMBEDDING_RATE_LIMIT_ENABLED: "true"
-      EMBEDDING_RATE_LIMIT_REQUESTS: "8"
+      EMBEDDING_RATE_LIMIT_REQUESTS: "120"
       EMBEDDING_RATE_LIMIT_INTERVAL: "60"
+      LLM_RATE_LIMIT_ENABLED: "true"
+      LLM_RATE_LIMIT_REQUESTS: "240"
+      LLM_RATE_LIMIT_INTERVAL: "60"
+      LLM_MIN_RETRY_ATTEMPTS: "6"
+      LLM_MIN_RETRY_SECONDS: "1800"
+      LLM_EXTRACTION_PROVIDER: custom
+      LLM_EXTRACTION_MODEL: openai/glm-5.3-flash
+      LLM_EXTRACTION_ENDPOINT: https://api.avalai.ir/v1
+      LLM_EXTRACTION_API_KEY: ${EMBEDDING_API_KEY}
+      LLM_SUMMARIZATION_PROVIDER: custom
+      LLM_SUMMARIZATION_MODEL: openai/glm-5.3-flash
+      LLM_SUMMARIZATION_ENDPOINT: https://api.avalai.ir/v1
+      LLM_SUMMARIZATION_API_KEY: ${EMBEDDING_API_KEY}
       LLM_ANSWER_STREAMING: "true"
     volumes:
       - cognee_data:/cognee-storage/data
@@ -96,13 +109,18 @@ services:
       LLM_MODEL: openai/glm-5.3
       LLM_ENDPOINT: https://api.z.ai/api/coding/paas/v4
       EMBEDDING_PROVIDER: openai_compatible
-      EMBEDDING_MODEL: text-embedding-3-small
+      EMBEDDING_MODEL: text-embedding-3-large
       EMBEDDING_ENDPOINT: https://api.avalai.ir/v1
-      EMBEDDING_DIMENSIONS: "1536"
+      EMBEDDING_DIMENSIONS: "3072"
       EMBEDDING_BATCH_SIZE: "8"
       EMBEDDING_RATE_LIMIT_ENABLED: "true"
       EMBEDDING_RATE_LIMIT_REQUESTS: "8"
       EMBEDDING_RATE_LIMIT_INTERVAL: "60"
+      LLM_RATE_LIMIT_ENABLED: "true"
+      LLM_RATE_LIMIT_REQUESTS: "60"
+      LLM_RATE_LIMIT_INTERVAL: "60"
+      LLM_MIN_RETRY_ATTEMPTS: "6"
+      LLM_MIN_RETRY_SECONDS: "1800"
     volumes:
       - cognee_data:/cognee-storage/data
       - cognee_system:/cognee-storage/system
@@ -118,6 +136,43 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    networks:
+      - cognee-network
+
+  session:
+    build: ./ui
+    image: chat-with-books-session:latest
+    container_name: chat-with-books-session
+    profiles:
+      - session
+    restart: unless-stopped
+    depends_on:
+      cognee:
+        condition: service_healthy
+      cognee-next-tier:
+        condition: service_healthy
+    environment:
+      LLM_API_KEY: ${LLM_API_KEY}
+      COGNEE_URL: http://cognee:8000
+      # The next-tier service listens on its CONTAINER port 8000 — 8001 is
+      # only the host publish.
+      NEXT_TIER_URL: http://cognee-next-tier:8000
+      # A Next-tier search can pass ten minutes; the relay waits on its
+      # own leash (serve.py default 1200s).
+      NEXT_TIER_TIMEOUT: ${NEXT_TIER_TIMEOUT:-1200}
+      SESSION_UI_HOST: 0.0.0.0
+      SESSION_UI_PORT: "8765"
+      SESSION_UI_QUOTA_DB: /data/usage.sqlite3
+    volumes:
+      - session_quota:/data
+    ports:
+      - "8765:8765"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/livez')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - cognee-network
 
@@ -145,3 +200,4 @@ volumes:
   postgres_data:
   cognee_data:
   cognee_system:
+  session_quota:

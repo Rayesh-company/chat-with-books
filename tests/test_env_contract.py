@@ -15,8 +15,8 @@ def test_env_example_points_chat_at_z_ai_and_embeddings_at_avalai():
 
     assert env["EMBEDDING_PROVIDER"] == "openai_compatible"
     assert env["EMBEDDING_ENDPOINT"] == "https://api.avalai.ir/v1"
-    assert env["EMBEDDING_MODEL"] == "text-embedding-3-small"
-    assert env["EMBEDDING_DIMENSIONS"] == "1536"
+    assert env["EMBEDDING_MODEL"] == "text-embedding-3-large"
+    assert env["EMBEDDING_DIMENSIONS"] == "3072"
     assert "EMBEDDING_API_KEY" in env
 
 
@@ -45,7 +45,7 @@ def test_env_example_does_not_ship_a_real_api_key():
 
 def test_env_example_caps_embedding_throughput_for_avalai():
     env = parse_dotenv(ENV_EXAMPLE)
-    assert int(env["EMBEDDING_BATCH_SIZE"]) <= 8
+    assert int(env["EMBEDDING_BATCH_SIZE"]) <= 32
     assert env["EMBEDDING_RATE_LIMIT_ENABLED"].lower() == "true"
-    assert int(env["EMBEDDING_RATE_LIMIT_REQUESTS"]) <= 12
+    assert int(env["EMBEDDING_RATE_LIMIT_REQUESTS"]) <= 120
     assert env["EMBEDDING_RATE_LIMIT_INTERVAL"] == "60"

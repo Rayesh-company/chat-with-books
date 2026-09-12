@@ -24,7 +24,7 @@ diff the runs.
 
 ## Run
 
-Cognee must be up (`curl http://localhost:8000/health`) with `tarhe-kolli` ingested.
+Cognee must be up (`curl http://localhost:8000/health`) with `tarhe-kolli` ingested (the Book set also carries `70143-336` since 2026-09-10; TKI questions stay on the `tarhe-kolli` dataset alone).
 
 ```powershell
 python benchmark/run_benchmark.py                     # all 18, variant "baseline"

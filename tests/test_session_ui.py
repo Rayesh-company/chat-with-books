@@ -29,6 +29,23 @@ def test_session_ui_shows_citation_not_a_second_summary():
     assert "دقیقه‌سازی" not in html
 
 
+def test_session_ui_splits_answers_into_three_switchable_sections():
+    # PM brief, 2026-09-11: each phase generates into its own section
+    # with a distinct separation and tabs to switch between them, while
+    # a line names the phase being generated.
+    html = UI.read_text(encoding="utf-8")
+    assert 'role="tablist"' in html
+    for tab in ("tab-1", "tab-2", "tab-3"):
+        assert f'id="{tab}"' in html
+    for panel in ("panel-1", "panel-2", "panel-3"):
+        assert f'id="{panel}"' in html
+    assert "پاسخ اول" in html
+    assert "پاسخ استنادی" in html
+    assert "جست‌وجوی سطح بعدی" in html
+    assert "selectPhase(" in html
+    assert 'id="phase-now"' in html
+
+
 def test_session_ui_server_proxies_recall_to_cognee():
     text = SERVE.read_text(encoding="utf-8")
     assert "/api/v1/recall" in text
@@ -74,3 +91,12 @@ def test_readme_records_streaming_seam():
     text = README.read_text(encoding="utf-8")
     assert "LLM_ANSWER_STREAMING" in text
     assert "نخستین توکن" in text
+
+
+def test_session_ui_never_serves_from_stale_cache():
+    # A browser that heuristically cached the page kept rendering the
+    # pre-tab sheet after the container switchover (2026-09-11): every
+    # response must carry Cache-Control: no-cache so loads revalidate.
+    text = SERVE.read_text(encoding="utf-8")
+    assert "Cache-Control" in text
+    assert 'send_header("Cache-Control", "no-cache")' in text

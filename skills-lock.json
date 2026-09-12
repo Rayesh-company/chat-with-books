@@ -1,0 +1,233 @@
+{
+  "version": 1,
+  "skills": {
+    "ask-matt-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/ask-matt-rpm/SKILL.md",
+      "computedHash": "959191c3f96668222f7ec275d71933d6a48941e6761ab46d79577e58d4640240"
+    },
+    "avalai-srt": {
+      "source": "rayesh-company/avalai-srt",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "4745978ad6726a1ea5ac60839fafc5f4227cce3f69f926d8256b87c43110dff1"
+    },
+    "claude-handoff-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/claude-handoff-rpm/SKILL.md",
+      "computedHash": "ff38f2dbe31c74741a35f7989a2e1e3d11c429eb7f2b636466037f41cce507fe"
+    },
+    "code-review-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/code-review-rpm/SKILL.md",
+      "computedHash": "c0c9185729f0b5ec63100058a2a22e770257ff93fb45f2d07de9f5a605d698ba"
+    },
+    "codebase-design-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/codebase-design-rpm/SKILL.md",
+      "computedHash": "8c57b2dfe877b30ee236d18c38d407f77111a435697ab6188599c13039ccbf5a"
+    },
+    "diagnosing-bugs-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/diagnosing-bugs-rpm/SKILL.md",
+      "computedHash": "106018ad25cce63828e4102055e09d383303a29a7b9a374af75a140852de8c07"
+    },
+    "domain-modeling-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/domain-modeling-rpm/SKILL.md",
+      "computedHash": "60ab664c2f68fff1c439998aaf8edab559d80fa258643e5c6b956aef7a75d7cb"
+    },
+    "git-guardrails-claude-code-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/git-guardrails-claude-code-rpm/SKILL.md",
+      "computedHash": "941cc0ffed40fff4d0adc9a2dd13c93670a8b126eceac00c353b8b2a0f7cde63"
+    },
+    "grill-me-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/grill-me-rpm/SKILL.md",
+      "computedHash": "87a8dcdc8a6a183f1cba683203c671080800b3d81adb532306b512967faab940"
+    },
+    "grill-with-docs-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/grill-with-docs-rpm/SKILL.md",
+      "computedHash": "069baa465bdffc05c5b9d3b873b4514e65488e430be3d43adea9baf818bd8974"
+    },
+    "grilling-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/grilling-rpm/SKILL.md",
+      "computedHash": "85c2a7da91fc8005f3556ad37cbe46b000c273f3594697c8a9a8d0dbf21e81ef"
+    },
+    "handoff-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/handoff-rpm/SKILL.md",
+      "computedHash": "6e584466febe4082000ab8b172379f13244955aa1475ae0e4a99a35cbcfa36e0"
+    },
+    "implement-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/implement-rpm/SKILL.md",
+      "computedHash": "52b08b8b318306a6750a20b375bb14587f2163b1cb70d2274fae13e70e3de012"
+    },
+    "improve-codebase-architecture-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/improve-codebase-architecture-rpm/SKILL.md",
+      "computedHash": "03073a593b4c9dc885ca65775e3731cf9379fc04b2969ac44df7aa0254f7ad3c"
+    },
+    "loop-me-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/loop-me-rpm/SKILL.md",
+      "computedHash": "e96ed756d5815412a74ab09bce48365e3b352519808705222f74f9553512c343"
+    },
+    "migrate-to-shoehorn-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/migrate-to-shoehorn-rpm/SKILL.md",
+      "computedHash": "a9f72deb50b24e3eb7bcd52ce87eab8c9466fd4fdff725e13fe758e78a5cd8f3"
+    },
+    "project-management-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/project-management-rpm/SKILL.md",
+      "computedHash": "3ec2e8d4e7d67dda0a100668c6f528142a8c460d3898ba8cb510d8faefb8f23d"
+    },
+    "prototype-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/prototype-rpm/SKILL.md",
+      "computedHash": "7d5df0a656a97609fbd57f9c83e7d1edae6c8d3a671f4c2eec13a4d5a32ed4a4"
+    },
+    "research-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/research-rpm/SKILL.md",
+      "computedHash": "a79e016fac9bfda1eb9b3930f5edb6f75af8c6df29fc87bb57a585517cfa4efa"
+    },
+    "resolving-merge-conflicts-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/resolving-merge-conflicts-rpm/SKILL.md",
+      "computedHash": "bd94e072ea2812a65ba9f8ee8ca6641a328163d3f5c9c44e28c9006f43a53168"
+    },
+    "scaffold-exercises-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scaffold-exercises-rpm/SKILL.md",
+      "computedHash": "20f9a47453fe7495ed97527197bff482d27d808a5703b151e6650264ecba2bc7"
+    },
+    "setup-matt-pocock-skills-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/setup-matt-pocock-skills-rpm/SKILL.md",
+      "computedHash": "b4ed3f50c467d8d650044b3da1481b23d4aa1b162526d038584b9c31ee25265d"
+    },
+    "setup-pr-skills-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/setup-pr-skills-rpm/SKILL.md",
+      "computedHash": "e4ec05ec66fb31c06c5c47326643633552a86809b36898d6b182c562a7535c22"
+    },
+    "setup-pre-commit-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/setup-pre-commit-rpm/SKILL.md",
+      "computedHash": "0326ac314be3092781be034c7bb6e3d1f3f06a3531b535ce0758e9ad1dda641b"
+    },
+    "setup-ts-deep-modules-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/setup-ts-deep-modules-rpm/SKILL.md",
+      "computedHash": "2cdfb4329dd363b744e9e081ffcbee5ae5163364217f74b2ce9353202cbc2e1f"
+    },
+    "tdd-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/tdd-rpm/SKILL.md",
+      "computedHash": "bb1e5fa45c2419edbbfb3f8500f210182949675d66a5464a53b5caae30b16760"
+    },
+    "teach-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/teach-rpm/SKILL.md",
+      "computedHash": "3704f09ae79ad9ee54cccebd4113e97a10b8a949d49450a120a9dae7f5ff5432"
+    },
+    "to-questionnaire-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/to-questionnaire-rpm/SKILL.md",
+      "computedHash": "2e4906326675b4b3bfe8074d7494eb066e5f4eed297d50081425b36045f3b008"
+    },
+    "to-spec-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/to-spec-rpm/SKILL.md",
+      "computedHash": "6e11d17b30c7d1cbcb0e3297b2403f0c277448f41d82869482bf8bc96c502d52"
+    },
+    "to-tickets-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/to-tickets-rpm/SKILL.md",
+      "computedHash": "44e05269ec36b21658a25d52afa0b4e9d9a78f35186c8a4b2931498a13e084c7"
+    },
+    "triage-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/triage-rpm/SKILL.md",
+      "computedHash": "8cfc555c268a30bbd746fce75e6d2666058911ecb98a369b3997dde7aa6aa186"
+    },
+    "wait-what-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/wait-what-rpm/SKILL.md",
+      "computedHash": "5f2dcbf414454661c72803f98d240ccb2a6706961cc5d6009ddb4dff9441c959"
+    },
+    "wayfinder-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/wayfinder-rpm/SKILL.md",
+      "computedHash": "75a73f1833d8b38e02bfec6f6486bbbffd0f61690dc66426f9edb2c959a48773"
+    },
+    "wizard-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/wizard-rpm/SKILL.md",
+      "computedHash": "42960e54b63418a1c0e7ecc1ce322380a3ae903af7b4d53a0dd39c9e0d8adad9"
+    },
+    "writing-beats-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/writing-beats-rpm/SKILL.md",
+      "computedHash": "0a5abaf36a5be64c9979dfe9a4f0d7e205d81b35bb3e7a2513c67c3feeab7bec"
+    },
+    "writing-for-agents-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/writing-for-agents-rpm/SKILL.md",
+      "computedHash": "16230a09bcefdc9d5a28d1f2659a1d3424b256c7152ffe3cd95e0cfbdc501d97"
+    },
+    "writing-fragments-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/writing-fragments-rpm/SKILL.md",
+      "computedHash": "6109d850b577213a346fa1e601d6a3ff2b98b5a7a577b98bd1c489494d713499"
+    },
+    "writing-shape-rpm": {
+      "source": "rayesh-company/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/writing-shape-rpm/SKILL.md",
+      "computedHash": "c5df77ddc0838960269963430fafb7a2bc1c504435bce4f12c45b7656cda1440"
+    }
+  }
+}

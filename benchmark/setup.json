@@ -34,9 +34,9 @@
     "streaming_flag": "LLM_ANSWER_STREAMING=true in compose.yaml"
   },
   "embeddings": {
-    "model": "text-embedding-3-small",
+    "model": "text-embedding-3-large",
     "endpoint": "https://api.avalai.ir/v1",
-    "dimensions": 1536,
+    "dimensions": 3072,
     "batch_size": 8,
     "rate_limit": "8 requests / 60 s"
   },
@@ -53,6 +53,7 @@
     "file": "tarhe-kolli.pdf",
     "ingested": true
   },
+  "dataset_note": "TKI questions target tarhe-kolli and the benchmark payload stays on that dataset alone so runs stay comparable. The Book set itself is two Books since 2026-09-10 (added: انسان ۲۵۰ ساله, dataset 70143-336, chunk_size 3500; tarhe-kolli re-ingested at chunk_size 4100). The recorded baseline run (benchmark/runs/baseline/20260910T180829Z) predates that change: it ran on text-embedding-3-small at 1536 dims with the 4096 default chunk size.",
   "patches": {
     "docker/enable_farsi_evidence.py": "Compose entrypoint patch: Farsi-aware overlap regex (keeps Farsi terms, not only [a-z0-9]) and snippet window widened to 600 chars (Cognee default 160) so quoted passages hold complete sentences."
   },

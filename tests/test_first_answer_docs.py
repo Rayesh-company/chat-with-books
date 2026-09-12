@@ -8,7 +8,7 @@ def test_readme_records_recall_hybrid_first_answer_contract():
     assert "/api/v1/recall" in text
     assert '"searchType":"HYBRID_COMPLETION"' in text
     assert '"includeReferences":true' in text
-    assert '"datasets":["tarhe-kolli"]' in text
+    assert '"datasets":["tarhe-kolli","70143-336"]' in text
 
 
 def test_readme_records_farsi_citation_as_cognee_evidence():

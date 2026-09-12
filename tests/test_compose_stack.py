@@ -53,17 +53,46 @@ def test_compose_pins_z_ai_for_chat_and_avalai_for_embeddings():
     assert env["LLM_MODEL"] == "openai/glm-5.3-flash"
     assert env["EMBEDDING_PROVIDER"] == "openai_compatible"
     assert env["EMBEDDING_ENDPOINT"] == "https://api.avalai.ir/v1"
-    assert env["EMBEDDING_MODEL"] == "text-embedding-3-small"
+    assert env["EMBEDDING_MODEL"] == "text-embedding-3-large"
     assert "EMBEDDING_API_KEY" not in env
 
 
-def test_compose_caps_embedding_throughput_for_avalai():
+def test_compose_allows_avalai_class_embedding_throughput():
     compose = _load_compose()
     env = compose["services"]["cognee"]["environment"]
-    assert int(env["EMBEDDING_BATCH_SIZE"]) <= 8
+    assert int(env["EMBEDDING_BATCH_SIZE"]) <= 32
     assert env["EMBEDDING_RATE_LIMIT_ENABLED"] == "true"
-    assert int(env["EMBEDDING_RATE_LIMIT_REQUESTS"]) <= 12
+    assert int(env["EMBEDDING_RATE_LIMIT_REQUESTS"]) <= 120
     assert str(env["EMBEDDING_RATE_LIMIT_INTERVAL"]) == "60"
+
+
+def test_compose_routes_ingest_stages_to_avalai_and_keeps_chat_on_z_ai():
+    # Z.AI's coding endpoint 429'd (code 1302) three ingest attempts on
+    # 2026-09-10/11 — its quota is shared with coding tools and cannot
+    # sustain extraction bursts. AvalAI handles 250 RPM / 4M TPM, so the
+    # two ingest stages (extraction, summarization) are routed there via
+    # Cognee's per-stage overrides, while the query stage (first answers,
+    # Next-tier) keeps the recorded Z.AI model pins.
+    compose = _load_compose()
+    cognee_env = compose["services"]["cognee"]["environment"]
+    for stage in ("EXTRACTION", "SUMMARIZATION"):
+        assert cognee_env[f"LLM_{stage}_PROVIDER"] == "custom"
+        assert cognee_env[f"LLM_{stage}_MODEL"] == "openai/glm-5.3-flash"
+        assert cognee_env[f"LLM_{stage}_ENDPOINT"] == "https://api.avalai.ir/v1"
+        assert cognee_env[f"LLM_{stage}_API_KEY"] == "${EMBEDDING_API_KEY}"
+    assert "LLM_QUERY_MODEL" not in cognee_env
+
+    # The RPM ceiling now guards AvalAI's documented budget, and the
+    # patient retries remain as storm insurance.
+    assert int(cognee_env["LLM_RATE_LIMIT_REQUESTS"]) <= 240
+    assert int(cognee_env["LLM_MIN_RETRY_ATTEMPTS"]) >= 4
+    assert int(cognee_env["LLM_MIN_RETRY_SECONDS"]) >= 900
+
+    # Next-tier only queries — no stage overrides, its own Z.AI model.
+    next_tier_env = compose["services"]["cognee-next-tier"]["environment"]
+    assert "LLM_EXTRACTION_MODEL" not in next_tier_env
+    assert "LLM_SUMMARIZATION_MODEL" not in next_tier_env
+    assert int(next_tier_env["LLM_RATE_LIMIT_REQUESTS"]) <= 60
 
 
 def test_compose_pins_postgres_connection_on_cognee():
@@ -130,3 +159,42 @@ def test_compose_keeps_next_tier_off_the_first_answer_path():
         assert "LLM_QUERY_MODEL" not in service["environment"]
 
     assert next_tier["depends_on"]["cognee"]["condition"] == "service_healthy"
+
+
+def test_compose_runs_the_session_sheet_in_a_container():
+    # The three-phase sheet can ride compose too (profile `session`): it
+    # builds from ./ui, talks to both Cognee services by container-network
+    # name, keeps the phone-gate quota in a volume, and lifts the composer
+    # key from the compose-only .env — the key never enters the image or
+    # the Cognee containers.
+    compose = _load_compose()
+    session = compose["services"]["session"]
+    assert session["build"] == "./ui"
+    assert session["container_name"] == "chat-with-books-session"
+    assert "session" in session["profiles"]
+    assert "8765:8765" in [str(item) for item in session["ports"]]
+
+    env = session["environment"]
+    assert env["COGNEE_URL"] == "http://cognee:8000"
+    # The container-network URL uses next-tier's CONTAINER port — 8001 is
+    # only the host publish.
+    assert env["NEXT_TIER_URL"] == "http://cognee-next-tier:8000"
+    # The relay's phase-3 leash is tunable from the host .env too (a
+    # Next-tier search can pass ten minutes; serve.py defaults to 1200).
+    assert env["NEXT_TIER_TIMEOUT"] == "${NEXT_TIER_TIMEOUT:-1200}"
+    assert env["SESSION_UI_HOST"] == "0.0.0.0"
+    assert env["SESSION_UI_QUOTA_DB"] == "/data/usage.sqlite3"
+    # The composer key rides as compose interpolation from .env, never
+    # baked into the image (the Dockerfile copies only the two files).
+    assert env["LLM_API_KEY"] == "${LLM_API_KEY}"
+    assert any(str(item).startswith("session_quota:") for item in session["volumes"])
+    assert session["depends_on"]["cognee"]["condition"] == "service_healthy"
+    assert (
+        session["depends_on"]["cognee-next-tier"]["condition"] == "service_healthy"
+    )
+
+    # Liveness is local (/livez) — /health proxies to Cognee and would
+    # couple this container's health to another service.
+    assert "livez" in str(session["healthcheck"]["test"])
+    for tier in ("cognee", "cognee-next-tier"):
+        assert "LLM_API_KEY" not in compose["services"][tier]["environment"]

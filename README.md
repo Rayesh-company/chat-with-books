@@ -2,7 +2,7 @@
 
 Farsi Q&A over a fixed Book set through Cognee. The whole memory layer stays on Postgres (ADR-0001). Chat goes to Z.AI's GLM Coding Plan at `https://api.z.ai/api/coding/paas/v4`; embeddings stay on AvalAI at `https://api.avalai.ir/v1` (ADR-0002). The coding-plan endpoint is documented for coding tools; other agent use is best-effort under Z.AI's usage policy.
 
-The Book set is one Book: طرح کلی اندیشۀ اسلامی در قرآن (`tarhe-kolli.pdf`). Keep it at the repo root. It is not committed.
+The Book set is two Books: طرح کلی اندیشۀ اسلامی در قرآن (`tarhe-kolli.pdf`) and انسان ۲۵۰ ساله (`70143-336.pdf`). Keep both at the repo root. They are not committed.
 
 ## Local stack
 
@@ -19,7 +19,7 @@ API docs: `http://localhost:8000/docs`.
 
 ## Session UI
 
-A Farsi-first sheet for first answers. It proxies `recall()` to Cognee on this machine. It is not Next-tier search, and it is not Cognee `--profile ui`.
+A Farsi-first sheet for the whole answer pipeline — it shows the three phases in separate switchable sections (below). It proxies `recall()` to Cognee on this machine and relays the Next-tier search to the second Cognee service; it is not Cognee `--profile ui`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File start-ui.ps1
@@ -27,7 +27,15 @@ powershell -ExecutionPolicy Bypass -File start-ui.ps1
 
 `start-ui.ps1` reads `LLM_API_KEY` from `.env` into the process env — `serve.py` takes the key from the host env, never from `.env` (that file is compose-only), and without it the Quoted answer falls back to the Evidence list — then runs `python ui/serve.py`.
 
-Open `http://localhost:8765`. Cognee must already be up on port 8000 with `tarhe-kolli` ingested.
+The same sheet also runs as a container, under the `session` profile:
+
+```powershell
+docker compose --profile session up -d --build
+```
+
+It builds from `ui/Dockerfile` (a stdlib-only image: the base interpreter plus `serve.py` and `index.html`, nothing installed), talks to `http://cognee:8000` and `http://cognee-next-tier:8000` by container-network name — next-tier's `8001` is only the host publish — and lifts `LLM_API_KEY` by compose interpolation from the compose-only `.env`, so the key never enters the image. The phone-gate quota lives in the `session_quota` volume at `/data/usage.sqlite3`; when switching from the host process, carry the counts over once with `docker cp ui/usage.sqlite3 chat-with-books-session:/data/usage.sqlite3` (no restart needed — the sheet opens the DB per request). The container healthcheck is the local `/livez`; the sheet's `/health` still proxies to Cognee and stays the stack-level signal. Both runs serve `http://localhost:8765` — stop the host sheet before bringing the container up, one process per port.
+
+Open `http://localhost:8765`. Cognee must already be up on port 8000 with both Books ingested.
 
 ### Phone gate
 
@@ -35,7 +43,15 @@ The sheet identifies a Customer by a phone number (`#phone` on the form; `inputm
 
 The sheet asks recall() with `stream: true` and renders the answer as it arrives. `delta` frames paint a live preview; `final` is the only authoritative render and the preview is discarded. `reset` clears the preview after an LLM retry. An `error` frame is not terminal: the sheet keeps reading and prefers `final`. The streamed answer renders as markdown — headings, bold, bullets — during the preview and at `final`; literal `#`/`**` characters never show. `ui/serve.py` relays `text/event-stream` unbuffered (HTTP/1.0, connection-close delimited). «نخستین توکن» is TTFT: submit to first token rendered; with no deltas it falls back to the first render from `final`.
 
+### Three phases, three sections (PM brief, 2026-09-11)
+
+One ask runs the whole pipeline, and each phase generates into its own section with a distinct separation and tabs to switch between: **پاسخ اول** (phase 1, the streamed answer plus its Evidence list), **پاسخ استنادی** (phase 2, the Quoted answer), and **جست‌وجوی سطح بعدی** (phase 3, the graph-retrieval answer). The tab being generated carries a pulsing dot, a line under the tabs names it («در حال تولید: پاسخ استنادی…»), and each of phases 2 and 3 carries a timer chip that ticks while it runs and freezes at its completion time. A phase's section is brought forward when the phase lands — the streamed answer stays put in phase 1's own section, the guarded document lands in phase 2's, and the graph answer lands in phase 3's with its own Evidence list. A new ask aborts any in-flight phase 2 or 3 of the previous one (AbortController plus the run counter) and resets all three sections. The whole-pipeline elapsed clock keeps its recorded contract: it stops only when the last phase settles.
+
+Phase 3 starts automatically once phase 2 settles (success, fallback, or skip — the graph search never needs the Evidence pool). The sheet POSTs only `{query}` to `ui/serve.py`'s `/next-tier-recall`, which pins the search shape server-side — never in the browser: `GRAPH_COMPLETION_COT` over `["tarhe-kolli", "70143-336"]` with `includeReferences: true`, not streamed — and relays to the second Cognee service, `NEXT_TIER_URL` (default `http://127.0.0.1:8001`), so a multi-minute graph search never blocks the first-answer path on 8000. The relay waits on its own leash — `NEXT_TIER_TIMEOUT`, default `1200` s, tunable from the compose environment: a Next-tier search runs four chain-of-thought rounds and can pass ten minutes (live logs, 2026-09-11), and the shared 600 s proxy leash once gave up on a search the second service had already finished — the phase-3 tab showed «next-tier unreachable: timed out» while the upstream was completing. The gate is phase 2's shape exactly: phase 3 belongs to the chat phase 1 recorded, so it needs a phone with at least one chat today and neither counts nor checks the limit itself.
+
 After the streamed answer renders, the sheet can swap it for the **Quoted answer**: a document the composer writes as paragraphs that each interleave AI-written Farsi with verbatim Book sentences — one unit of AI text, embedded quote, and the paragraph's cited pages at its end (`docs/example.txt` is the visual parity target; PM format call, 2026-09-10) — the quotes taken **verbatim from the Book's Evidence passages** for the same question (ADR-0003). The sheet parses each Evidence bullet into locator + quoted passage and POSTs them with the question and the streamed answer to `ui/serve.py`'s `/quoted-answer`, which makes two sequential `glm-5.3-flash` calls on the Z.AI coding endpoint (`LLM_API_KEY` from the host env; never shipped to the browser), each with its own 240 s timeout, an explicit output ceiling (`max_tokens` 16384, pinned in source — the unpinned endpoint default ran a long document out of room mid-write, 2026-09-10, and reasoning tokens count inside the ceiling), and the endpoint's default temperature: a **planner** call with thinking enabled outlines the document — section headings, each paragraph's point, which passages to weave, where one paragraph weaves several passages — and a **writer** call with thinking disabled follows that plan to write the blocks: `heading`, `paragraph` (a `parts` list of AI text runs and quote parts). The planner plans from the question and passages alone — the draft answer is held back from it — and keeps the plan under 150 words (PM call, 2026-09-10, after live phase 2 measured ~295 s against the estimate: reasoning time scales with the brief). Reasoning is on only for planning (document structure, cross-passage weaving) and off for writing, so copied sentences survive the verbatim guard; measured 2026-09-10, reasoning cost ~84 s and writing ~17 s, so phase 2 was estimated at roughly 100 s. If the planner fails, times out, or returns nothing usable, the writer still runs without the plan — the single-call shape — so planning never breaks the fallback. A verbatim guard drops every quote sentence whose normalized letter stream does not occur in its claimed passage (PDF text-layer `\b` noise, ZWNJ, kashida, and Arabic ي/ك variants collapse before comparing), so nothing paraphrased is shown as quoted; a failed sentence drops alone and its paragraph survives. Every paragraph must hold at least one surviving quote and some AI text (no pure-AI, no bare-quote paragraphs), and a paragraph may weave quotes from several passages. Each quote sentence carries a resting clay highlight and is focusable — hover or keyboard focus shows a Farsi tooltip (Book title + that passage's first page; a passage without page markers cites the Book alone, never an invented page) — and the paragraph ends with the exact chunk-page range of every passage it quoted, in order («صفحات 740 تا 745»; the first-page-only end label lasted one smoke before the PM reversed it, 2026-09-10 — the tooltip keeps the first page). After the swap the whole Evidence section — «استناد» heading and list — is hidden: the answer itself carries the citations, and a new question brings the section back. While the composer runs, a pulsing «در حال نوشتن پاسخ استنادی…» status marks phase 2 under the streamed answer, and the elapsed clock keeps counting until the swap or fallback settles — the timer times the whole pipeline, not just the stream (PM call, 2026-09-10). The writer is asked for at least eight quote paragraphs when the passages support them (PM call, 2026-09-10, raised from five the same night) — never inventing a quote to reach the count. The swap happens only when the guarded document holds at least two quoting paragraphs, or one plus a heading; if the composer fails, times out, or misses that threshold, the streamed answer and the Evidence citations stay — the sheet is never left empty. This runs strictly after the streamed answer: TTFT, streaming, the `Evidence:` contract, and the model pins are untouched (AC contract of #22).
+
+A reply the output ceiling cuts (`finish_reason` `"length"`) used to lose the whole Quoted answer: the JSON died mid-array, never parsed, and the sheet fell back. Since 2026-09-11 the complete block prefix is salvaged (a `raw_decode` walk of the blocks array) and ONE continuation call — thinking disabled, same ceiling and timeout — reads the salvaged blocks and writes only what follows them, same shape and rules; the merged document runs the same verbatim guard. If the continuation is cut too (or fails), the guarded prefix still lands, the response carries `"truncated": true`, and the section says the tail may be unfinished. One continuation only — latency stays bounded.
 
 UI (optional Cognee chrome):
 
@@ -44,30 +60,33 @@ docker compose --profile ui up -d
 curl.exe -f http://localhost:3000
 ```
 
-Chat models are pinned in `compose.yaml`: `glm-5.3-flash` on `cognee` (first answers), `glm-5.3` on `cognee-next-tier` (`environment:` there overrides `.env`, so `.env` carries keys, not models). Embeddings are `text-embedding-3-small` on AvalAI. Change an `LLM_MODEL` in `compose.yaml` only after a POST to `https://api.z.ai/api/coding/paas/v4/chat/completions` with that model ID succeeds on this key.
+Chat models are pinned in `compose.yaml`: `glm-5.3-flash` on `cognee` (first answers), `glm-5.3` on `cognee-next-tier` (`environment:` there overrides `.env`, so `.env` carries keys, not models). Embeddings are `text-embedding-3-large` (3072 dims) on AvalAI. Change an `LLM_MODEL` in `compose.yaml` only after a POST to `https://api.z.ai/api/coding/paas/v4/chat/completions` with that model ID succeeds on this key.
 
 ## Book ingest
 
-Dataset name: `tarhe-kolli`. Upload only this Book.
+Dataset names: `tarhe-kolli` and `70143-336` (filename-derived). Upload only these two Books. Each ingest passes `chunk_size` — the max chunk size **in tokens** (chunks end at paragraph boundaries and may be smaller), pinned per Book so no chunk exceeds 5 PDF pages: `tarhe-kolli` → 4100, `70143-336` → 3500 (calibrated 2026-09-11 from the rebuilt index: Cognee's loader extracts this Farsi at ~1150 and ~980 chars/page). Speed comes from throughput, not chunk size: `chunks_per_batch=36` (Cognee's full concurrent batch) and AvalAI-class rate ceilings — `LLM_RATE_LIMIT` 240 requests/60 s for extraction and `EMBEDDING_RATE_LIMIT` 120 requests/60 s at batch 32 — all far under AvalAI's 250 RPM / 4M TPM contract. `chunks_per_batch=16` keeps sixteen extraction calls in flight.
+
+The graph-build stages are routed to AvalAI (2026-09-11): Z.AI's coding endpoint 429'd three ingest attempts (code 1302 — its quota is shared with coding tools and cannot sustain extraction bursts), so `LLM_EXTRACTION_*` and `LLM_SUMMARIZATION_*` pin `glm-5.3-flash` on AvalAI (250 RPM / 4M TPM class; AvalAI serves the GLM family, and the model was smoke-checked there on `/chat/completions` with a Farsi JSON-extraction prompt), with `LLM_RATE_LIMIT` at 200 requests/60 s and patient retries (`LLM_MIN_RETRY_ATTEMPTS` 6, `LLM_MIN_RETRY_SECONDS` 1800). The **query stage is not overridden** — first answers stay `glm-5.3-flash` on Z.AI and Next-tier stays `glm-5.3`, per the recorded model pins.
 
 ```powershell
-curl.exe -f -X POST http://localhost:8000/api/v1/remember -F "data=@tarhe-kolli.pdf" -F "datasetName=tarhe-kolli" -F "run_in_background=true"
+curl.exe -f -X POST http://localhost:8000/api/v1/remember -F "data=@tarhe-kolli.pdf" -F "datasetName=tarhe-kolli" -F "run_in_background=true" -F "chunk_size=4100" -F "chunks_per_batch=36"
+curl.exe -f -X POST http://localhost:8000/api/v1/remember -F "data=@70143-336.pdf" -F "datasetName=70143-336" -F "run_in_background=true" -F "chunk_size=3500" -F "chunks_per_batch=36"
 curl.exe -sS http://localhost:8000/api/v1/datasets/status
 ```
 
-Poll `/api/v1/datasets/status` until the dataset is `completed` (or `DATASET_PROCESSING_COMPLETED`). Graph build on `postgres_demo` can take hours.
+Poll `/api/v1/datasets/status` until both datasets are `completed` (or `DATASET_PROCESSING_COMPLETED`). Graph build on `postgres_demo` can take hours. Changing the embedding model or dimensions invalidates every stored vector — the whole Book set must be re-ingested after such a change (mixed model/dimensions in one index is never allowed).
 
 Pytest locks this recorded ingest contract. A green suite does not mean remember has run or that CHUNKS returned hits.
 
-Session operator smoke on a live host: POST `CHUNKS` and check Book (`document_name`) is `tarhe-kolli`. First search can sit several minutes on Cognee's pre-search step before chunks return.
+Session operator smoke on a live host: POST `CHUNKS` and check the Books (`document_name`) are `tarhe-kolli` and `70143-336`. First search can sit several minutes on Cognee's pre-search step before chunks return.
 
 ```powershell
-curl.exe -sS -X POST http://localhost:8000/api/v1/search -H "Content-Type: application/json" --data-raw '{"searchType":"CHUNKS","query":"اندیشه اسلامی","datasets":["tarhe-kolli"],"topK":5}'
+curl.exe -sS -X POST http://localhost:8000/api/v1/search -H "Content-Type: application/json" --data-raw '{"searchType":"CHUNKS","query":"اندیشه اسلامی","datasets":["tarhe-kolli","70143-336"],"topK":5}'
 ```
 
 ## First answer
 
-A Session operator asks a Farsi question against the ingested Book. First answer is Cognee `recall()` with `HYBRID_COMPLETION`. It is not Next-tier search. Pin `searchType`. Do not pass `null` (that auto-routes and can pick `GRAPH_COMPLETION_COT`). Cognee's HTTP `includeReferences` default is false. Still pass `true`. Citation is Cognee's `Evidence:` block (Book identity plus a quoted passage). Compose starts Cognee through `enable_farsi_evidence.py` so that overlap keeps Farsi terms, not only Latin `[a-z0-9]`; the same patch widens the snippet window to 600 chars (Cognee default: 160) so quoted passages hold complete sentences for the Quoted answer's verbatim guard. Do not invent a citation formatter. Do not treat CHUNKS as the product Citation. The snippet is the short summary. Do not add a second précis. A new question starts a new first answer, not a Next-tier search. Omit `sessionId` on this path.
+A Session operator asks a Farsi question against the ingested Book. First answer is Cognee `recall()` with `HYBRID_COMPLETION`. It is not Next-tier search. Pin `searchType`. Do not pass `null` (that auto-routes and can pick `GRAPH_COMPLETION_COT`). Cognee's HTTP `includeReferences` default is false. Still pass `true`. Citation is Cognee's `Evidence:` block (Book identity plus a quoted passage). Compose starts Cognee through `enable_farsi_evidence.py` so that overlap keeps Farsi terms, not only Latin `[a-z0-9]`; the same patch widens the snippet window to 600 chars (Cognee default: 160) so quoted passages hold complete sentences for the Quoted answer's verbatim guard. Do not invent a citation formatter. Do not treat CHUNKS as the product Citation. The snippet is the short summary. Do not add a second précis. A new question starts a new first answer, not a Deep dive. Omit `sessionId` on this path.
 
 This path streams: pass `stream: true`. Deltas are preview only and never contain the `Evidence:` block; the `final` frame carries the same JSON array as the non-streaming reply, and citation splitting runs on `final`'s `[0].text`. Token deltas need `LLM_ANSWER_STREAMING: "true"` in compose (Cognee env). With the flag off the stream still works with zero deltas, and TTFT measures submit to first render from `final`.
 
@@ -76,36 +95,42 @@ Chat model for this path is `glm-5.3-flash` on Z.AI's GLM Coding Plan (PM call, 
 Pytest locks this recorded first-answer contract. A green suite does not mean recall returned an answer or Evidence.
 
 ```powershell
-curl.exe -sS -X POST http://localhost:8000/api/v1/recall -H "Content-Type: application/json" --data-raw '{"searchType":"HYBRID_COMPLETION","query":"اندیشه اسلامی در قرآن چه طرحی دارد؟","datasets":["tarhe-kolli"],"includeReferences":true}'
+curl.exe -sS -X POST http://localhost:8000/api/v1/recall -H "Content-Type: application/json" --data-raw '{"searchType":"HYBRID_COMPLETION","query":"اندیشه اسلامی در قرآن چه طرحی دارد؟","datasets":["tarhe-kolli","70143-336"],"includeReferences":true}'
 ```
 
 Streamed variant (`-N` so frames print live):
 
 ```powershell
-curl.exe -N -sS -X POST http://localhost:8000/api/v1/recall -H "Content-Type: application/json" --data-raw '{"searchType":"HYBRID_COMPLETION","query":"اندیشه اسلامی در قرآن چه طرحی دارد؟","datasets":["tarhe-kolli"],"includeReferences":true,"stream":true}'
+curl.exe -N -sS -X POST http://localhost:8000/api/v1/recall -H "Content-Type: application/json" --data-raw '{"searchType":"HYBRID_COMPLETION","query":"اندیشه اسلامی در قرآن چه طرحی دارد؟","datasets":["tarhe-kolli","70143-336"],"includeReferences":true,"stream":true}'
 ```
 
-## Next-tier search
+## Deep dive
 
-In the same Session, on the same question, the Session operator can run a Next-tier search: a second Cognee search that synthesizes across more than one stretch of the Book. A new question is a new first answer, not a Next-tier search. Slow is allowed here; it must not steal the first-answer path.
+In the same Session, on the same question, the Session operator starts a Deep dive: a planned study of the Book set that returns a multi-page academic response. A new question is a new first answer, not a Deep dive. Slow is allowed here (minutes by design); it must not steal the first-answer path.
 
-It is Cognee `SearchType.GRAPH_COMPLETION_COT` (default `max_iter=4`). Not `FEELING_LUCKY`, not `AGENTIC_COMPLETION`. If live latency is ever unusable, the fallback is `GRAPH_COMPLETION_DECOMPOSITION` — switch only after recording that choice.
+The decided contract (ADR 0006, 2026-09-12): an operator-started button on the phase-3 tab — the auto-start of ADR 0005 is overturned, so an ask no longer burns a dive by itself. One Planner call (`glm-5.3`, thinking on) decomposes the question into four to six sub-questions; as many searchers run in parallel on the second Cognee service; at most one gap round re-searches quote-starved sections (two retrieval rounds total); one Synthesizer call (`glm-5.3`) writes 2,000–4,000 Farsi words in five to eight headed sections plus a closing references list, every body paragraph a Quoted paragraph — the phase-2 block format, verbatim guards, page labels, and the truncation continuation are reused as-is. The dive belongs to the chat phase 1 recorded and never counts against the phone gate; a new ask aborts an in-flight dive.
 
-It runs on the second Cognee service (`cognee-next-tier`, port `8001`) with the Z.AI chat model `glm-5.3` on the GLM Coding Plan endpoint (smoke-checked via `/chat/completions`). The tiers use different models since 2026-09-09 — `glm-5.3-flash` first answers, `glm-5.3` here. They stay separate services so a multi-minute Next-tier search on `8001` never blocks the first-answer path on `8000`: Cognee's per-stage `LLM_QUERY_MODEL` override cannot draw that line — it hits every search completion, first answer included — and one service cannot serve both tiers independently. Both read the same Postgres memory.
+Orchestration is stdlib-only inside `ui/serve.py` (threads for the fan-out; no framework — the planner/writer/continuation composer already runs this call shape). The dive runs behind an in-process job registry: at most one dive per phone and three dives globally, further requests rejected with a busy message rather than queued, and the sheet polls a status endpoint so a browser refresh reconnects to the running dive. A sheet restart kills in-flight dives (accepted); the recorded upgrade path is durable execution, not a queue.
+
+The searchers' search type is not `FEELING_LUCKY`, not `AGENTIC_COMPLETION` (it requires exactly one dataset; the Book set is two). If hand-planned sub-questions disappoint, the recorded fallback is `GRAPH_COMPLETION_DECOMPOSITION` — switch only after recording that choice.
+
+The searchers run on the second Cognee service (`cognee-next-tier`, port `8001`) with the Z.AI chat model `glm-5.3` on the GLM Coding Plan endpoint (smoke-checked via `/chat/completions`). The tiers use different models since 2026-09-09 — `glm-5.3-flash` first answers, `glm-5.3` here. They stay separate services so a multi-minute dive on `8001` never blocks the first-answer path on `8000`: Cognee's per-stage `LLM_QUERY_MODEL` override cannot draw that line — it hits every search completion, first answer included — and one service cannot serve both tiers independently. Both read the same Postgres memory.
+
+Until the Deep dive ships, phase 3 on the sheet is still the recorded auto-started Next-tier COT relay (ADR 0005) — this probe (`GRAPH_COMPLETION_COT`, default `max_iter=4`) remains the live engine:
 
 ```powershell
-curl.exe -sS -X POST http://localhost:8001/api/v1/recall -H "Content-Type: application/json" --data-raw '{"searchType":"GRAPH_COMPLETION_COT","query":"اندیشه اسلامی در قرآن چه طرحی دارد؟","datasets":["tarhe-kolli"],"includeReferences":true}'
+curl.exe -sS -X POST http://localhost:8001/api/v1/recall -H "Content-Type: application/json" --data-raw '{"searchType":"GRAPH_COMPLETION_COT","query":"اندیشه اسلامی در قرآن چه طرحی دارد؟","datasets":["tarhe-kolli","70143-336"],"includeReferences":true}'
 ```
 
-Same question as the first answer. Do not stream this path; the operator waits for the JSON. Citations may still appear; they follow the first-answer `Evidence:` contract. Pytest locks this recorded next-tier contract; a green suite does not mean the Next-tier search returned a synthesis.
+Same question as the first answer. Do not stream this probe; the operator waits for the JSON. Citations may still appear; they follow the first-answer `Evidence:` contract. Pytest locks this recorded contract; a green suite does not mean the dive — or the relay — returned a synthesis.
 
 ## VPS deploy
 
-The public deployment is one Ubuntu VPS running the full stack behind **https://booksai.rayesh-team.ir**: the compose services (Postgres, Cognee `8000`, next-tier `8001`, all loopback-bound) plus the Session sheet under a systemd unit `cwb-session.service` (`User=ubuntu`, `EnvironmentFile` pointing at the repo's `.env` for `LLM_API_KEY`, `SESSION_UI_HOST=127.0.0.1`, `SESSION_UI_PORT=8765`). Nothing binds a public port anymore (2026-09-10): nginx fronts the domain — `/etc/nginx/sites-available/booksai.rayesh-team.ir`, proxying to `127.0.0.1:8765` with `proxy_buffering off` and 600 s read/send timeouts, because the SSE stream and the ~140 s `/quoted-answer` POST both ride it — and the Let's Encrypt cert (`certbot --nginx`, auto-renews) terminates TLS on the VPS. The Cloudflare DNS record is **DNS-only (grey cloud)**, pointing straight at the VPS: TLS is the origin's job and no Cloudflare proxy sits in the path. If that record is ever flipped to proxied (orange cloud), Cloudflare's ~100 s origin timeout will cut the silent `/quoted-answer` POST with a 524 — phase 2 would need to stream heartbeat bytes before its JSON, a seam that does not exist today. The VPS shares the host with unrelated projects (`mitgrat-*`, `mcdc-web`), so before binding anything check `ss -tlnp` — every service keeps its unique port and never assumes the repo defaults are free.
+The public deployment is one Ubuntu VPS running the full stack behind **https://booksai.rayesh-team.ir**: the compose services (Postgres, Cognee `8000`, next-tier `8001`, all loopback-bound) plus the Session sheet under a systemd unit `cwb-session.service` (`User=ubuntu`, `EnvironmentFile` pointing at the repo's `.env` for `LLM_API_KEY`, `SESSION_UI_HOST=127.0.0.1`, `SESSION_UI_PORT=8765`). The sheet can also run in compose under the `session` profile (see Session UI) — but on the VPS the profile's published `0.0.0.0:8765` and the unit's `127.0.0.1:8765` are one port: retire the systemd unit (`sudo systemctl disable --now cwb-session`) before ever bringing the profile up there, or the container's bind fails. Nothing binds a public port anymore (2026-09-10): nginx fronts the domain — `/etc/nginx/sites-available/booksai.rayesh-team.ir`, proxying to `127.0.0.1:8765` with `proxy_buffering off` and read/send timeouts that sit at or above the sheet's `NEXT_TIER_TIMEOUT` (1200 s — the 600 s pair predates the 2026-09-11 leash fix and would cut a long Next-tier search at the front after the sheet had stopped cutting it), because the SSE stream, the ~140 s `/quoted-answer` POST, and the multi-minute `/next-tier-recall` relay all ride it — and the Let's Encrypt cert (`certbot --nginx`, auto-renews) terminates TLS on the VPS. The Cloudflare DNS record is **DNS-only (grey cloud)**, pointing straight at the VPS: TLS is the origin's job and no Cloudflare proxy sits in the path. If that record is ever flipped to proxied (orange cloud), Cloudflare's ~100 s origin timeout will cut the silent `/quoted-answer` POST with a 524 — phase 2 would need to stream heartbeat bytes before its JSON, a seam that does not exist today. The VPS shares the host with unrelated projects (`mitgrat-*`, `mcdc-web`), so before binding anything check `ss -tlnp` — every service keeps its unique port and never assumes the repo defaults are free.
 
 Deploy is tarball-shaped (the VPS copy is not a git checkout): tar the tree locally excluding `.git`, `.env`, the Book PDF and caches, `pscp`/`scp` it over, swap the tree (keep the remote `.env`), then `sudo systemctl restart cwb-session`. If `docker/enable_farsi_evidence.py` changed, restart the Cognee container too (`docker restart chat-with-books-cognee`) — the snippet window applies at search time, so no re-ingest is needed; the bind mount re-reads the file on container start.
 
-The Book dataset is ingested once (`DATASET_PROCESSING_COMPLETED` in `/api/v1/datasets/status`); re-ingest is not part of a code deploy.
+The Book datasets are ingested once (`DATASET_PROCESSING_COMPLETED` in `/api/v1/datasets/status`); re-ingest is not part of a code deploy.
 
 ## Tests
 

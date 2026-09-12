@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Serve the Farsi Session sheet and proxy first-answer recall to Cognee."""
+"""Serve the Farsi Session sheet, proxy first-answer recall to Cognee,
+relay phase 3 (the Next-tier graph search) to cognee-next-tier, and
+compose the Quoted answer for phase 2."""
 
 from __future__ import annotations
 
@@ -16,10 +18,23 @@ from urllib.request import Request, urlopen
 
 UI_DIR = Path(__file__).resolve().parent
 COGNEE_URL = os.environ.get("COGNEE_URL", "http://127.0.0.1:8000").rstrip("/")
+# Phase 3 rides the second Cognee service (cognee-next-tier, port 8001)
+# so a multi-minute graph search never blocks the first-answer path on
+# 8000 (ADR-0002). Both read the same Postgres memory.
+NEXT_TIER_URL = os.environ.get("NEXT_TIER_URL", "http://127.0.0.1:8001").rstrip("/")
 HOST = os.environ.get("SESSION_UI_HOST", "127.0.0.1")
 PORT = int(os.environ.get("SESSION_UI_PORT", "8765"))
 PROXY_TIMEOUT = 600
+# A Next-tier search runs four chain-of-thought rounds and can pass ten
+# minutes (live logs, 2026-09-11) — past the shared 600s leash the relay
+# once gave up on a search the second service had already finished.
+# Phase 3 waits on its own leash; "unreachable: timed out" only after it.
+NEXT_TIER_TIMEOUT = int(os.environ.get("NEXT_TIER_TIMEOUT", "1200"))
 ALLOWED_PROXY = {"/health", "/api/v1/recall"}
+# The Book set the sheet answers over; phase 3 pins the search shape
+# here — never in the browser (README, Next-tier search).
+BOOK_DATASETS = ["tarhe-kolli", "70143-336"]
+NEXT_TIER_SEARCH_TYPE = "GRAPH_COMPLETION_COT"
 
 # Phone gate (PM call, 2026-09-10, for the public VPS deploy): the sheet
 # identifies a Customer by a phone number and each number gets
@@ -115,6 +130,17 @@ _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
 # "chunk 101 of document tarhe-kolli (pages 740-745)" (enable_farsi_evidence.py).
 _PAGES_IN_REFERENCE = re.compile(r"\(pages (\d+)-(\d+)\)")
 _PAGE_IN_REFERENCE = re.compile(r"\(page (\d+)\)")
+_DOCUMENT_IN_REFERENCE = re.compile(r"\bdocument ([A-Za-z0-9._-]+)")
+
+# The Book set's dataset names resolve to their Farsi titles for a quote's
+# Book identity (Citation = Book identity plus pages). An unmapped name
+# passes through raw so a Book is still attributable; a locator without a
+# document name yields "" and the sheet shows a generic label rather than
+# guessing a Book.
+_BOOK_TITLES = {
+    "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
+    "70143-336": "انسان ۲۵۰ ساله",
+}
 
 
 def normalize_for_match(text: str) -> str:
@@ -209,6 +235,7 @@ def guard_blocks(blocks, sources):
                         "first_page_label": first_page_label(
                             sources[index]["reference"]
                         ),
+                        "book_label": book_label(sources[index]["reference"]),
                     }
                 )
                 has_quote = True
@@ -251,47 +278,104 @@ def first_page_label(reference: str) -> str:
     return ""
 
 
+def book_label(reference: str) -> str:
+    """Farsi Book title for an Evidence locator; '' when it names no Book.
+
+    With two Books in the set, a quote's attribution can no longer be
+    implied — the tooltip names the Book the passage actually came from.
+    """
+    document = _DOCUMENT_IN_REFERENCE.search(reference)
+    if not document:
+        return ""
+    return _BOOK_TITLES.get(document.group(1), document.group(1))
+
+
+def salvage_blocks(content: str) -> list:
+    """Decode the complete prefix of a blocks document cut mid-JSON.
+
+    A reply stopped at the output ceiling dies without its closing
+    braces, so json.loads loses the whole document (live run 2026-09-10:
+    the Quoted answer ended unfinished at its final section). raw_decode
+    walks the blocks array and keeps every block that parsed; the verbatim
+    guard still applies to the salvage downstream, exactly as to a whole
+    reply.
+    """
+    match = re.search(r'"blocks"\s*:\s*\[', content)
+    if not match:
+        return []
+    decoder = json.JSONDecoder()
+    pos = match.end()
+    blocks = []
+    while pos < len(content):
+        while pos < len(content) and content[pos] in " \t\r\n,":
+            pos += 1
+        if pos >= len(content) or content[pos] in "]}":
+            break
+        try:
+            item, pos = decoder.raw_decode(content, pos)
+        except ValueError:
+            break
+        blocks.append(item)
+    return blocks
+
+
 def parse_quoted_reply(content):
-    """Pull the blocks list out of the composer's reply; [] when malformed."""
+    """Pull the blocks list out of the composer's reply; [] when malformed.
+
+    A reply cut by the output ceiling dies mid-JSON without closing
+    braces; its complete block prefix is salvaged so a long document
+    loses only its tail — compose_quoted_answer reads the cut off
+    finish_reason and continues the write past the salvage.
+    """
     if not isinstance(content, str) or not content.strip():
         return []
     stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
     try:
         parsed = json.loads(stripped)
     except ValueError:
-        match = re.search(r"\{.*\}", stripped, re.DOTALL)
-        if not match:
-            return []
-        try:
-            parsed = json.loads(match.group(0))
-        except ValueError:
-            return []
+        parsed = None
+    if isinstance(parsed, dict) and isinstance(parsed.get("blocks"), list):
+        return parsed["blocks"]
+    salvaged = salvage_blocks(stripped)
+    if salvaged:
+        return salvaged
+    match = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if not match:
+        return []
+    try:
+        parsed = json.loads(match.group(0))
+    except ValueError:
+        return []
     blocks = parsed.get("blocks") if isinstance(parsed, dict) else None
     return blocks if isinstance(blocks, list) else []
 
 
-def build_quoted_prompt(question: str, answer: str, sources, plan: str = "") -> str:
-    """Build the writer prompt. With a plan the plan is the framing
-    context (PM call, 2026-09-10); without one — planner failed — it is
-    exactly the single-call prompt: question + draft answer + passages.
+def framing_context(answer: str, plan: str = "") -> str:
+    """The writer-side framing context: the plan when there is one (PM
+    call, 2026-09-10), otherwise — planner failed — the draft answer's
+    single-call framing: question + draft answer + passages.
     """
-    passages = "\n".join(
-        f"[{i}] ({source['reference']}) {source['passage']}"
-        for i, source in enumerate(sources)
-    )
     if plan:
-        context = (
+        return (
             "A planning pass over the same passages produced this plan — "
             "follow its structure and paragraph outline; its suggested "
             "sentences are pointers only, you still copy each quoted "
             f"sentence VERBATIM from the passages below:\n{plan}"
         )
-    else:
-        context = (
-            "A faster model's draft answer (context for framing and coverage "
-            "only — its claims about the Book are unverified; ground every Book "
-            f"claim in the passages below):\n{answer}"
-        )
+    return (
+        "A faster model's draft answer (context for framing and coverage "
+        "only — its claims about the Book are unverified; ground every Book "
+        f"claim in the passages below):\n{answer}"
+    )
+
+
+def build_quoted_prompt(question: str, answer: str, sources, plan: str = "") -> str:
+    """Build the writer prompt."""
+    passages = "\n".join(
+        f"[{i}] ({source['reference']}) {source['passage']}"
+        for i, source in enumerate(sources)
+    )
+    context = framing_context(answer, plan)
     return (
         "You are writing a Farsi Quoted answer for a Q&A sheet over one "
         "Book.\n\n"
@@ -358,6 +442,47 @@ def build_planner_prompt(question: str, sources) -> str:
     )
 
 
+def build_continuation_prompt(
+    question: str, answer: str, sources, plan: str, blocks: list
+) -> str:
+    """The resume brief after a length-cut write: the same question,
+    framing, and passages as the writer prompt, plus the blocks that
+    completed before the cut; the writer writes only what follows them.
+    """
+    passages = "\n".join(
+        f"[{i}] ({source['reference']}) {source['passage']}"
+        for i, source in enumerate(sources)
+    )
+    written = json.dumps({"blocks": blocks}, ensure_ascii=False)
+    return (
+        "You are continuing a Farsi Quoted answer for a Q&A sheet over one "
+        "Book.\n\n"
+        f"Question: {question}\n\n"
+        f"{framing_context(answer, plan)}\n\n"
+        "Passages (numbered, from the Book's retrieved Evidence; text-layer "
+        "noise like \\b backspaces may appear between words):\n"
+        f"{passages}\n\n"
+        "A previous write of this document was cut by a reply length "
+        "limit. The blocks that completed before the cut (JSON):\n"
+        f"{written}\n\n"
+        "Task: continue that SAME document. Write ONLY the blocks that "
+        "come AFTER the last block above — the remaining headings and "
+        "interleaved paragraphs, in the same JSON object shape. Every "
+        "paragraph follows the same rule as before: your own Farsi text "
+        "with quoted sentences embedded inside it, each quoted sentence a "
+        "complete Farsi sentence copied VERBATIM from exactly ONE passage "
+        "(ignore the \\b noise; write proper Farsi). Do not paraphrase, do "
+        "not merge. Never repeat a block that is already written; never "
+        "invent or paraphrase a quote. If nothing is missing, reply with "
+        'an empty list: {"blocks": []}.\n\n'
+        "Reply with ONLY a JSON object, no prose, no code fence:\n"
+        '{"blocks": [{"type": "heading", "text": "..."}, '
+        '{"type": "paragraph", "parts": [{"text": "..."}, '
+        '{"quote": "<verbatim sentence>", "source": <passage index>}, '
+        '{"text": "..."}]}]}'
+    )
+
+
 def _composer_reply(message: str, thinking_type: str):
     """One POST to the composer endpoint; raises on any failure.
 
@@ -413,25 +538,60 @@ def plan_quoted_document(question: str, sources) -> str:
     return content.strip() if isinstance(content, str) else ""
 
 
+def continue_quoted_document(question, answer, sources, plan, blocks):
+    """One continuation call past a length-cut document; (blocks, truncated).
+
+    The writer reads the blocks that survived the cut and writes only
+    what follows them, same shape and rules. A continuation that is cut
+    again is salvaged the same way and truncated comes back True so the
+    sheet can say the document ended at the ceiling. On any failure the
+    prefix alone rides on — still cut, never empty.
+    """
+    try:
+        reply = _composer_reply(
+            build_continuation_prompt(question, answer, sources, plan, blocks),
+            "disabled",
+        )
+        choice = reply["choices"][0]
+        content = choice["message"]["content"]
+    except (KeyError, ValueError, OSError):
+        return blocks, True
+    extra = parse_quoted_reply(content)
+    return blocks + extra, choice.get("finish_reason") == "length"
+
+
 def compose_quoted_answer(question: str, answer: str, sources):
-    """Write the Quoted answer blocks; [] on writer failure or when the
-    document misses the swap threshold (AC-4).
+    """Write the Quoted answer blocks; ([], False) on writer failure or
+    when the document misses the swap threshold (AC-4).
 
     Two sequential glm-5.3-flash calls since 2026-09-10 (PM call): a
     reasoning planner first, then the non-reasoning writer. The planner
     is best-effort — on any planner failure the writer runs without a
     plan (the single-call shape), so the sheet is never left empty.
     Each call gets its own COMPOSER_TIMEOUT.
+
+    Returns (blocks, truncated). A reply stopped by the output ceiling
+    (finish_reason "length") dies mid-JSON — the live 2026-09-10 run
+    ended unfinished at its final section — so the complete block prefix
+    is salvaged and ONE continuation call writes the rest; truncated is
+    True only when even the continuation came back cut.
     """
     plan = plan_quoted_document(question, sources)
     try:
         reply = _composer_reply(
             build_quoted_prompt(question, answer, sources, plan), "disabled"
         )
-        content = reply["choices"][0]["message"]["content"]
-        return guard_blocks(parse_quoted_reply(content), sources)
+        choice = reply["choices"][0]
+        content = choice["message"]["content"]
     except (KeyError, ValueError, OSError):
-        return []
+        return [], False
+    blocks = parse_quoted_reply(content)
+    if choice.get("finish_reason") != "length":
+        return guard_blocks(blocks, sources), False
+    blocks, truncated = continue_quoted_document(
+        question, answer, sources, plan, blocks
+    )
+    return guard_blocks(blocks, sources), truncated
 
 
 class SessionHandler(SimpleHTTPRequestHandler):
@@ -441,8 +601,27 @@ class SessionHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stderr.write("%s - %s\n" % (self.address_string(), format % args))
 
+    def end_headers(self) -> None:
+        # The sheet is an evolving single page: every load must revalidate,
+        # never render a stale cached copy after a deploy (a plain refresh
+        # kept showing the pre-tab page after the 2026-09-11 switchover).
+        self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     def do_GET(self):
-        if self.path.split("?", 1)[0] == "/health":
+        path = self.path.split("?", 1)[0]
+        if path == "/livez":
+            # Local liveness for the container healthcheck — the sheet's
+            # /health proxies to Cognee and would couple this container's
+            # health to another service's.
+            body = b"ok"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path == "/health":
             self._proxy("GET")
             return
         super().do_GET()
@@ -499,15 +678,21 @@ class SessionHandler(SimpleHTTPRequestHandler):
         return phone
 
     def do_POST(self):
-        if self.path.split("?", 1)[0] == "/api/v1/recall":
+        path = self.path.split("?", 1)[0]
+        if path == "/api/v1/recall":
             if self._gate_phone() is None:
                 return
             self._proxy("POST")
             return
-        if self.path.split("?", 1)[0] == "/quoted-answer":
+        if path == "/quoted-answer":
             if self._quoted_phone() is None:
                 return
             self._quoted_answer()
+            return
+        if path == "/next-tier-recall":
+            if self._quoted_phone() is None:
+                return
+            self._next_tier_recall()
             return
         self._drain_request_body()
         self.send_error(404, "Not found")
@@ -536,36 +721,61 @@ class SessionHandler(SimpleHTTPRequestHandler):
         except (ValueError, KeyError, TypeError):
             self.send_error(400, "Bad request")
             return
-        blocks = compose_quoted_answer(question, answer, sources)
-        body = json.dumps({"blocks": blocks}, ensure_ascii=False).encode("utf-8")
+        blocks, truncated = compose_quoted_answer(question, answer, sources)
+        body = json.dumps(
+            {"blocks": blocks, "truncated": truncated}, ensure_ascii=False
+        ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def _proxy(self, method: str) -> None:
-        path = self.path.split("?", 1)[0]
-        sys.stderr.write("%s - proxy %s %s\n" % (self.address_string(), method, path))
-        sys.stderr.flush()
-        if path not in ALLOWED_PROXY:
-            self._drain_request_body()
-            self.send_error(404, "Not found")
-            return
+    def _next_tier_recall(self) -> None:
+        """Phase 3: the graph-retrieval answer — the Next-tier search —
+        relayed to the second Cognee service. The search shape is pinned
+        here, never chosen in the browser: GRAPH_COMPLETION_COT over the
+        Book set, references on, not streamed (the Session operator waits
+        for the JSON). Same chat as phase 1 — the gate only checks a chat
+        happened today and never counts."""
         length = int(self.headers.get("Content-Length", "0") or "0")
-        body = self.rfile.read(length) if length else None
-        headers = {}
-        content_type = self.headers.get("Content-Type")
-        if content_type:
-            headers["Content-Type"] = content_type
-        req = Request(
-            f"{COGNEE_URL}{path}",
-            data=body,
-            headers=headers,
-            method=method,
-        )
         try:
-            with urlopen(req, timeout=PROXY_TIMEOUT) as resp:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            query = payload["query"]
+            if not isinstance(query, str) or not query.strip():
+                raise ValueError("query is required")
+        except (ValueError, KeyError, TypeError):
+            # The body is already read above, so the plain JSON error is
+            # safe — _json_error would drain a second time and block.
+            body = json.dumps({"detail": "پرسش را بنویسید."}, ensure_ascii=False).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        body = json.dumps(
+            {
+                "searchType": NEXT_TIER_SEARCH_TYPE,
+                "query": query.strip(),
+                "datasets": list(BOOK_DATASETS),
+                "includeReferences": True,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        request = Request(
+            f"{NEXT_TIER_URL}/api/v1/recall",
+            data=body,
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            method="POST",
+        )
+        self._relay(request, "next-tier", timeout=NEXT_TIER_TIMEOUT)
+
+    def _relay(self, request: Request, service: str, timeout: int = PROXY_TIMEOUT) -> None:
+        """Relay one upstream reply — JSON as-is, text/event-stream
+        unbuffered — with the unreachable contract (504 + detail)."""
+        try:
+            with urlopen(request, timeout=timeout) as resp:
                 content_type = resp.headers.get("Content-Type", "application/json")
                 if "text/event-stream" in content_type:
                     # Close-delimited relay (HTTP/1.0): no Content-Length, lines
@@ -601,7 +811,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
         except (URLError, TimeoutError, OSError) as exc:
             reason = getattr(exc, "reason", exc)
             message = json.dumps(
-                {"detail": f"cognee unreachable: {reason}"},
+                {"detail": f"{service} unreachable: {reason}"},
                 ensure_ascii=False,
             ).encode("utf-8")
             self.send_response(504)
@@ -610,11 +820,34 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(message)
 
+    def _proxy(self, method: str) -> None:
+        path = self.path.split("?", 1)[0]
+        sys.stderr.write("%s - proxy %s %s\n" % (self.address_string(), method, path))
+        sys.stderr.flush()
+        if path not in ALLOWED_PROXY:
+            self._drain_request_body()
+            self.send_error(404, "Not found")
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        body = self.rfile.read(length) if length else None
+        headers = {}
+        content_type = self.headers.get("Content-Type")
+        if content_type:
+            headers["Content-Type"] = content_type
+        request = Request(
+            f"{COGNEE_URL}{path}",
+            data=body,
+            headers=headers,
+            method=method,
+        )
+        self._relay(request, "cognee")
+
 
 def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), SessionHandler)
     print(f"Session sheet http://{HOST}:{PORT}", flush=True)
     print(f"Proxying /api/v1/recall and /health to {COGNEE_URL}", flush=True)
+    print(f"Relaying /next-tier-recall to {NEXT_TIER_URL}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -17,15 +17,15 @@ The person who sits with the product to complete a Session. For the Phase 2 exit
 _Avoid_: User
 
 **Session**:
-One sitting of Farsi Q&A against the Book set that can meet the Phase 2 exit checks: answers with Citations, a Next-tier search, and a first answer that does not feel too slow.
+One sitting of Farsi Q&A against the Book set that can meet the Phase 2 exit checks: answers with Citations, a Deep dive, and a first answer that does not feel too slow.
 _Avoid_: Chat, demo (showing the product at an expo is not automatically a Session)
 
-**Next-tier search**:
-A second search in the same Session, started by the Session operator on the same question, that produces a deeper analysis. It may feel slow. It is not a longer first answer, and it is not a new question.
-_Avoid_: deep search, second pass, follow-up (a new question is a new first answer), COT (the Cognee type is not the domain name)
+**Deep dive**:
+A second study in the same Session, started by the Session operator on the same question, that plans its own searches of the Book set and returns a long, headed study — multiple pages, every paragraph a Quoted paragraph. It may feel slow. It is not a longer first answer, and it is not a new question.
+_Avoid_: deep search, second pass, follow-up (a new question is a new first answer), COT (the Cognee type is not the domain name), Next-tier search (the superseded name)
 
 **Book set**:
-The named, fixed collection of Books the product answers from. For Phase 2 this is one Book: طرح کلی اندیشۀ اسلامی در قرآن.
+The named, fixed collection of Books the product answers from. This is two Books: طرح کلی اندیشۀ اسلامی در قرآن and انسان ۲۵۰ ساله.
 _Avoid_: corpus, library, knowledge base, documents, "some books"
 
 **Book**:
@@ -36,9 +36,13 @@ _Avoid_: file, PDF, document
 The Book identity plus the exact pages of a quoted passage, shown with an answer. A passage whose pages are unknown cites the Book alone, never an invented page.
 _Avoid_: footnote, Evidence (Cognee's block name is not the domain name)
 
+**Quote selection**:
+The first answer of an ask: a list of verbatim Book sentences that together answer the question, each shown with its own Citation, with no AI-written text.
+_Avoid_: evidence list (the Cognee block name is not the domain name), quote-only answer, fast answer, snippet list
+
 **Quoted answer**:
-A first answer rendered as paragraphs that each interleave Filler text with embedded verbatim Book sentences and end with the pages they cite.
-_Avoid_: citation paragraph (the superseded paragraph-only design), chat
+The woven answer of an ask: paragraphs that each interleave Filler text with embedded verbatim Book sentences and end with the pages they cite. It follows the Quote selection and precedes the Deep dive.
+_Avoid_: citation paragraph (the superseded paragraph-only design), chat, first answer (the Quote selection is the first answer)
 
 **Quoted paragraph**:
 A paragraph of a Quoted answer: Filler text with verbatim Book sentences embedded inside it, each sentence highlighted and hoverable for its own Citation (the passage's first page), the paragraph ending with the page range of every passage it quoted. May weave several passages.

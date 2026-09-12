@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>نشست · طرح کلی اندیشۀ اسلامی در قرآن</title>
+    <title>نشست · طرح کلی اندیشۀ اسلامی در قرآن · انسان ۲۵۰ ساله</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -172,6 +172,105 @@
         font-size: 0.85rem;
       }
 
+      /* The three answering phases, one switchable section each (PM
+         brief, 2026-09-11): the tab strip separates them; the running
+         phase's dot pulses and its timer ticks, both frozen at settle. */
+      .phase-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+        margin-top: 1.75rem;
+        border-bottom: 2px solid var(--rule);
+      }
+
+      .phase-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        background: transparent;
+        color: var(--mute);
+        border: 0;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -2px;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.88rem;
+      }
+
+      .phase-tab:hover:not(:disabled),
+      .phase-tab:focus-visible {
+        background: rgba(0, 0, 0, 0.05);
+      }
+
+      .phase-tab[aria-selected="true"] {
+        color: var(--ink);
+        border-bottom-color: var(--clay);
+      }
+
+      .phase-tab:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+
+      .phase-dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
+        background: var(--rule);
+        flex: none;
+      }
+
+      .phase-tab[data-state="running"] .phase-dot {
+        background: var(--clay);
+        animation: composer-pulse 1.2s ease-in-out infinite;
+      }
+
+      .phase-tab[data-state="done"] .phase-dot {
+        background: var(--ok);
+      }
+
+      .phase-tab[data-state="failed"] .phase-dot {
+        background: var(--bad);
+      }
+
+      .phase-tab[data-state="skipped"] .phase-dot {
+        background: var(--mute);
+      }
+
+      .phase-timer {
+        color: var(--mute);
+        font-size: 0.75rem;
+        font-weight: 500;
+        direction: ltr;
+        unicode-bidi: isolate;
+      }
+
+      .phase-tab[data-state="running"] .phase-timer {
+        color: var(--clay);
+      }
+
+      .phase-now {
+        margin: 0.7rem 0 0;
+        color: var(--clay);
+        font-size: 0.85rem;
+      }
+
+      .phase-now::before {
+        content: "●";
+        margin-left: 0.45rem;
+        animation: composer-pulse 1.2s ease-in-out infinite;
+      }
+
+      .phase-panel {
+        padding-top: 0.9rem;
+      }
+
+      .composer-truncated {
+        margin: 0 0 0.85rem;
+        color: var(--clay);
+        font-size: 0.8rem;
+        white-space: pre-wrap;
+      }
+
       section.out {
         margin-top: 1.75rem;
       }
@@ -299,8 +398,8 @@
   <body>
     <main>
       <header>
-        <p class="kicker">نشست · پاسخ اول</p>
-        <h1>طرح کلی اندیشۀ اسلامی در قرآن</h1>
+        <p class="kicker">نشست · سه مرحلهٔ پاسخ</p>
+        <h1>طرح کلی اندیشۀ اسلامی در قرآن · انسان ۲۵۰ ساله</h1>
         <p class="status" id="status" data-state="unknown">در حال بررسی سرویس…</p>
       </header>
 
@@ -332,13 +431,67 @@
       </form>
 
       <section class="out" aria-live="polite">
-        <h2>پاسخ</h2>
-        <div id="answer" class="answer">
-          <p class="empty">هنوز پرسشی نپرسیده‌اید.</p>
+        <div class="phase-tabs" role="tablist" aria-label="مراحل پاسخ">
+          <button
+            type="button"
+            class="phase-tab"
+            id="tab-1"
+            role="tab"
+            aria-selected="true"
+            aria-controls="panel-1"
+            data-state="idle"
+          >
+            <span class="phase-dot" aria-hidden="true"></span>
+            <span class="phase-name">پاسخ اول</span>
+          </button>
+          <button
+            type="button"
+            class="phase-tab"
+            id="tab-2"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-2"
+            data-state="idle"
+            disabled
+          >
+            <span class="phase-dot" aria-hidden="true"></span>
+            <span class="phase-name">پاسخ استنادی</span>
+            <span class="phase-timer" id="timer-2" hidden></span>
+          </button>
+          <button
+            type="button"
+            class="phase-tab"
+            id="tab-3"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-3"
+            data-state="idle"
+            disabled
+          >
+            <span class="phase-dot" aria-hidden="true"></span>
+            <span class="phase-name">جست‌وجوی سطح بعدی</span>
+            <span class="phase-timer" id="timer-3" hidden></span>
+          </button>
         </div>
-        <h2 id="citations-heading">استناد</h2>
-        <div id="citations">
-          <p class="empty">پس از پاسخ، استناد اینجا می‌آید: هویت کتاب و عبارت نقل‌شده.</p>
+        <p class="phase-now" id="phase-now" hidden></p>
+
+        <div class="phase-panel" id="panel-1" role="tabpanel" aria-labelledby="tab-1">
+          <div id="answer" class="answer">
+            <p class="empty">هنوز پرسشی نپرسیده‌اید.</p>
+          </div>
+          <h2 id="citations-heading">استناد</h2>
+          <div id="citations">
+            <p class="empty">پس از پاسخ، استناد اینجا می‌آید: هویت کتاب و عبارت نقل‌شده.</p>
+          </div>
+        </div>
+
+        <div class="phase-panel" id="panel-2" role="tabpanel" aria-labelledby="tab-2" hidden>
+          <div id="quoted-doc" class="answer"></div>
+        </div>
+
+        <div class="phase-panel" id="panel-3" role="tabpanel" aria-labelledby="tab-3" hidden>
+          <div id="next-tier-answer" class="answer"></div>
+          <div id="next-tier-citations"></div>
         </div>
       </section>
     </main>
@@ -354,9 +507,87 @@
       const citationsEl = document.getElementById("citations");
       const citationsHeadingEl = document.getElementById("citations-heading");
       const statusEl = document.getElementById("status");
+      const quotedDocEl = document.getElementById("quoted-doc");
+      const nextTierEl = document.getElementById("next-tier-answer");
+      const nextTierCitesEl = document.getElementById("next-tier-citations");
+      const phaseNowEl = document.getElementById("phase-now");
       // Bumped on every ask so a slow composer reply for an older question
       // is dropped instead of swapping the newer answer or its citations.
       let citationRun = 0;
+      // In-flight phase 2 / phase 3 fetches; aborted when a new ask starts.
+      let quotedAbort = null;
+      let nextTierAbort = null;
+
+      // The three answering phases (PM brief, 2026-09-11): one switchable
+      // section each, a pulsing dot on the phase being generated, a
+      // "now generating" line that stays truthful even from another tab,
+      // and a per-phase timer for phases 2 and 3 that freezes at settle.
+      const PHASE_NAMES = {
+        1: "پاسخ اول",
+        2: "پاسخ استنادی",
+        3: "جست‌وجوی سطح بعدی",
+      };
+      const phaseEls = {
+        1: { tab: document.getElementById("tab-1"), timer: null, interval: null, startedAt: null },
+        2: { tab: document.getElementById("tab-2"), timer: document.getElementById("timer-2"), interval: null, startedAt: null },
+        3: { tab: document.getElementById("tab-3"), timer: document.getElementById("timer-3"), interval: null, startedAt: null },
+      };
+
+      function selectPhase(n) {
+        for (const p of [1, 2, 3]) {
+          phaseEls[p].tab.setAttribute("aria-selected", p === n ? "true" : "false");
+          document.getElementById(`panel-${p}`).hidden = p !== n;
+        }
+      }
+      for (const n of [1, 2, 3]) {
+        phaseEls[n].tab.addEventListener("click", () => selectPhase(n));
+      }
+
+      // idle = not started yet (tab disabled); running = being generated;
+      // done / failed / skipped = settled. Only settled tabs stay clickable.
+      function setPhaseState(n, state) {
+        phaseEls[n].tab.dataset.state = state;
+        phaseEls[n].tab.disabled = state === "idle";
+      }
+
+      function clockText(ms) {
+        const total = Math.max(0, Math.round(ms / 1000));
+        return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+      }
+
+      function startPhaseTimer(n) {
+        const phase = phaseEls[n];
+        if (!phase.timer) return;
+        stopPhaseTimer(n);
+        phase.startedAt = Date.now();
+        phase.timer.hidden = false;
+        const tickPhase = () => {
+          phase.timer.textContent = clockText(Date.now() - phase.startedAt);
+        };
+        tickPhase();
+        phase.interval = setInterval(tickPhase, 250);
+      }
+
+      function stopPhaseTimer(n) {
+        const phase = phaseEls[n];
+        if (phase.interval) {
+          clearInterval(phase.interval);
+          phase.interval = null;
+        }
+        if (phase.startedAt && phase.timer) {
+          // The frozen chip IS the completion time: how long the phase took.
+          phase.timer.textContent = clockText(Date.now() - phase.startedAt);
+        }
+      }
+
+      function setRunningPhase(n) {
+        if (n === null) {
+          phaseNowEl.hidden = true;
+          return;
+        }
+        phaseNowEl.hidden = false;
+        phaseNowEl.textContent = `در حال تولید: ${PHASE_NAMES[n]}…`;
+      }
 
       // The phone gates the sheet: each number gets five chats a day,
       // counted server-side. It rides in a header, remembered between
@@ -482,9 +713,14 @@
             span.className = "cite-sent";
             span.tabIndex = 0;
             span.textContent = part.quote;
-            span.dataset.ref = part.first_page_label
-              ? `طرح کلی اندیشۀ اسلامی در قرآن — ${part.first_page_label}`
-              : "طرح کلی اندیشۀ اسلامی در قرآن";
+            // Book identity comes per quote from the server (resolved from
+            // the Evidence locator's document name) — with two Books the
+            // attribution can no longer be implied.
+            span.dataset.ref = part.book_label
+              ? part.first_page_label
+                ? `${part.book_label} — ${part.first_page_label}`
+                : part.book_label
+              : part.first_page_label || "کتاب";
             appendPart(span);
             if (part.pages_label && !labels.includes(part.pages_label)) {
               labels.push(part.pages_label);
@@ -500,25 +736,58 @@
         return para;
       }
 
-      // The composer's Quoted answer replaces the streamed answer only on
-      // success: non-empty blocks mean the server's swap threshold passed
+      // Phase 2 runs in its own section: the streamed answer stays put in
+      // phase 1's, and the guarded document lands in phase 2's only on
+      // success — non-empty blocks mean the server's swap threshold passed
       // (at least two quoting paragraphs, or one plus a heading). On
-      // failure, timeout, or an empty document the streamed answer and the
-      // Evidence citations stay as rendered (AC-4). The stream path is
+      // failure, timeout, or an empty document the section says so and
+      // phase 1's answer remains the answer (AC-4). The stream path is
       // untouched — this runs after the streamed answer has rendered (AC-5).
+      function failQuotedPhase() {
+        setPhaseState(2, "failed");
+        stopPhaseTimer(2);
+        setRunningPhase(null);
+        quotedDocEl.replaceChildren();
+        const note = document.createElement("p");
+        note.className = "empty";
+        note.textContent = "پاسخ استنادی آماده نشد؛ پاسخ اول در بخش خودش معتبر می‌ماند.";
+        quotedDocEl.append(note);
+      }
+
+      function skipQuotedPhase() {
+        setPhaseState(2, "skipped");
+        quotedDocEl.replaceChildren();
+        const note = document.createElement("p");
+        note.className = "empty";
+        note.textContent = "بدون استناد، پاسخ استنادی ساخته نمی‌شود؛ پاسخ اول معتبر می‌ماند.";
+        quotedDocEl.append(note);
+      }
+
+      function truncatedNote() {
+        const note = document.createElement("p");
+        note.className = "composer-truncated";
+        note.textContent = "سند به سقف طول مدل رسید و ادامه‌نویسی هم بریده شد؛ ممکن است بندهای پایانی ناتمام باشند.";
+        return note;
+      }
+
       async function renderQuotedAnswer(question, answer, citations, onSettled) {
         const run = citationRun;
         const sources = evidenceSources(citations);
         if (!sources.length) {
+          skipQuotedPhase();
           onSettled();
           return;
         }
-        // Phase 2 is visible while it runs: a pulsing status under the
-        // streamed answer, gone with the swap (or with any fallback).
+        setPhaseState(2, "running");
+        startPhaseTimer(2);
+        setRunningPhase(2);
+        quotedDocEl.replaceChildren();
+        // Phase 2 is visible while it runs: a pulsing status in its own
+        // section, gone with the document (or with any fallback).
         const status = document.createElement("p");
         status.className = "composer-status";
         status.textContent = "در حال نوشتن پاسخ استنادی…";
-        answerEl.append(status);
+        quotedDocEl.append(status);
         try {
           const res = await fetch("/quoted-answer", {
             method: "POST",
@@ -527,25 +796,32 @@
               ...phoneHeader(),
             },
             body: JSON.stringify({ question, answer, sources }),
+            signal: quotedAbort.signal,
           });
+          if (run !== citationRun) {
+            return;
+          }
           if (!res.ok) {
-            status.remove();
+            failQuotedPhase();
             onSettled();
             return;
           }
           const payload = await res.json();
           if (run !== citationRun) {
-            status.remove();
-            onSettled();
             return;
           }
           const blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
           if (!blocks.length) {
-            status.remove();
+            failQuotedPhase();
             onSettled();
             return;
           }
           const doc = document.createDocumentFragment();
+          // A document the continuation could not finish says so itself,
+          // above its paragraphs.
+          if (payload.truncated) {
+            doc.append(truncatedNote());
+          }
           for (const block of blocks) {
             if (block.type === "heading") {
               const heading = document.createElement("h3");
@@ -556,16 +832,20 @@
               doc.append(paragraphNode(block));
             }
           }
-          answerEl.replaceChildren(doc);
-          // The answer itself carries the citations now, so the whole
-          // Evidence section — heading and list — goes away (PM call,
-          // 2026-09-10); a new question brings it back.
-          citationsHeadingEl.hidden = true;
-          citationsEl.hidden = true;
+          quotedDocEl.replaceChildren(doc);
+          setPhaseState(2, "done");
+          stopPhaseTimer(2);
+          setRunningPhase(null);
+          // Bring the fresh document forward: each phase shows itself
+          // when it lands.
+          selectPhase(2);
           onSettled();
         } catch {
-          // Composer unreachable: keep the streamed answer and Evidence citations.
-          status.remove();
+          if (run !== citationRun) {
+            return;
+          }
+          // Composer unreachable: phase 1's answer and Evidence citations stay.
+          failQuotedPhase();
           onSettled();
         }
       }
@@ -637,18 +917,35 @@
           const seconds = Math.round((Date.now() - started) / 1000);
           elapsedEl.textContent = `${seconds} ثانیه`;
         }, 250);
-        // The clock times the WHOLE pipeline — stream plus the composer
-        // phase — and stops only when the final rendering settles (PM
-        // call, 2026-09-10).
+        // The clock times the WHOLE pipeline — stream, the composer phase,
+        // and the graph search — and stops only when the last phase
+        // settles (PM call, 2026-09-10; phase 3 added 2026-09-11).
         const stopTimer = () => {
           clearInterval(tick);
           const seconds = Math.round((Date.now() - started) / 1000);
           elapsedEl.textContent = `${seconds} ثانیه`;
         };
+
+        // A new ask owns the sheet: abort any in-flight phase 2 or 3 of
+        // the previous one, then reset all three sections to idle.
+        if (quotedAbort) quotedAbort.abort();
+        if (nextTierAbort) nextTierAbort.abort();
+        quotedAbort = new AbortController();
+        nextTierAbort = new AbortController();
+        for (const n of [1, 2, 3]) {
+          stopPhaseTimer(n);
+          phaseEls[n].startedAt = null;
+          if (phaseEls[n].timer) phaseEls[n].timer.hidden = true;
+          setPhaseState(n, "idle");
+        }
+        setPhaseState(1, "running");
+        setRunningPhase(1);
+        selectPhase(1);
+        quotedDocEl.replaceChildren();
+        nextTierEl.replaceChildren();
+        nextTierCitesEl.replaceChildren();
         setText(answerEl, "در حال پرسیدن…", "empty");
         citationRun += 1;
-        citationsHeadingEl.hidden = false;
-        citationsEl.hidden = false;
         citationsEl.replaceChildren();
         const waiting = document.createElement("p");
         waiting.className = "empty";
@@ -658,6 +955,82 @@
         const textOf = (payload) =>
           Array.isArray(payload) ? payload[0]?.text || "" : payload.text || "";
 
+        // Phase 3: the graph-retrieval answer (the Next-tier search) on
+        // the same question. The search shape is pinned on the server —
+        // this asks only for the query. Slow is allowed here; its timer
+        // keeps the wait honest and its completion ends the pipeline.
+        const startNextTier = () => {
+          const run = citationRun;
+          setPhaseState(3, "running");
+          startPhaseTimer(3);
+          setRunningPhase(3);
+          nextTierEl.replaceChildren();
+          nextTierCitesEl.replaceChildren();
+          const status = document.createElement("p");
+          status.className = "composer-status";
+          status.textContent = "در حال جست‌وجوی سطح بعدی…";
+          nextTierEl.append(status);
+          const failNextTier = (message) => {
+            setPhaseState(3, "failed");
+            stopPhaseTimer(3);
+            setRunningPhase(null);
+            nextTierEl.className = "answer";
+            setText(nextTierEl, message, "error");
+            nextTierCitesEl.replaceChildren();
+            stopTimer();
+          };
+          fetch("/next-tier-recall", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+              ...phoneHeader(),
+            },
+            body: JSON.stringify({ query }),
+            signal: nextTierAbort.signal,
+          })
+            .then(async (res) => {
+              if (run !== citationRun) return;
+              const payload = await res.json().catch(() => ({}));
+              if (run !== citationRun) return;
+              if (!res.ok) {
+                const detail = Array.isArray(payload.detail)
+                  ? payload.detail.join(" ")
+                  : payload.detail;
+                failNextTier(detail || "پاسخ نیامد.");
+                return;
+              }
+              const text = textOf(payload);
+              if (!text) {
+                failNextTier("پاسخ خالی برگشت.");
+                return;
+              }
+              const { answer: tierAnswer, citations: tierCites } = splitCitation(text);
+              nextTierEl.className = "answer";
+              renderMarkdown(nextTierEl, tierAnswer || text);
+              nextTierCitesEl.replaceChildren();
+              if (tierCites.length) {
+                const citesHeading = document.createElement("h2");
+                citesHeading.textContent = "استناد";
+                nextTierCitesEl.append(citesHeading);
+                for (const item of tierCites) {
+                  const p = document.createElement("p");
+                  p.className = "cite";
+                  p.textContent = item;
+                  nextTierCitesEl.append(p);
+                }
+              }
+              setPhaseState(3, "done");
+              stopPhaseTimer(3);
+              setRunningPhase(null);
+              selectPhase(3);
+              stopTimer();
+            })
+            .catch(() => {
+              if (run !== citationRun) return;
+              failNextTier("ارتباط با سرویس جست‌وجوی سطح بعدی قطع شد.");
+            });
+        };
+
         const renderFinal = (text) => {
           if (!text) {
             throw new Error("پاسخ خالی برگشت.");
@@ -666,13 +1039,17 @@
           answerEl.className = "answer";
           renderMarkdown(answerEl, answer || text);
           markFirstToken();
+          setPhaseState(1, "done");
           citationsEl.replaceChildren();
           if (!citations.length) {
             const missing = document.createElement("p");
             missing.className = "error";
             missing.textContent = "استناد در پاسخ نبود.";
             citationsEl.append(missing);
-            stopTimer();
+            // No Evidence pool means no Quoted answer, but the graph
+            // search never needed one — phase 3 still runs.
+            skipQuotedPhase();
+            startNextTier();
           } else {
             for (const item of citations) {
               const p = document.createElement("p");
@@ -680,7 +1057,7 @@
               p.textContent = item;
               citationsEl.append(p);
             }
-            renderQuotedAnswer(query, answer, citations, stopTimer);
+            renderQuotedAnswer(query, answer, citations, startNextTier);
           }
         };
 
@@ -694,7 +1071,7 @@
             body: JSON.stringify({
               searchType: "HYBRID_COMPLETION",
               query,
-              datasets: ["tarhe-kolli"],
+              datasets: ["tarhe-kolli", "70143-336"],
               includeReferences: true,
               stream: true,
             }),
@@ -749,6 +1126,8 @@
               : String(err.message || err),
             "error"
           );
+          setPhaseState(1, "failed");
+          setRunningPhase(null);
           citationsEl.replaceChildren();
           const missing = document.createElement("p");
           missing.className = "empty";

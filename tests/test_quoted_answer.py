@@ -109,6 +109,19 @@ def test_pages_label_from_the_evidence_locator():
     assert serve.first_page_label(SOURCES[1]["reference"]) == ""
 
 
+def test_book_label_resolves_the_dataset_name_to_its_farsi_title():
+    # With two Books in the set, the tooltip's Book identity is resolved
+    # from the Evidence locator's document name — never implied.
+    assert (
+        serve.book_label("chunk 101 of document tarhe-kolli (pages 740-745)")
+        == "طرح کلی اندیشۀ اسلامی در قرآن"
+    )
+    assert serve.book_label("chunk 3 of document 70143-336 (pages 12-13)") == "انسان ۲۵۰ ساله"
+    # An unmapped Book passes through raw; no document name yields ''.
+    assert serve.book_label("chunk 3 of document some-new-book") == "some-new-book"
+    assert serve.book_label("chunk 3") == ""
+
+
 def test_parse_quoted_reply_accepts_plain_and_fenced_json():
     payload = {"blocks": [{"type": "paragraph", "parts": [{"text": "مقدمه"}]}]}
     assert serve.parse_quoted_reply(json.dumps(payload)) == payload["blocks"]
@@ -120,6 +133,19 @@ def test_parse_quoted_reply_rejects_malformed_content():
     assert serve.parse_quoted_reply("here is the document you asked for") == []
     assert serve.parse_quoted_reply('{"blocks": "not a list"}') == []
     assert serve.parse_quoted_reply("") == []
+
+
+def test_parse_quoted_reply_salvages_the_prefix_of_a_truncated_document():
+    # A reply stopped by the output ceiling dies mid-JSON with no closing
+    # braces; the complete block prefix must survive — a long document
+    # loses only its tail (live run 2026-09-10: the Quoted answer ended
+    # unfinished at its final section).
+    blocks = [
+        {"type": "heading", "text": "عنوان"},
+        {"type": "paragraph", "parts": [{"text": "متن"}, {"quote": "سخن در این است؛", "source": 0}]},
+    ]
+    cut = json.dumps({"blocks": blocks}, ensure_ascii=False)[:-2] + ', {"type": "par'
+    assert serve.parse_quoted_reply(cut) == blocks
 
 
 def test_guard_blocks_keeps_embedded_quotes_and_drops_one_sentence():
@@ -147,8 +173,8 @@ def test_guard_blocks_keeps_embedded_quotes_and_drops_one_sentence():
             "type": "paragraph",
             "parts": [
                 {"text": "پیش از هر چیز باید معنای واژه را روشن کرد:"},
-                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740"},
-                {"quote": OTHER_PASSAGE, "source": 1, "pages_label": "", "first_page_label": ""},
+                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740", "book_label": "طرح کلی اندیشۀ اسلامی در قرآن"},
+                {"quote": OTHER_PASSAGE, "source": 1, "pages_label": "", "first_page_label": "", "book_label": "طرح کلی اندیشۀ اسلامی در قرآن"},
                 {"text": "بر این اساس، ادامه می‌دهیم."},
             ],
         },
@@ -181,7 +207,7 @@ def test_guard_blocks_drops_a_paragraph_whose_only_quote_fails_the_guard():
             "type": "paragraph",
             "parts": [
                 {"text": "مقدمه‌ای کوتاه."},
-                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740"},
+                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740", "book_label": "طرح کلی اندیشۀ اسلامی در قرآن"},
             ],
         },
         {"type": "heading", "text": "عنوان"},
@@ -244,7 +270,7 @@ def test_compose_returns_empty_list_when_the_composer_is_unreachable():
     original = serve.urlopen
     serve.urlopen = boom
     try:
-        assert serve.compose_quoted_answer("پرسش؟", "پاسخ", SOURCES) == []
+        assert serve.compose_quoted_answer("پرسش؟", "پاسخ", SOURCES) == ([], False)
     finally:
         serve.urlopen = original
 
@@ -273,14 +299,14 @@ WRITER_KEPT = [
         "type": "paragraph",
         "parts": [
             {"text": "پیش از هر چیز باید معنای واژه را روشن کرد:"},
-            {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740"},
+            {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740", "book_label": "طرح کلی اندیشۀ اسلامی در قرآن"},
         ],
     },
     {
         "type": "paragraph",
         "parts": [
             {"text": "و در قطعه‌ای دیگر می‌خوانیم:"},
-            {"quote": OTHER_PASSAGE, "source": 1, "pages_label": "", "first_page_label": ""},
+            {"quote": OTHER_PASSAGE, "source": 1, "pages_label": "", "first_page_label": "", "book_label": "طرح کلی اندیشۀ اسلامی در قرآن"},
         ],
     },
 ]
@@ -312,7 +338,7 @@ def planner_reply(plan):
 
 def run_compose_with_replies(replies):
     """Run compose_quoted_answer against per-call canned replies; return
-    (kept blocks, captured payloads, captured timeouts)."""
+    (kept blocks, truncated flag, captured payloads, captured timeouts)."""
     captured = {"payloads": [], "timeouts": []}
     queue = [reply.encode("utf-8") if isinstance(reply, str) else reply for reply in replies]
 
@@ -328,11 +354,11 @@ def run_compose_with_replies(replies):
     serve.urlopen = fake_urlopen
     os.environ["LLM_API_KEY"] = "test-key"
     try:
-        kept = serve.compose_quoted_answer("پرسش؟", "پیش‌نویس پاسخ", SOURCES)
+        kept, truncated = serve.compose_quoted_answer("پرسش؟", "پیش‌نویس پاسخ", SOURCES)
     finally:
         serve.urlopen = original
         del os.environ["LLM_API_KEY"]
-    return kept, captured
+    return kept, truncated, captured
 
 
 def test_compose_plans_with_reasoning_then_writes_without_it():
@@ -340,7 +366,9 @@ def test_compose_plans_with_reasoning_then_writes_without_it():
     # reasons — thinking enabled — over structure and cross-passage
     # weaving, and the writer copies verbatim with thinking disabled at
     # the endpoint's default temperature; no call pins a temperature.
-    kept, captured = run_compose_with_replies([planner_reply(PLAN_MARKER), writer_reply()])
+    kept, truncated, captured = run_compose_with_replies(
+        [planner_reply(PLAN_MARKER), writer_reply()]
+    )
     assert [p["model"] for p in captured["payloads"]] == [
         "glm-5.3-flash",
         "glm-5.3-flash",
@@ -362,13 +390,16 @@ def test_compose_plans_with_reasoning_then_writes_without_it():
     assert serve.COMPOSER_MAX_TOKENS >= 8192
     # The plan rides into the writer's prompt as its framing context.
     assert PLAN_MARKER in captured["payloads"][1]["messages"][0]["content"]
+    assert truncated is False
     assert kept == WRITER_KEPT
 
 
 def test_compose_falls_back_when_the_planner_call_fails():
     # A planner failure must never empty the sheet (AC-4): the writer
     # still runs, on the no-plan prompt with the draft answer back in.
-    kept, captured = run_compose_with_replies([OSError("planner down"), writer_reply()])
+    kept, _, captured = run_compose_with_replies(
+        [OSError("planner down"), writer_reply()]
+    )
     # The planner was attempted (payload 0, thinking enabled) and the
     # writer still ran (payload 1, thinking disabled).
     assert len(captured["payloads"]) == 2
@@ -384,12 +415,102 @@ def test_compose_falls_back_when_the_planner_reply_is_empty():
     # Empty or non-string planner content is planner failure, not a
     # plan — the writer gets the no-plan prompt.
     for empty in ("", None):
-        kept, captured = run_compose_with_replies([planner_reply(empty), writer_reply()])
+        kept, _, captured = run_compose_with_replies(
+            [planner_reply(empty), writer_reply()]
+        )
         assert len(captured["payloads"]) == 2
         content = captured["payloads"][1]["messages"][0]["content"]
         assert "پیش‌نویس پاسخ" in content
         assert PLAN_MARKER not in content
         assert kept == WRITER_KEPT
+
+
+# A writer reply the output ceiling cut: finish_reason "length", the JSON
+# dead mid-array — no closing braces, exactly the live 2026-09-10 shape.
+def truncated_writer_reply():
+    prefix = json.dumps({"blocks": WRITER_BLOCKS[:2]}, ensure_ascii=False)
+    content = prefix[:-2] + ", "
+    return json.dumps(
+        {"choices": [{"message": {"content": content}, "finish_reason": "length"}]}
+    )
+
+
+def continuation_reply(finish_reason="stop"):
+    content = json.dumps({"blocks": WRITER_BLOCKS[2:]}, ensure_ascii=False)
+    return json.dumps(
+        {"choices": [{"message": {"content": content}, "finish_reason": finish_reason}]}
+    )
+
+
+def test_compose_continues_once_past_a_length_cut():
+    # A reply stopped by the output ceiling used to lose the whole
+    # document (the JSON never parsed); now the complete prefix is
+    # salvaged and ONE continuation call — thinking disabled, same
+    # ceiling — writes only the remaining blocks.
+    kept, truncated, captured = run_compose_with_replies(
+        [planner_reply(PLAN_MARKER), truncated_writer_reply(), continuation_reply()]
+    )
+    assert len(captured["payloads"]) == 3
+    assert captured["timeouts"] == [
+        serve.COMPOSER_TIMEOUT,
+        serve.COMPOSER_TIMEOUT,
+        serve.COMPOSER_TIMEOUT,
+    ]
+    assert captured["payloads"][2]["thinking"] == {"type": "disabled"}
+    assert captured["payloads"][2]["max_tokens"] == serve.COMPOSER_MAX_TOKENS
+    # The continuation reads the same framing (the plan) and the blocks
+    # that survived the cut.
+    continuation_brief = captured["payloads"][2]["messages"][0]["content"]
+    assert PLAN_MARKER in continuation_brief
+    assert "سخن در این است؛" in continuation_brief
+    assert "AFTER the last block" in continuation_brief
+    assert "copied VERBATIM" in continuation_brief
+    assert truncated is False
+    assert kept == WRITER_KEPT
+
+
+def test_compose_flags_truncation_when_the_continuation_is_cut_too():
+    # One continuation only — bounded latency. If it comes back cut as
+    # well, the guarded prefix still lands and the sheet is told the
+    # document ended at the ceiling.
+    kept, truncated, captured = run_compose_with_replies(
+        [
+            planner_reply(PLAN_MARKER),
+            truncated_writer_reply(),
+            continuation_reply("length"),
+        ]
+    )
+    assert len(captured["payloads"]) == 3
+    assert truncated is True
+    assert kept == WRITER_KEPT
+
+
+def test_compose_keeps_the_salvaged_prefix_when_the_continuation_fails():
+    # A continuation failure must never empty the sheet: the salvaged
+    # prefix rides on, flagged as cut.
+    kept, truncated, captured = run_compose_with_replies(
+        [
+            planner_reply(PLAN_MARKER),
+            truncated_writer_reply(),
+            OSError("continuation down"),
+        ]
+    )
+    assert len(captured["payloads"]) == 3
+    assert truncated is True
+    assert kept == WRITER_KEPT[:2]
+
+
+def test_continuation_prompt_carries_the_salvaged_blocks_and_the_rules():
+    prompt = serve.build_continuation_prompt(
+        "پرسش؟", "پیش‌نویس پاسخ", SOURCES, PLAN_MARKER, WRITER_BLOCKS[:1]
+    )
+    assert "پرسش؟" in prompt
+    assert PLAN_MARKER in prompt
+    assert "chunk 101 of document tarhe-kolli (pages 740-745)" in prompt
+    assert json.dumps({"blocks": WRITER_BLOCKS[:1]}, ensure_ascii=False) in prompt
+    assert "copied VERBATIM" in prompt
+    assert "Never repeat a block" in prompt
+    assert '"blocks"' in prompt
 
 
 def test_quoted_prompt_carries_question_answer_and_locators():
@@ -465,9 +586,11 @@ def test_session_ui_renders_the_quoted_answer():
 
 
 def test_session_ui_swaps_the_answer_only_when_blocks_arrive():
+    # The guarded document lands in phase 2's own section only when
+    # non-empty blocks arrive; phase 1's section is never touched.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
     assert "if (!blocks.length)" in html
-    assert "answerEl.replaceChildren(doc)" in html
+    assert "quotedDocEl.replaceChildren(doc)" in html
 
 
 def test_session_ui_drops_a_stale_document_when_a_new_question_starts():
@@ -486,6 +609,10 @@ def test_session_ui_sentences_are_focusable_with_farsi_tooltip():
     assert "tabIndex = 0" in html
     assert "attr(data-ref)" in html
     assert "طرح کلی اندیشۀ اسلامی در قرآن" in html
+    assert "انسان ۲۵۰ ساله" in html
+    # Book identity arrives per quote (resolved server-side from the
+    # Evidence locator's document name) — with two Books it is never implied.
+    assert "book_label" in html
     assert ".cite-sent:hover" in html
     assert ".cite-sent:focus-visible" in html
 
@@ -499,15 +626,19 @@ def test_session_ui_quotes_carry_a_resting_highlight():
     assert "border-bottom: 1px solid var(--clay)" in html
 
 
-def test_session_ui_hides_the_citations_section_after_the_swap():
-    # PM call, 2026-09-10: once the answer itself carries the citations,
-    # the whole Evidence section — heading and list — goes away; a new
-    # question brings it back for the fallback path.
+def test_session_ui_keeps_citations_in_the_first_phase_section():
+    # One section per phase now (PM brief, 2026-09-11): the Evidence list
+    # stays in phase 1's own tab — the swap no longer needs to hide it,
+    # because the sections themselves separate the phases. A new question
+    # resets the section as before.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
-    assert "استنادها در متن پاسخ‌اند" not in html
-    assert "citationsHeadingEl.hidden = true" in html
-    assert "citationsEl.hidden = true" in html
-    assert "citationsHeadingEl.hidden = false" in html
+    assert 'id="citations-heading"' in html
+    assert 'id="citations"' in html
+    assert 'id="panel-1"' in html
+    assert 'id="panel-2"' in html
+    # The Evidence markup lives inside phase 1's panel, before phase 2's.
+    assert html.index('id="citations"') < html.index('id="panel-2"')
+    assert "citationsEl.hidden" not in html
 
 
 def test_session_ui_renders_the_streamed_answer_as_markdown():
@@ -521,17 +652,43 @@ def test_session_ui_renders_the_streamed_answer_as_markdown():
 
 
 def test_session_ui_shows_the_composer_phase_and_times_the_whole_pipeline():
-    # PM call, 2026-09-10: a pulsing status line marks phase 2 (the
-    # composer rewriting the answer) while it runs, and the elapsed clock
-    # keeps counting until the swap or fallback settles — not just until
-    # the stream ends.
+    # PM call, 2026-09-10: a pulsing status line marks phase 2 while it
+    # runs. PM brief, 2026-09-11: each phase gets its own switchable
+    # section, phases 2 and 3 get a timer that freezes at their completion
+    # time, a line names the phase being generated, and the whole-pipeline
+    # elapsed clock still stops only at the final settle.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
     assert "در حال نوشتن پاسخ استنادی" in html
     assert 'className = "composer-status"' in html
     assert "composer-pulse" in html
     assert "const stopTimer" in html
     assert "clearInterval(tick)" in html
-    assert "renderQuotedAnswer(query, answer, citations, stopTimer)" in html
+    # Phase 2 settles into phase 3 — the pipeline clock stops there.
+    assert "renderQuotedAnswer(query, answer, citations, startNextTier)" in html
+    # Per-phase machinery: the running-phase line, and the timer chips on
+    # the phase 2 and 3 tabs.
+    assert 'id="phase-now"' in html
+    assert "در حال تولید:" in html
+    assert 'id="timer-2"' in html
+    assert 'id="timer-3"' in html
+    assert "startPhaseTimer(2)" in html
+    assert "startPhaseTimer(3)" in html
+    assert "stopPhaseTimer(2)" in html
+    assert "stopPhaseTimer(3)" in html
+
+
+def test_session_ui_runs_the_graph_search_as_phase_3():
+    # Phase 3 (the graph-retrieval answer) runs in its own section after
+    # phase 2 settles — success, fallback, or skip. The search shape is
+    # pinned on the server; the sheet asks only with the query, and never
+    # names the search type (locked in test_session_ui.py).
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert "/next-tier-recall" in html
+    assert 'id="panel-3"' in html
+    assert "در حال جست‌وجوی سطح بعدی" in html
+    assert "جست‌وجوی سطح بعدی" in html  # the tab's own name
+    assert "startNextTier" in html
+    assert "AbortController" in html  # a new ask aborts the previous phase 3
 
 
 def test_session_ui_keeps_the_llm_key_off_the_sheet():

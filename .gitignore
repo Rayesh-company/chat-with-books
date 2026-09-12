@@ -7,3 +7,10 @@ __pycache__/
 *.pyc
 tarhe-kolli.pdf
 ui/usage.sqlite3
+70143-336.pdf
+~$*
+.agents/
+.claude/
+.zcode/
+.playwright-mcp/
+.scratch/

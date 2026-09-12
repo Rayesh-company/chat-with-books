@@ -1,0 +1,17 @@
+# Two Books, text-embedding-3-large, five-page chunk cap
+
+The Book set grows to two Books on 2026-09-10: طرح کلی اندیشۀ اسلامی در قرآن (`tarhe-kolli`, 862 pages) joins انسان ۲۵۰ ساله (`70143-336`, 376 pages). Embeddings move from `text-embedding-3-small` (1536 dims) to `text-embedding-3-large` (3072 dims), still on AvalAI. Each ingest pins `chunk_size` — Cognee's max-chunk **token** ceiling; chunks end at paragraph boundaries and may be smaller — per Book so no chunk exceeds five PDF pages: 4100 for `tarhe-kolli` and 3500 for `70143-336`. Ingest speed comes from throughput, not chunk size: `chunks_per_batch=36` with `LLM_RATE_LIMIT` 240 requests/60 s (extraction) and `EMBEDDING_RATE_LIMIT` 120 requests/60 s at batch 32 — under AvalAI's 250 RPM / 4M TPM contract (PM call, 2026-09-11). The first pins (4600/6400, from text-layer PyPDF2 estimates of 912/1282 tokens per page) honored the token cap but produced 4.0 and 7.0 average page spans — Cognee's own loader extracts this Farsi more compactly (~1150 and ~980 chars per page), so the pins were recalibrated 2026-09-11 from the rebuilt index's measured spans.
+
+## Considered options
+
+- One `chunk_size` for both Books (e.g. 4100). Rejected: it caps `70143-336` at ≈ 3.6 pages — the pin would not mean "five pages" for that Book. Per-Book values honor the cap exactly.
+- Keep `text-embedding-3-small`. Rejected: the PM asked for the large embedding model; a dimensions change invalidates every stored vector either way, so the marginal re-ingest cost was already committed.
+- Delete the old dataset through Cognee's datasets API and re-ingest in place. Rejected: `docker compose down -v` wipes the pgvector index, the `postgres_demo` graph, and Cognee caches in one move, leaving no mixed-dimension or orphaned-graph residue — and the old index was unusable regardless.
+
+## Consequences
+
+- A full re-ingest of both Books is mandatory after this change; the recorded benchmark baseline (`benchmark/runs/baseline/20260910T180829Z`) predates it and is comparable only against the old configuration (`benchmark/setup.json` carries a note).
+- Z.AI's coding endpoint 429'd (code 1302) three ingest attempts on 2026-09-10/11 — two concurrent ingests, then the 36-chunk default burst, then a throttled 10 RPM run that still died when the shared coding-plan quota drained elsewhere. The fix is routing, not throttling: Cognee's per-stage overrides point **extraction and summarization** at `glm-5.3-flash` on AvalAI (same model as first answers, but through AvalAI's 250 RPM / 4M TPM budget — AvalAI carries the GLM family and the model was smoke-checked there for Farsi JSON extraction), while the **query stage keeps the recorded Z.AI model pins** for first answers and Next-tier. The RPM limiter moves to 200 requests/60 s as an AvalAI budget guard, with patient retries (6 attempts / 1800 s) kept as storm insurance.
+- With two Books, a quote's Book identity can no longer be implied: the Evidence locator's `document <name>` is resolved per quote (`ui/serve.py` `book_label`) and the tooltip names the Book the passage came from. The paragraph-end pages label keeps its PM-locked «صفحات X تا Y» shape.
+- The benchmark payload stays on the `tarhe-kolli` dataset alone — TKI questions target that Book, and adding the second dataset would change the measured retrieval condition.
+- The VPS deployment keeps serving the previously ingested index until the same rebuild is run there; re-ingest is not part of a code deploy.
