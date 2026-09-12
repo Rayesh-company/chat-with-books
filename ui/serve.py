@@ -24,11 +24,6 @@ try:
     # The deep modules behind this facade; the re-exports below keep the
     # tests' single `from ui import serve` import seam.
     from ui.guard import (
-        _citation_labels,
-        _count_word,
-        _json_object,
-        _numbered_passages,
-        _strip_code_fence,
         book_label,
         first_page_label,
         guard_blocks,
@@ -46,12 +41,15 @@ try:
     from ui.composer import (
         COMPOSER_MAX_TOKENS,
         COMPOSER_TIMEOUT,
-        _composer_content,
-        _composer_reply,
         build_continuation_prompt,
         build_planner_prompt,
         build_quoted_prompt,
         compose_quoted_answer,
+    )
+    from ui.picker import (
+        build_picker_prompt,
+        parse_picker_reply,
+        pick_quote_selection,
     )
     from ui.dive import (
         BOOK_DATASETS,
@@ -95,11 +93,6 @@ try:
     )
 except ImportError:  # the container runs this file as a script beside the modules
     from guard import (
-        _citation_labels,
-        _count_word,
-        _json_object,
-        _numbered_passages,
-        _strip_code_fence,
         book_label,
         first_page_label,
         guard_blocks,
@@ -117,12 +110,15 @@ except ImportError:  # the container runs this file as a script beside the modul
     from composer import (
         COMPOSER_MAX_TOKENS,
         COMPOSER_TIMEOUT,
-        _composer_content,
-        _composer_reply,
         build_continuation_prompt,
         build_planner_prompt,
         build_quoted_prompt,
         compose_quoted_answer,
+    )
+    from picker import (
+        build_picker_prompt,
+        parse_picker_reply,
+        pick_quote_selection,
     )
     from dive import (
         BOOK_DATASETS,
@@ -177,92 +173,6 @@ PROXY_TIMEOUT = 600
 NEXT_TIER_TIMEOUT = int(os.environ.get("NEXT_TIER_TIMEOUT", "1200"))
 ALLOWED_PROXY = {"/health", "/api/v1/recall"}
 NEXT_TIER_SEARCH_TYPE = "GRAPH_COMPLETION_COT"
-
-# Quote selection (ADR-0006, issue #28): the first answer rendered on
-# the sheet is the Evidence pool's Quote selection — verbatim Book
-# sentences, no AI prose — picked by EXACTLY ONE composer call. The
-# model is the existing COMPOSER_MODEL pin (glm-5.3-flash, ADR-0002);
-# thinking disabled for the phase-2 writer's measured reason:
-# copy-matching, not reasoning. The pool itself is untouched — the same
-# (reference, passage) pairs stay phase 2's exact input.
-QUOTE_SELECTION_AIM = 10
-QUOTE_SELECTION_CEILING = 12
-QUOTE_SELECTION_FLOOR = 4
-
-
-def build_picker_prompt(question: str, sources) -> str:
-    """The picker's brief: select, don't write.
-
-    The aim wording is derived from QUOTE_SELECTION_AIM — the two cannot
-    drift — and the reply shape is the selection list guard_sentences
-    already consumes.
-    """
-    passages = _numbered_passages(sources)
-    return (
-        "You are selecting the Quote selection for a Farsi Q&A sheet "
-        "over the Books.\n\n"
-        f"Question: {question}\n\n"
-        "Passages (numbered, from the Books' retrieved Evidence; "
-        "text-layer noise like \\b backspaces may appear between "
-        "words):\n"
-        f"{passages}\n\n"
-        "Task: select the Farsi sentences that together best answer "
-        f"the question — aim for {_count_word(QUOTE_SELECTION_AIM)}; "
-        "fewer only when the passages hold fewer. Each selection is a "
-        "complete Farsi sentence copied VERBATIM from exactly ONE "
-        "passage (ignore the \\b noise; write proper Farsi). Do not "
-        "paraphrase, do not merge, do not shorten. Never invent a "
-        "sentence.\n\n"
-        "Reply with ONLY a JSON object, no prose, no code fence:\n"
-        '{"selections": [{"text": "<verbatim sentence>", '
-        '"source": <passage index>}]}'
-    )
-
-
-def parse_picker_reply(content):
-    """Pull the selections list out of the picker's reply; [] when
-    malformed.
-
-    The parse conventions of parse_quoted_reply — code fence stripped,
-    json.loads with one brace-scoped retry for prose-wrapped JSON, the
-    shared _json_object — without the salvage: a picker reply is tiny,
-    and a truncated one would not survive the floor anyway.
-    """
-    parsed = _json_object(content)
-    selections = parsed.get("selections") if isinstance(parsed, dict) else None
-    return selections if isinstance(selections, list) else []
-
-
-def pick_quote_selection(question: str, sources):
-    """One picker call over the pool; the guarded selections, or [].
-
-    Exactly ONE composer call (glm-5.3-flash, thinking disabled,
-    COMPOSER_MAX_TOKENS, endpoint-default temperature). The reply runs
-    the existing verbatim letter-stream guard — a paraphrase, or a
-    verbatim sentence claiming the wrong index, drops; the survivors cap
-    at QUOTE_SELECTION_CEILING, and fewer than QUOTE_SELECTION_FLOOR of
-    them means the picker missed the floor: [] — the same empty shape a
-    call failure returns, so the sheet's fallback is one uniform shape.
-    Every kept sentence carries the labels of exactly the passage it
-    claims, attached server-side like guard_blocks does.
-    """
-    try:
-        reply = _composer_reply(build_picker_prompt(question, sources), "disabled")
-        content = _composer_content(reply)
-    except (KeyError, ValueError, OSError):
-        return []
-    kept = guard_sentences(parse_picker_reply(content), sources)
-    kept = kept[:QUOTE_SELECTION_CEILING]
-    if len(kept) < QUOTE_SELECTION_FLOOR:
-        return []
-    return [
-        {
-            "text": item["text"],
-            "reference": item["reference"],
-            **_citation_labels(item["reference"]),
-        }
-        for item in kept
-    ]
 
 
 class SessionHandler(SimpleHTTPRequestHandler):
