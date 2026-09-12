@@ -472,6 +472,10 @@ def test_serve_pins_the_gate_shape():
     assert "DAILY_CHAT_LIMIT = 5" in text
     assert "SESSION_UI_HOST" in text
     assert "usage.sqlite3" in text
+    # The retired swap noun stays out of the gate comment (round-2
+    # review, 2026-09-12): the 5th chat's own Quoted answer must pass.
+    assert "the 5th chat's own Quoted answer" in text
+    assert "swap must pass" not in text
 
 
 def test_readme_records_the_phone_gate():
@@ -488,3 +492,9 @@ def test_readme_records_the_phone_gate():
     # (full-spec review, 2026-09-12).
     assert "/quote-selection" in section
     assert "/deep-dive/status" in section
+    # The retired swap vocabulary stays retired (round-2 review,
+    # 2026-09-12): the tabbed sheet lands the document in phase 2's tab
+    # or not at all, so the fifth chat's own Quoted answer and dive must
+    # pass — no swap noun.
+    assert "the fifth chat's own Quoted answer and dive must pass" in section
+    assert "swap" not in section

@@ -117,7 +117,8 @@ def _count_word(count: int) -> str:
 # verification; it stops casual credit-burn, not a determined caller.
 # A chat is one ask: phase 1 records it, and phase 2 (/quoted-answer)
 # belongs to that chat — it needs a phone with a chat today, and never
-# counts or checks the limit itself (the 5th chat's own swap must pass).
+# counts or checks the limit itself (the 5th chat's own Quoted answer
+# must pass).
 DAILY_CHAT_LIMIT = 5
 QUOTA_DB = Path(os.environ.get("SESSION_UI_QUOTA_DB", str(UI_DIR / "usage.sqlite3")))
 
