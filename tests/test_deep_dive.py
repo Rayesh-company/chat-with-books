@@ -278,8 +278,13 @@ def test_parse_evidence_sources_answers_no_evidence_with_an_empty_pool():
 # The searcher seam tests once scripted Evidence-bearing replies by hand,
 # and the mock drifted from the real reply shape: the live smoke failed
 # because the pinned GRAPH_COMPLETION renders no Evidence block at all.
-# These fixtures are real 8001 replies to the same question on the same
-# day — the negative one proves the pool is empty by construction under
+# These fixtures record the real 8001 replies to the same question on
+# the same day — the hybrid one verbatim; the graph one a TRIMMED
+# derivative of the real reply (metadata.evidence cut from 36 entries to
+# 4 to keep the file small, everything else verbatim) — a trim that
+# preserves exactly what the tests pin: metadata stays non-empty, every
+# document_name stays null, and the text still carries no Evidence
+# marker. The negative one proves the pool is empty by construction under
 # GRAPH_COMPLETION, the positive one proves HYBRID_COMPLETION renders the
 # Evidence contract the pool parser consumes (ADR 0006, searcher pin).
 
@@ -296,8 +301,12 @@ def recorded_pool(name):
 
 
 def test_recorded_graph_completion_reply_parses_to_an_empty_pool():
-    # The real 8001 reply that starved the live smoke: a top-level list,
-    # one graph_completion item whose answer text carries no Evidence
+    # The 8001 reply that starved the live smoke, recorded here as a
+    # TRIMMED derivative of the real reply — metadata.evidence cut from
+    # 36 entries to 4, everything else verbatim; the trim preserves what
+    # this test pins (non-empty metadata, every document_name null, no
+    # Evidence marker in the text). A top-level list, one
+    # graph_completion item whose answer text carries no Evidence
     # marker — its references ride in metadata.evidence as graph-node
     # provenance (labels only: no document_name, no pages, no verbatim
     # passage text). The parser must read zero passages from the true
