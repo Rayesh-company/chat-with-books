@@ -1,0 +1,38 @@
+{
+  "variant": "baseline",
+  "finished_utc": "2026-09-12T10:54:25.310789+00:00",
+  "question_count": 18,
+  "ok_count": 18,
+  "error_ids": [],
+  "wall_seconds": {
+    "mean": 63.02,
+    "median": 60.18,
+    "min": 52.46,
+    "max": 103.6
+  },
+  "mean_answer_chars": 1383.7,
+  "mean_evidence_page_count": 2.44,
+  "answers_without_evidence": [],
+  "stage_timings": {
+    "recall": {
+      "avg": 63.02,
+      "total": 1134.27
+    },
+    "picker": {
+      "avg": 44.55,
+      "total": 801.83
+    },
+    "total": {
+      "avg": 107.56,
+      "total": 1936.1
+    }
+  },
+  "pool_size": {
+    "mean": 5.0,
+    "min": 5,
+    "max": 5
+  },
+  "mean_selection_count": 6.94,
+  "fallback_ids": [],
+  "picker_error_ids": []
+}

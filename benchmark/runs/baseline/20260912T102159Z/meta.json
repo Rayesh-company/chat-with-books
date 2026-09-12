@@ -1,0 +1,100 @@
+{
+  "run_dir": "E:\\code\\chat-with books\\benchmark\\runs\\baseline\\20260912T102159Z",
+  "started_utc": "2026-09-12T10:22:09.179015+00:00",
+  "base_url": "http://localhost:8000",
+  "timeout_seconds": 600,
+  "probe_chunks": false,
+  "quote_selection": {
+    "enabled": true,
+    "sheet_url": "http://localhost:8765",
+    "phone": "09120000000"
+  },
+  "question_count": 18,
+  "question_set_source_sha256": "5758c8bbbb22305e5efcdf9b731201775ca146224e2d61fb9a2c69d3299ee8ff",
+  "setup": {
+    "variant_id": "baseline",
+    "description": "Fast chat mode (first answer) as sold: the HYBRID_COMPLETION recall plus exactly one Quote selection picker call (ADR 0006). Next-tier search and the UI quoted-answer composer are deliberately out of scope.",
+    "contract_change": "The original baseline contract — the streamed prose rendered as the phase-1 answer, no picker, recorded at commit b051e82 on feat/12-cognee-postgres-avalai — is SUPERSEDED as of 2026-09-12 by the Quote selection (ADR 0006, issue #28/#29): the sold first answer is the HYBRID_COMPLETION recall plus exactly one glm-5.3-flash picker call on the sheet server (ui/serve.py /quote-selection, guarded 4-12 sentences). The baseline runs recorded under the old contract are archived at runs/archive/baseline/ (not deleted); from this re-record on, the recorded baseline measures the product as sold.",
+    "created_utc": "2026-09-10T00:00:00Z",
+    "mode_under_test": {
+      "name": "fast chat (first answer)",
+      "http_method": "POST",
+      "endpoint_path": "/api/v1/recall",
+      "base_url": "http://localhost:8000",
+      "service": "cognee",
+      "port": 8000,
+      "search_type": "HYBRID_COMPLETION",
+      "include_references": true,
+      "stream": false,
+      "stream_note": "Benchmark calls non-streaming; the UI streams the same call and the final frame carries the identical JSON, so total wall time is comparable. TTFT is a UI-side metric and is not benchmarked here.",
+      "session_id": null,
+      "request_payload_template": {
+        "searchType": "HYBRID_COMPLETION",
+        "query": "<question>",
+        "datasets": [
+          "tarhe-kolli"
+        ],
+        "includeReferences": true
+      },
+      "quote_selection": {
+        "endpoint_path": "/quote-selection",
+        "sheet_base_url": "http://localhost:8765",
+        "sheet_service": "ui/serve.py (session sheet)",
+        "model": "glm-5.3-flash",
+        "calls_per_ask": 1,
+        "request_payload_template": {
+          "question": "<question>",
+          "sources": [
+            {
+              "reference": "<Evidence locator>",
+              "passage": "<quoted passage>"
+            }
+          ]
+        },
+        "pool": "the recall's Evidence block parsed exactly as the sheet parses it — bullets `locator: \"passage\"`",
+        "selection_guard": "verbatim letter-stream guard; survivors cap at 12, below 4 answers [] — the recorded prose fallback",
+        "gate": "a phone with at least one chat today — the bootstrap ask records the chat; the picker never records or counts one",
+        "benchmark_phone": "09120000000 (reserved for runs; bootstrapped with one real ask before a run)"
+      }
+    },
+    "excluded_modes": [
+      "Next-tier search: cognee-next-tier, port 8001, GRAPH_COMPLETION_COT, glm-5.3",
+      "Quoted-answer composer (UI phase 2): planner+writer glm-5.3-flash calls in ui/serve.py"
+    ],
+    "chat_model": {
+      "model": "openai/glm-5.3-flash",
+      "provider": "custom",
+      "endpoint": "https://api.z.ai/api/coding/paas/v4",
+      "plan": "GLM Coding Plan",
+      "temperature": "endpoint default (not overridden)",
+      "streaming_flag": "LLM_ANSWER_STREAMING=true in compose.yaml"
+    },
+    "embeddings": {
+      "model": "text-embedding-3-large",
+      "endpoint": "https://api.avalai.ir/v1",
+      "dimensions": 3072,
+      "batch_size": 8,
+      "rate_limit": "8 requests / 60 s"
+    },
+    "memory": {
+      "db_provider": "postgres (pgvector/pgvector:pg17)",
+      "vector_db": "pgvector",
+      "graph_database": "postgres_demo",
+      "cache_backend": "postgres",
+      "backend_access_control": false
+    },
+    "dataset": {
+      "name": "tarhe-kolli",
+      "book": "طرح کلی اندیشۀ اسلامی در قرآن",
+      "file": "tarhe-kolli.pdf",
+      "ingested": true
+    },
+    "dataset_note": "TKI questions target tarhe-kolli and the benchmark payload stays on that dataset alone so runs stay comparable. The Book set itself is two Books since 2026-09-10 (added: انسان ۲۵۰ ساله, dataset 70143-336, chunk_size 3500; tarhe-kolli re-ingested at chunk_size 4100). The baseline runs recorded under the old contract (runs/archive/baseline/20260910T180829Z) predate that change: they ran on text-embedding-3-small at 1536 dims with the 4096 default chunk size.",
+    "patches": {
+      "docker/enable_farsi_evidence.py": "Compose entrypoint patch: Farsi-aware overlap regex (keeps Farsi terms, not only [a-z0-9]) and snippet window widened to 600 chars (Cognee default 160) so quoted passages hold complete sentences."
+    },
+    "container_image": "cognee/cognee:main",
+    "service_version_captured_live": "1.5.4-local",
+    "git_commit_captured_live": "1ef76ef"
+  }
+}
