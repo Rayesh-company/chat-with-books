@@ -1082,13 +1082,26 @@ def abort_dive_job(job: DiveJob) -> bool:
         return True
 
 
-def _start_dive_job(phone: str, query: str) -> DiveJob:
-    """Create the registry job and spawn its daemon worker."""
-    job = DiveJob(phone, query)
+def _start_dive_job(phone: str, query: str):
+    """Create the registry job under the caps — at most one non-terminal
+    dive per phone and DIVE_MAX_CONCURRENT globally — or return the
+    Farsi busy detail. The check and the creation are atomic under the
+    lock, so racing starts can never exceed a cap, and a rejected start
+    is never queued: the caller replies the busy rejection as-is."""
     with DIVE_REGISTRY_LOCK:
+        non_terminal = [
+            job
+            for job in DIVE_REGISTRY.values()
+            if job.state not in DIVE_TERMINAL_STATES
+        ]
+        if any(job.phone == phone for job in non_terminal):
+            return None, DIVE_BUSY_PHONE_DETAIL
+        if len(non_terminal) >= DIVE_MAX_CONCURRENT:
+            return None, DIVE_BUSY_GLOBAL_DETAIL
+        job = DiveJob(phone, query)
         DIVE_REGISTRY[job.id] = job
     threading.Thread(target=run_dive_job, args=(job,), daemon=True).start()
-    return job
+    return job, None
 
 
 class SessionHandler(SimpleHTTPRequestHandler):
@@ -1297,7 +1310,10 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # _json_error would drain a second time and block.
             self._send_json(400, {"detail": "پرسش را بنویسید."})
             return
-        job = _start_dive_job(phone, query.strip())
+        job, busy_detail = _start_dive_job(phone, query.strip())
+        if job is None:
+            self._send_json(429, {"detail": busy_detail})
+            return
         self._send_json(202, {"job_id": job.id})
 
     def _next_tier_recall(self) -> None:

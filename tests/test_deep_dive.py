@@ -205,6 +205,9 @@ def test_serve_pins_the_dive_constants_in_source():
     # Pinned in source like every model pin — never via env.
     assert 'environ.get("DIVE_MODEL"' not in text
     assert 'environ.get("DIVE_SEARCH_TYPE"' not in text
+    # The registry's capacity is a source pin too (issue #26).
+    assert serve.DIVE_MAX_CONCURRENT == 3
+    assert 'environ.get("DIVE_MAX_CONCURRENT"' not in text
 
 
 # --- the server-side Evidence parser ---------------------------------------
@@ -896,6 +899,90 @@ def test_a_restart_empties_the_registry_so_old_job_ids_answer_404(tmp_path):
         stop_gate(server, original)
     assert status == 404
     assert payload["detail"] == serve.DIVE_NOT_FOUND_DETAIL
+
+
+# --- the caps (issue #26) ------------------------------------------------------
+#
+# At most one dive per phone and three dives globally; excess starts get
+# a friendly Farsi busy rejection. Nothing is ever queued — a rejected
+# start never reaches the upstream.
+
+
+def test_a_second_start_by_the_same_phone_is_rejected_farsi_busy(tmp_path):
+    gate = threading.Event()
+    upstream = dive_study_upstream(gate=gate)
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        serve.record_chat(DIVE_PHONE)
+        _, body = post(base, "/deep-dive", {"query": "پرسش؟"}, phone=DIVE_PHONE)
+        job_id = body["job_id"]
+        calls_before = len(upstream.calls)
+        busy_status, busy = post(
+            base, "/deep-dive", {"query": "پرسش دیگر؟"}, phone=DIVE_PHONE
+        )
+        calls_after = len(upstream.calls)
+        gate.set()
+        wait_job_done(job_id)
+    finally:
+        gate.set()
+        stop_gate(server, original)
+    assert busy_status == 429
+    assert busy["detail"] == serve.DIVE_BUSY_PHONE_DETAIL
+    # No second job exists, and the rejected start never ran a planner —
+    # nothing was queued.
+    assert [
+        job for job in serve.DIVE_REGISTRY.values() if job.phone == DIVE_PHONE
+    ] == [serve.DIVE_REGISTRY[job_id]]
+    assert calls_before == calls_after == 1
+
+
+def test_a_fourth_concurrent_start_is_rejected_and_nothing_is_queued(tmp_path):
+    gate = threading.Event()
+    phones = [f"0912000003{n}" for n in range(4)]
+    # One planner reply per allowed dive — each job pops its own while
+    # the gate holds it; the synthesizer replies are queued only after
+    # all three planners are parked, so pops stay deterministic.
+    upstream = DiveUpstream(
+        composer_replies=[subquestions_reply(["زیرپرسش؟"]) for _ in range(3)],
+        gate=gate,
+    )
+    base, server, original = with_gate(tmp_path, upstream)
+    try:
+        for phone in phones[:3]:
+            serve.record_chat(phone)
+        serve.record_chat(phones[3])
+        job_ids = []
+        for phone in phones[:3]:
+            status, body = post(
+                base, "/deep-dive", {"query": "پرسش؟"}, phone=phone
+            )
+            assert status == 202
+            job_ids.append(body["job_id"])
+        assert len(serve.DIVE_REGISTRY) == 3
+        calls_before = len(upstream.calls)
+        fourth_status, fourth = post(
+            base, "/deep-dive", {"query": "پرسش؟"}, phone=phones[3]
+        )
+        calls_after = len(upstream.calls)
+        # Release the parked planners and let the three dives land.
+        upstream.composer_replies.extend(
+            composer_reply(
+                json.dumps({"blocks": dive_blocks(ONE_SOURCE)}, ensure_ascii=False)
+            )
+            for _ in range(3)
+        )
+        gate.set()
+        for job_id in job_ids:
+            wait_job_done(job_id)
+    finally:
+        gate.set()
+        stop_gate(server, original)
+    assert fourth_status == 429
+    assert fourth["detail"] == serve.DIVE_BUSY_GLOBAL_DETAIL
+    # The busy fourth start never reached the upstream — it was
+    # rejected, never queued.
+    assert calls_before == calls_after == 3
+    assert phones[3] not in [job.phone for job in serve.DIVE_REGISTRY.values()]
 
 
 def test_serve_pins_the_deep_dive_endpoint():
