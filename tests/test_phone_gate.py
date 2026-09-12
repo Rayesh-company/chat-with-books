@@ -451,7 +451,11 @@ def test_next_tier_relay_reports_a_timed_out_search(tmp_path, monkeypatch):
 def test_serve_pins_the_next_tier_relay():
     text = (REPO_ROOT / "ui" / "serve.py").read_text(encoding="utf-8")
     assert "NEXT_TIER_URL" in text
-    assert 'os.environ.get("NEXT_TIER_URL", "http://127.0.0.1:8001")' in text
+    # The second service's URL is defined in the dive module (the dive's
+    # searchers and the relay read the same pin) — still from env with
+    # the recorded default, never hardcoded past it.
+    dive_text = (REPO_ROOT / "ui" / "dive.py").read_text(encoding="utf-8")
+    assert 'os.environ.get("NEXT_TIER_URL", "http://127.0.0.1:8001")' in dive_text
     assert "GRAPH_COMPLETION_COT" in text
     assert "/next-tier-recall" in text
 

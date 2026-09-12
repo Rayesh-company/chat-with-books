@@ -17,7 +17,7 @@ from tests.conftest import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from ui import composer, quotas, serve  # noqa: E402
+from ui import composer, dive, quotas, serve  # noqa: E402
 
 
 def post(base, path, payload, phone=None):
@@ -201,12 +201,12 @@ def with_gate(tmp_path, upstream):
     must shut the server down and restore both patches. The quota DB is
     patched at its owning module (ui.quotas reads it per connection), the
     fake stands at every owning module's urlopen seam — the facade's own
-    relay/proxy and the composer's — one upstream told apart by URL, as
-    before. The dive registry starts empty — a server restart is what
-    empties it in production."""
+    relay/proxy, the composer's, and the dive's (one upstream told apart
+    by URL, as before). The dive registry starts empty — a server
+    restart is what empties it in production."""
     quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
     serve.DIVE_REGISTRY.clear()
-    originals = [(module, module.urlopen) for module in (serve, composer)]
+    originals = [(module, module.urlopen) for module in (serve, composer, dive)]
     for module, _ in originals:
         module.urlopen = upstream
     os.environ["LLM_API_KEY"] = "test-key"

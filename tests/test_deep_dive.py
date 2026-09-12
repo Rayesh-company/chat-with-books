@@ -21,9 +21,10 @@ from tests.conftest import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from ui import composer, serve  # noqa: E402
+from ui import dive, serve  # noqa: E402
 
 SERVE = REPO_ROOT / "ui" / "serve.py"
+DIVE = REPO_ROOT / "ui" / "dive.py"
 
 BS = "\b"
 NOISY_PASSAGE = (
@@ -170,22 +171,19 @@ class DiveUpstream:
 
 
 def with_upstream(upstream):
-    """Patch the urlopen seams for one orchestration call; restores
-    after — the composer module's (the dive's Planner and Synthesizer
-    ride the shared composer call shape) and the facade's (the
-    searchers' recall still reads serve.urlopen)."""
+    """Patch the dive module's urlopen for one orchestration call;
+    restores after — the single seam both of the dive's upstreams ride
+    (the composer endpoint through the shared call shape, the second
+    service's recall), so one fake scripts the whole dive."""
 
     def run(fn):
-        serve_original = serve.urlopen
-        composer_original = composer.urlopen
-        serve.urlopen = upstream
-        composer.urlopen = upstream
+        original = dive.urlopen
+        dive.urlopen = upstream
         os.environ["LLM_API_KEY"] = "test-key"
         try:
             return fn()
         finally:
-            serve.urlopen = serve_original
-            composer.urlopen = composer_original
+            dive.urlopen = original
             del os.environ["LLM_API_KEY"]
 
     return run
@@ -220,26 +218,26 @@ def run_dive_job_sync(question, upstream):
 
 
 def test_serve_pins_the_dive_constants_in_source():
-    text = SERVE.read_text(encoding="utf-8")
-    assert serve.DIVE_MODEL == "glm-5.3"
-    assert serve.DIVE_SEARCH_TYPE == "HYBRID_COMPLETION"
-    assert serve.DIVE_SEARCH_TIMEOUT == 600
+    text = DIVE.read_text(encoding="utf-8")
+    assert dive.DIVE_MODEL == "glm-5.3"
+    assert dive.DIVE_SEARCH_TYPE == "HYBRID_COMPLETION"
+    assert dive.DIVE_SEARCH_TIMEOUT == 600
     # Pinned in source like every model pin — never via env.
     assert 'environ.get("DIVE_MODEL"' not in text
     assert 'environ.get("DIVE_SEARCH_TYPE"' not in text
     # The registry's capacity is a source pin too (issue #26).
-    assert serve.DIVE_MAX_CONCURRENT == 3
+    assert dive.DIVE_MAX_CONCURRENT == 3
     assert 'environ.get("DIVE_MAX_CONCURRENT"' not in text
     # The gap round's locks are source pins too (issue #27): the
     # six-searcher cap is one constant shared by the planner prompt's
     # count wording and the parser, starvation is fewer than two parsed
     # passages, and the whole topology runs at most two retrieval rounds
     # — never env-tunable.
-    assert serve.DIVE_MAX_SUB_QUESTIONS == 6
+    assert dive.DIVE_MAX_SUB_QUESTIONS == 6
     assert 'environ.get("DIVE_MAX_SUB_QUESTIONS"' not in text
-    assert serve.DIVE_STARVED_PASSAGES == 2
+    assert dive.DIVE_STARVED_PASSAGES == 2
     assert 'environ.get("DIVE_STARVED_PASSAGES"' not in text
-    assert serve.DIVE_MAX_RETRIEVAL_ROUNDS == 2
+    assert dive.DIVE_MAX_RETRIEVAL_ROUNDS == 2
     assert 'environ.get("DIVE_MAX_RETRIEVAL_ROUNDS"' not in text
 
 
@@ -363,7 +361,7 @@ def test_dive_planner_prompt_asks_for_farsi_subquestions_as_json():
 def test_dive_planner_prompt_derives_the_count_from_the_pinned_cap(monkeypatch):
     # The prompt's count word is DIVE_MAX_SUB_QUESTIONS spelled out — the
     # wording and the parser's cap are one constant, so they cannot drift.
-    monkeypatch.setattr(serve, "DIVE_MAX_SUB_QUESTIONS", 3)
+    monkeypatch.setattr(dive, "DIVE_MAX_SUB_QUESTIONS", 3)
     prompt = serve.build_dive_planner_prompt("پرسش؟")
     assert "three" in prompt
     assert "six" not in prompt
@@ -1049,12 +1047,12 @@ def test_dive_job_marks_failed_when_a_worker_call_raises():
     def explode(_question):
         raise RuntimeError("scripted worker failure")
 
-    original = serve.plan_dive_subquestions
-    serve.plan_dive_subquestions = explode
+    original = dive.plan_dive_subquestions
+    dive.plan_dive_subquestions = explode
     try:
         with_upstream(upstream)(lambda: serve.run_dive_job(job))
     finally:
-        serve.plan_dive_subquestions = original
+        dive.plan_dive_subquestions = original
     assert job.state == "failed"
     assert job.error == serve.DIVE_FAILED_DETAIL
     assert serve.DIVE_EVENT_FAILED in job.events
