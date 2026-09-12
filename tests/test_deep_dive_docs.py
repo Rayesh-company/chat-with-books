@@ -63,13 +63,19 @@ def test_readme_bounds_the_deep_dive_to_the_same_question():
 
 
 def test_readme_records_the_live_deep_dive_contract():
-    # The shipped tracer bullet (ADR 0006, issue #25): the operator
-    # button, the held /deep-dive request, and the pinned pipeline.
+    # The shipped contract (ADR 0006, issue #26): the operator button,
+    # the job-identity start, the polled status endpoint, and the pinned
+    # pipeline. The multi-minute held request is gone.
     section = _deep_dive_section()
     assert "operator-started button" in section
     assert "شروع مطالعۀ عمیق" in section
     assert "/deep-dive" in section
-    assert "held request" in section
+    assert "held request" not in section
+    assert "202" in section
+    assert '"job_id"' in section
+    assert "/deep-dive/status" in section
+    assert "polls" in section
+    assert "events" in section
     # Payloads pinned server-side — the browser names no search type.
     assert "server-side" in section
     assert "Planner" in section
@@ -90,14 +96,41 @@ def test_readme_records_the_live_deep_dive_contract():
     assert "ADR 0006" in section
 
 
-def test_readme_records_the_registry_caps_and_gap_round_as_not_yet():
-    # No job registry, caps, or gap round shipped in this slice — the
-    # README must say they follow, not that they exist.
+def test_readme_records_the_registry_caps_and_busy_rejections():
+    # The caps shipped (issue #26): one dive per phone, three globally,
+    # busy Farsi rejections, and nothing ever queued.
     section = _deep_dive_section()
     assert "one dive per phone" in section
     assert "three dives globally" in section
+    assert "never" in section and "queued" in section
+    assert "یک مطالعۀ عمیق برای این شماره" in section
+    assert "هم‌اکنون چند مطالعۀ عمیق" in section
+
+
+def test_readme_records_the_refresh_reconnect_and_the_restart_surface():
+    # A browser refresh reconnects through the status endpoint; a server
+    # restart empties the in-process registry and the status 404 is the
+    # recorded failure surface, never a hang.
+    section = _deep_dive_section()
+    assert "sessionStorage" in section
+    assert "reconnect" in section
+    assert "elapsed" in section
+    assert "restart" in section
+    assert "404" in section
+
+
+def test_readme_records_the_server_side_abort_by_new_ask():
+    section = _deep_dive_section()
+    assert "new ask aborts" in section
+    assert "cooperative" in section
+
+
+def test_readme_records_the_gap_round_as_still_not_yet():
+    # The gap round stays unshipped — the README must say it follows,
+    # not that it exists (issue #27).
+    section = _deep_dive_section()
     assert "gap round" in section
-    assert "No job registry, caps, or gap round yet" in section
+    assert "No gap round yet" in section
 
 
 def test_readme_records_the_operator_started_phase_three_in_session_ui():
@@ -110,6 +143,12 @@ def test_readme_records_the_operator_started_phase_three_in_session_ui():
     assert "no longer auto-starts" in section
     assert "stops when phase 2 settles" in section
     assert "/deep-dive" in section
+    # The sheet's job contract (issue #26): store the identity, poll the
+    # status endpoint, reconnect after a refresh.
+    assert "/deep-dive/status" in section
+    assert "sessionStorage" in section
+    assert "polls" in section
+    assert "reconnect" in section.lower()
 
 
 # --- the sheet's job contract (issue #26) --------------------------------------
