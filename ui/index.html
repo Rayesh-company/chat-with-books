@@ -492,7 +492,7 @@
         <div class="phase-panel" id="panel-3" role="tabpanel" aria-labelledby="tab-3" hidden>
           <!-- The Deep dive is operator-started (ADR 0006): the button
                arms after the first answer exists; pressing it starts the
-               phase timer and the held /deep-dive request. -->
+               dive job and the sheet polls its status. -->
           <div class="actions">
             <button type="button" id="dive-start" disabled>شروع مطالعۀ عمیق</button>
           </div>
@@ -564,11 +564,13 @@
         return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
       }
 
-      function startPhaseTimer(n) {
+      function startPhaseTimer(n, elapsedMs = 0) {
         const phase = phaseEls[n];
         if (!phase.timer) return;
         stopPhaseTimer(n);
-        phase.startedAt = Date.now();
+        // elapsedMs reseeds an honest clock — a dive reconnected after a
+        // refresh continues the job's elapsed, not this page load's.
+        phase.startedAt = Date.now() - (elapsedMs || 0);
         phase.timer.hidden = false;
         const tickPhase = () => {
           phase.timer.textContent = clockText(Date.now() - phase.startedAt);
@@ -859,34 +861,168 @@
         }
       }
 
-      // The Deep dive (ADR 0006): the phase-3 tab's operator-started
-      // study. No ask starts it — this button does; the phase timer
-      // starts on press, and the held /deep-dive request answers only
-      // when the study is ready (minutes are normal). The search shapes
-      // are pinned server-side: the sheet sends only the query and the
-      // phone, and names no Cognee search type.
+      // The Deep dive (ADR 0006, issue #26): the phase-3 tab's
+      // operator-started study, now a registry job. The start POST
+      // answers a job identity immediately (202) and the sheet polls
+      // /deep-dive/status on a chained setTimeout — no held request.
+      // sessionStorage keeps the identity so a browser refresh
+      // reconnects to the running dive instead of throwing minutes of
+      // work away. The search shapes are pinned server-side: the sheet
+      // sends only the query and the phone, and names no Cognee search
+      // type.
+      const DIVE_POLL_MS = 2000;
+      let divePollTimer = null;
+      let diveStatusEl = null;
+
+      const storedDiveJob = () => {
+        try {
+          return JSON.parse(sessionStorage.getItem("sessionDive"));
+        } catch {
+          return null;
+        }
+      };
+      const storeDiveJob = (job) =>
+        sessionStorage.setItem("sessionDive", JSON.stringify(job));
+      const clearDiveJob = () => sessionStorage.removeItem("sessionDive");
+
+      function stopDivePolling() {
+        if (divePollTimer) {
+          clearTimeout(divePollTimer);
+          divePollTimer = null;
+        }
+      }
+
+      // The pulsing status line in panel 3 — the dive is visible while
+      // it runs, gone with the study (or with any failure note).
+      function showDiveStatus(message) {
+        if (!diveStatusEl || !diveStatusEl.isConnected) {
+          diveStatusEl = document.createElement("p");
+          diveStatusEl.className = "composer-status";
+          diveDocEl.replaceChildren(diveStatusEl);
+        }
+        diveStatusEl.textContent = message;
+      }
+
+      function renderDiveStudy(payload) {
+        const doc = document.createDocumentFragment();
+        // A study the continuation could not finish says so itself,
+        // above its sections — phase 2's note, reused.
+        if (payload.truncated) {
+          doc.append(truncatedNote());
+        }
+        for (const block of Array.isArray(payload.blocks) ? payload.blocks : []) {
+          if (block.type === "heading") {
+            const heading = document.createElement("h3");
+            heading.className = "doc-heading";
+            heading.textContent = block.text;
+            doc.append(heading);
+          } else if (block.type === "paragraph") {
+            doc.append(paragraphNode(block));
+          } else if (block.type === "references") {
+            // The closing references list — built server-side from the
+            // passages the study actually quoted, never by the model.
+            const refHeading = document.createElement("h3");
+            refHeading.className = "doc-heading";
+            refHeading.textContent = "منابع";
+            doc.append(refHeading);
+            for (const item of Array.isArray(block.items) ? block.items : []) {
+              const ref = document.createElement("p");
+              ref.className = "cite";
+              ref.textContent = item;
+              doc.append(ref);
+            }
+          }
+        }
+        diveDocEl.replaceChildren(doc);
+        diveStatusEl = null;
+        setPhaseState(3, "done");
+        stopPhaseTimer(3);
+        setRunningPhase(null);
+        // Bring the fresh study forward: each phase shows itself when
+        // it lands.
+        selectPhase(3);
+        diveStartEl.disabled = false;
+      }
+
+      // A dive that will never land says so and hands the sheet back:
+      // the stored job clears, the timer freezes, the button re-arms.
+      function settleDive(message) {
+        stopDivePolling();
+        clearDiveJob();
+        setPhaseState(3, "failed");
+        stopPhaseTimer(3);
+        setRunningPhase(null);
+        setText(diveDocEl, message, "error");
+        diveStatusEl = null;
+        diveStartEl.disabled = false;
+      }
+
+      function pollDiveJob(jobId) {
+        const poll = async () => {
+          let payload = null;
+          let gone = false;
+          try {
+            const res = await fetch(
+              `/deep-dive/status?job=${encodeURIComponent(jobId)}`,
+              { headers: phoneHeader(), cache: "no-store" }
+            );
+            if (res.status === 404) {
+              // Unknown job: the server restarted and took the registry
+              // with it — the recorded failure surface, not a hang.
+              gone = true;
+            } else if (res.ok) {
+              payload = await res.json();
+            }
+          } catch {
+            // A transient network blip is not a settled dive — the
+            // next tick retries.
+          }
+          if (gone) {
+            settleDive("مطالعۀ عمیق ناتمام ماند؛ دوباره تلاش کنید.");
+            return;
+          }
+          if (!payload) {
+            divePollTimer = setTimeout(poll, DIVE_POLL_MS);
+            return;
+          }
+          if (payload.state === "done") {
+            if (!phaseEls[3].startedAt) {
+              // Reconnected straight onto a finished study: seed the
+              // frozen chip from the job's own elapsed.
+              phaseEls[3].startedAt = Date.now() - (payload.elapsed || 0) * 1000;
+            }
+            renderDiveStudy(payload);
+            clearDiveJob();
+            return;
+          }
+          if (payload.state === "failed") {
+            settleDive("مطالعۀ عمیق ناتمام ماند؛ دوباره تلاش کنید.");
+            return;
+          }
+          if (payload.state === "aborted") {
+            settleDive("مطالعۀ عمیق لغو شد.");
+            return;
+          }
+          // Still running: an honest timer across a reload, and the
+          // latest Farsi progress event on the status line.
+          if (!phaseEls[3].startedAt && payload.elapsed) {
+            startPhaseTimer(3, payload.elapsed * 1000);
+          }
+          const events = Array.isArray(payload.events) ? payload.events : [];
+          showDiveStatus(events[events.length - 1] || "در حال نوشتن مطالعۀ عمیق…");
+          divePollTimer = setTimeout(poll, DIVE_POLL_MS);
+        };
+        poll();
+      }
+
       async function startDive() {
         const run = citationRun;
         const query = diveQuery;
         if (!query) return;
         setPhaseState(3, "running");
-        startPhaseTimer(3);
         setRunningPhase(3);
         diveStartEl.disabled = true;
-        diveDocEl.replaceChildren();
-        // The dive is visible while it runs: a pulsing status in its own
-        // section, gone with the study (or with any failure note).
-        const status = document.createElement("p");
-        status.className = "composer-status";
-        status.textContent = "در حال نوشتن مطالعۀ عمیق…";
-        diveDocEl.append(status);
-        const failDive = (message) => {
-          setPhaseState(3, "failed");
-          stopPhaseTimer(3);
-          setRunningPhase(null);
-          setText(diveDocEl, message, "error");
-          diveStartEl.disabled = false;
-        };
+        showDiveStatus("در حال نوشتن مطالعۀ عمیق…");
         try {
           const res = await fetch("/deep-dive", {
             method: "POST",
@@ -900,63 +1036,66 @@
           if (run !== citationRun) return;
           const payload = await res.json().catch(() => ({}));
           if (run !== citationRun) return;
-          if (!res.ok) {
+          // A rejection — a busy 429 among them — shows the server's
+          // Farsi detail as an error; the timer never started for a
+          // dive that did not begin.
+          if (!res.ok || !payload.job_id) {
             const detail = Array.isArray(payload.detail)
               ? payload.detail.join(" ")
               : payload.detail;
-            failDive(detail || "مطالعۀ عمیق آماده نشد؛ دوباره تلاش کنید.");
+            setPhaseState(3, "ready");
+            setRunningPhase(null);
+            setText(
+              diveDocEl,
+              detail || "مطالعۀ عمیق آماده نشد؛ دوباره تلاش کنید.",
+              "error"
+            );
+            diveStatusEl = null;
+            diveStartEl.disabled = false;
             return;
           }
-          const blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
-          if (!blocks.length) {
-            failDive("مطالعۀ عمیق آماده نشد؛ دوباره تلاش کنید.");
-            return;
-          }
-          const doc = document.createDocumentFragment();
-          // A study the continuation could not finish says so itself,
-          // above its sections — phase 2's note, reused.
-          if (payload.truncated) {
-            doc.append(truncatedNote());
-          }
-          for (const block of blocks) {
-            if (block.type === "heading") {
-              const heading = document.createElement("h3");
-              heading.className = "doc-heading";
-              heading.textContent = block.text;
-              doc.append(heading);
-            } else if (block.type === "paragraph") {
-              doc.append(paragraphNode(block));
-            } else if (block.type === "references") {
-              // The closing references list — built server-side from the
-              // passages the study actually quoted, never by the model.
-              const refHeading = document.createElement("h3");
-              refHeading.className = "doc-heading";
-              refHeading.textContent = "منابع";
-              doc.append(refHeading);
-              for (const item of Array.isArray(block.items) ? block.items : []) {
-                const ref = document.createElement("p");
-                ref.className = "cite";
-                ref.textContent = item;
-                doc.append(ref);
-              }
-            }
-          }
-          diveDocEl.replaceChildren(doc);
-          setPhaseState(3, "done");
-          stopPhaseTimer(3);
-          setRunningPhase(null);
-          // Bring the fresh study forward: each phase shows itself when
-          // it lands.
-          selectPhase(3);
-          diveStartEl.disabled = false;
+          // The job is live: keep its identity for a refresh reconnect,
+          // start the phase timer, and enter the polling loop.
+          storeDiveJob({
+            job_id: payload.job_id,
+            query,
+            phone: phoneEl.value.trim(),
+          });
+          startPhaseTimer(3);
+          pollDiveJob(payload.job_id);
         } catch {
           if (run !== citationRun) return;
-          // The dive unreachable or aborted: the first answer and the
-          // Quoted answer stay where they are.
-          failDive("ارتباط با سرویس مطالعۀ عمیق قطع شد.");
+          // The sheet unreachable: the first answer and the Quoted
+          // answer stay where they are.
+          setPhaseState(3, "ready");
+          setRunningPhase(null);
+          setText(diveDocEl, "ارتباط با سرویس مطالعۀ عمیق قطع شد.", "error");
+          diveStatusEl = null;
+          diveStartEl.disabled = false;
         }
       }
       diveStartEl.addEventListener("click", startDive);
+
+      // Refresh reconnect (issue #26): a stored job id means this phone
+      // has a dive the reload must not throw away — poll once
+      // immediately and re-enter whichever surface the job has reached
+      // (running with the elapsed-seeded timer, the finished study, or
+      // the settled failure note).
+      (function reconnectDive() {
+        const stored = storedDiveJob();
+        if (!stored || !stored.job_id) return;
+        if (stored.phone && stored.phone !== phoneEl.value.trim()) {
+          clearDiveJob();
+          return;
+        }
+        if (stored.query) diveQuery = stored.query;
+        setPhaseState(3, "running");
+        setRunningPhase(3);
+        diveStartEl.disabled = true;
+        showDiveStatus("در حال نوشتن مطالعۀ عمیق…");
+        selectPhase(3);
+        pollDiveJob(stored.job_id);
+      })();
 
       async function readSse(res, onEvent) {
         const reader = res.body.getReader();
@@ -1037,10 +1176,16 @@
 
         // A new ask owns the sheet: abort any in-flight phase 2 or dive
         // of the previous one, then reset all three sections to idle.
+        // The dive's server-side abort rides this ask's own recall POST
+        // (issue #26) — here the client only stops polling and drops
+        // the stored job identity.
         if (quotedAbort) quotedAbort.abort();
         if (diveAbort) diveAbort.abort();
         quotedAbort = new AbortController();
         diveAbort = new AbortController();
+        stopDivePolling();
+        clearDiveJob();
+        diveStatusEl = null;
         for (const n of [1, 2, 3]) {
           stopPhaseTimer(n);
           phaseEls[n].startedAt = null;

@@ -1,6 +1,7 @@
 from tests.conftest import REPO_ROOT
 
 README = REPO_ROOT / "README.md"
+UI = REPO_ROOT / "ui" / "index.html"
 
 
 def _section(heading: str) -> str:
@@ -109,3 +110,43 @@ def test_readme_records_the_operator_started_phase_three_in_session_ui():
     assert "no longer auto-starts" in section
     assert "stops when phase 2 settles" in section
     assert "/deep-dive" in section
+
+
+# --- the sheet's job contract (issue #26) --------------------------------------
+#
+# The sheet no longer holds a multi-minute POST: the start answers a job
+# identity, the sheet polls the status endpoint, and sessionStorage
+# reconnects a refreshed browser to the running dive.
+
+
+def test_sheet_polls_the_dive_status_endpoint():
+    html = UI.read_text(encoding="utf-8")
+    assert "/deep-dive" in html
+    # The poll reads the status endpoint with the job id.
+    assert "/deep-dive/status?job=" in html
+    assert "pollDiveJob(" in html
+    # The loop is a chained setTimeout, never a busy await.
+    assert "setTimeout(poll" in html
+
+
+def test_sheet_stores_the_dive_job_for_a_refresh_reconnect():
+    html = UI.read_text(encoding="utf-8")
+    assert 'sessionStorage.setItem("sessionDive"' in html
+    assert 'sessionStorage.getItem("sessionDive")' in html
+    assert 'sessionStorage.removeItem("sessionDive")' in html
+    # A reconnect seeds the phase timer from the job's honest elapsed.
+    assert "payload.elapsed" in html
+
+
+def test_sheet_reports_busy_failed_and_aborted_dives_in_farsi():
+    html = UI.read_text(encoding="utf-8")
+    assert "مطالعۀ عمیق ناتمام ماند" in html
+    assert "مطالعۀ عمیق لغو شد." in html
+
+
+def test_a_new_ask_stops_the_dive_polling_without_an_abort_endpoint():
+    html = UI.read_text(encoding="utf-8")
+    assert "stopDivePolling(" in html
+    # The server-side abort rides the ask's own recall POST — the sheet
+    # names no abort endpoint of its own.
+    assert "/deep-dive/abort" not in html
