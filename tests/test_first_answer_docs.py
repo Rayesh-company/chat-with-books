@@ -44,8 +44,12 @@ def test_readme_records_the_quote_selection_as_the_first_answer():
     assert "glm-5.3-flash" in section
     assert "thinking disabled" in section
     assert "ONE" in section
-    # Ten aimed, guarded 4-12.
+    # Ten aimed, guarded 4-12 — the cap and floor pinned in words.
     assert "aim" in section
+    assert "twelve" in section
+    assert "four" in section
+    # The reply records the pool size beside the selections.
+    assert "pool_size" in section
     assert "VERBATIM" in section
     # The verbatim guard drops paraphrases and wrong-index claims.
     assert "wrong index" in section
