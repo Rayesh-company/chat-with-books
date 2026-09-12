@@ -54,8 +54,28 @@ DIVE_SEARCH_TYPE = "GRAPH_COMPLETION"
 # ten minutes on live logs, and a decomposition pass is lighter).
 DIVE_SEARCH_TIMEOUT = 600
 # The Planner decomposes the question into at most this many Farsi
-# sub-questions; as many searchers run in parallel.
+# sub-questions; as many searchers run in parallel. The planner prompt's
+# count wording is derived from this constant — the two cannot drift.
 DIVE_MAX_SUB_QUESTIONS = 6
+
+# Small counts as English words, for the prompt wording derived from the
+# caps above; anything past the table reads as digits.
+_COUNT_WORDS = {
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+    10: "ten",
+}
+
+
+def _count_word(count: int) -> str:
+    return _COUNT_WORDS.get(count, str(count))
 
 # Phone gate (PM call, 2026-09-10, for the public VPS deploy): the sheet
 # identifies a Customer by a phone number and each number gets
@@ -219,8 +239,9 @@ def guard_blocks(blocks, sources):
         if kind == "references":
             # The dive's closing references list is built server-side and
             # rides in guarded output untouched — no passage claims to
-            # guard, and the sheet renders it as the «منابع» list.
-            if isinstance(block.get("items"), list):
+            # guard, and the sheet renders it as the «منابع» list. An
+            # empty one drops: a bare «منابع» heading is not a list.
+            if isinstance(block.get("items"), list) and block["items"]:
                 kept.append(block)
         elif kind == "heading":
             text = block.get("text")
@@ -552,6 +573,15 @@ def _composer_reply(message: str, thinking_type: str, model: str = COMPOSER_MODE
         return json.load(response)
 
 
+def _composer_content(reply):
+    """Walk a composer reply down to its message content, raising on any
+    malformed reply — the walk every composer caller guards with
+    (KeyError, ValueError, OSError). A successful call guarantees
+    reply["choices"][0] exists, so callers reading finish_reason use
+    reply["choices"][0].get(...) safely."""
+    return reply["choices"][0]["message"]["content"]
+
+
 def plan_quoted_document(question: str, sources) -> str:
     """Reason out the document plan; "" on any planner failure.
 
@@ -561,8 +591,9 @@ def plan_quoted_document(question: str, sources) -> str:
     (AC-4, issue #23).
     """
     try:
-        reply = _composer_reply(build_planner_prompt(question, sources), "enabled")
-        content = reply["choices"][0]["message"]["content"]
+        content = _composer_content(
+            _composer_reply(build_planner_prompt(question, sources), "enabled")
+        )
     except (KeyError, ValueError, OSError):
         return ""
     # A thinking reply lands its final text in message.content (the
@@ -585,12 +616,11 @@ def continue_quoted_document(question, answer, sources, plan, blocks):
             build_continuation_prompt(question, answer, sources, plan, blocks),
             "disabled",
         )
-        choice = reply["choices"][0]
-        content = choice["message"]["content"]
+        content = _composer_content(reply)
     except (KeyError, ValueError, OSError):
         return blocks, True
     extra = parse_quoted_reply(content)
-    return blocks + extra, choice.get("finish_reason") == "length"
+    return blocks + extra, reply["choices"][0].get("finish_reason") == "length"
 
 
 def compose_quoted_answer(question: str, answer: str, sources):
@@ -614,12 +644,11 @@ def compose_quoted_answer(question: str, answer: str, sources):
         reply = _composer_reply(
             build_quoted_prompt(question, answer, sources, plan), "disabled"
         )
-        choice = reply["choices"][0]
-        content = choice["message"]["content"]
+        content = _composer_content(reply)
     except (KeyError, ValueError, OSError):
         return [], False
     blocks = parse_quoted_reply(content)
-    if choice.get("finish_reason") != "length":
+    if reply["choices"][0].get("finish_reason") != "length":
         return guard_blocks(blocks, sources), False
     blocks, truncated = continue_quoted_document(
         question, answer, sources, plan, blocks
@@ -673,7 +702,8 @@ def build_dive_planner_prompt(question: str) -> str:
         "Task: decompose the question into distinct Farsi sub-questions "
         "whose answers together cover it — the facets, sub-themes, and "
         "cross-checks a scholarly study of the Books would need. Up to "
-        "six sub-questions; fewer when the question is narrow. Each "
+        f"{_count_word(DIVE_MAX_SUB_QUESTIONS)} sub-questions; fewer when "
+        "the question is narrow. Each "
         "sub-question must be answerable from the Books on its own. "
         "Never answer them yourself.\n\n"
         "Reply with ONLY a JSON array of Farsi strings, no prose, no "
@@ -722,7 +752,7 @@ def plan_dive_subquestions(question: str) -> list:
         reply = _composer_reply(
             build_dive_planner_prompt(question), "enabled", DIVE_MODEL
         )
-        content = reply["choices"][0]["message"]["content"]
+        content = _composer_content(reply)
     except (KeyError, ValueError, OSError):
         return [question]
     return dive_subquestions_from_reply(content, question)
@@ -876,12 +906,11 @@ def continue_dive_study(question: str, sources, blocks: list):
             "disabled",
             DIVE_MODEL,
         )
-        choice = reply["choices"][0]
-        content = choice["message"]["content"]
+        content = _composer_content(reply)
     except (KeyError, ValueError, OSError):
         return blocks, True
     extra = parse_quoted_reply(content)
-    return blocks + extra, choice.get("finish_reason") == "length"
+    return blocks + extra, reply["choices"][0].get("finish_reason") == "length"
 
 
 def compose_dive_study(question: str, sources):
@@ -898,12 +927,11 @@ def compose_dive_study(question: str, sources):
         reply = _composer_reply(
             build_dive_prompt(question, sources), "disabled", DIVE_MODEL
         )
-        choice = reply["choices"][0]
-        content = choice["message"]["content"]
+        content = _composer_content(reply)
     except (KeyError, ValueError, OSError):
         return [], False
     blocks = parse_quoted_reply(content)
-    if choice.get("finish_reason") != "length":
+    if reply["choices"][0].get("finish_reason") != "length":
         return guard_blocks(blocks, sources), False
     blocks, truncated = continue_dive_study(question, sources, blocks)
     return guard_blocks(blocks, sources), truncated
@@ -917,8 +945,6 @@ def with_dive_references(blocks: list, sources) -> list:
     model-invented. An empty study (the guard kept nothing) appends
     nothing: there is no study to close.
     """
-    if not blocks:
-        return blocks
     used = []
     for block in blocks:
         if block.get("type") != "paragraph":
@@ -933,6 +959,8 @@ def with_dive_references(blocks: list, sources) -> list:
                 reference = sources[index]["reference"]
                 if reference not in used:
                     used.append(reference)
+    if not used:
+        return blocks
     return blocks + [{"type": "references", "items": used}]
 
 
