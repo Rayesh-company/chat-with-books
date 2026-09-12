@@ -1390,7 +1390,6 @@
           });
           const ctype = res.headers.get("Content-Type") || "";
           if (ctype.includes("text/event-stream")) {
-            let preview = "";
             let streamError = null;
             let gotFinal = false;
             await readSse(res, (name, data) => {
@@ -1403,13 +1402,11 @@
                   "empty"
                 );
               } else if (name === "delta") {
-                // The prose preview is no longer painted (issue #28):
-                // deltas still arrive and still drive the TTFT readout
-                // — «نخستین توکن» is first token ARRIVAL.
-                preview += JSON.parse(data).text;
+                // The prose is no longer painted (issue #28): deltas
+                // still arrive and still drive the TTFT readout —
+                // «نخستین توکن» is first token ARRIVAL.
                 markFirstToken();
               } else if (name === "reset") {
-                preview = "";
                 setText(answerEl, "در حال تولید پاسخ…", "empty");
               } else if (name === "error") {
                 streamError = new Error(JSON.parse(data).message || "خطا در جریان پاسخ.");

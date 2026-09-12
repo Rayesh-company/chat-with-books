@@ -97,6 +97,10 @@ def test_readme_records_streaming_seam():
     text = README.read_text(encoding="utf-8")
     assert "LLM_ANSWER_STREAMING" in text
     assert "نخستین توکن" in text
+    # Nothing accumulates the prose any more (the dead preview
+    # accumulator is gone, full-spec review 2026-09-12), so a reset
+    # frame has no accumulated prose to clear.
+    assert "accumulated prose" not in text
 
 
 def test_session_ui_never_serves_from_stale_cache():

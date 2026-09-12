@@ -85,7 +85,10 @@ def test_sheet_no_longer_paints_the_streamed_prose_as_the_phase1_answer():
     # /quoted-answer's answer field, never rendered as the first answer.
     html = UI.read_text(encoding="utf-8")
     assert "renderMarkdown(answerEl, preview)" not in html
-    assert "preview += JSON.parse(data).text" in html
+    # The write-only accumulator is gone entirely (full-spec review,
+    # 2026-09-12): nothing accumulates the prose, TTFT comes from
+    # markFirstToken alone.
+    assert "preview" not in html
     assert "markFirstToken" in html
     # The selection lands through the picker call; phase 2 keeps its
     # exact payload (the raw split answer, locked verbatim in
