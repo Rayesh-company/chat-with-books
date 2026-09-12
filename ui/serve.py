@@ -1027,6 +1027,7 @@ def _dive_gap_event(starved: int) -> str:
     verb = "می‌شود" if starved == 1 else "می‌شوند"
     return f"{digits} بخشِ کم‌نقل دوباره جست‌وجو {verb}…"
 
+
 # Recorded limit (YAGNI): terminal jobs are never reaped — they linger
 # in this dict by design. The caps scan non-terminal jobs only, and a
 # server restart empties the registry, so growth is bounded by one

@@ -125,12 +125,27 @@ def test_readme_records_the_server_side_abort_by_new_ask():
     assert "cooperative" in section
 
 
-def test_readme_records_the_gap_round_as_still_not_yet():
-    # The gap round stays unshipped — the README must say it follows,
-    # not that it exists (issue #27).
+def test_readme_records_the_bounded_second_retrieval():
+    # The gap round shipped (issue #27): starvation is fewer than two
+    # parsed passages, starved sections re-search exactly once, the two
+    # caps — six searchers per round, two retrieval rounds — are
+    # recorded, and the round is visible in the status events.
     section = _deep_dive_section()
     assert "gap round" in section
-    assert "No gap round yet" in section
+    assert "No gap round yet" not in section
+    assert "quote-starved" in section
+    assert "fewer than two" in section
+    assert "one gap round" in section
+    assert "two retrieval rounds" in section
+    assert "six searchers per round" in section
+    assert "unbounded agentic loop" in section
+    # The re-search carries only the starved sub-questions.
+    assert "only the starved sub-questions" in section
+    # A well-fed dive never runs it.
+    assert "well-fed" in section
+    # The round is announced in the status events while still searching.
+    assert "کم‌نقل" in section
+    assert "searching" in section
 
 
 def test_readme_records_the_operator_started_phase_three_in_session_ui():
