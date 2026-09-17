@@ -72,6 +72,16 @@ def test_the_router_prompt_is_generated_from_the_table():
     assert "Reply with ONLY a JSON object" in prompt
 
 
+def test_the_router_prompt_prints_the_plain_persian_names():
+    # T10 (GitLab #11): the model picks a skill by its plain-Persian
+    # display name too — the CONTEXT naming table rides the table rows
+    # into the generated prompt.
+    state = research.new_research_state("پرسش پژوهش؟")
+    prompt = research.build_classify_prompt("پیام", state, "")
+    for row in research.SKILL_TABLE:
+        assert row["display_name"] in prompt
+
+
 def test_validate_skill_pick_accepts_every_row_on_a_fresh_state():
     # The code-side validation seam: today every skill runs in every
     # stage, and the check says so — later tickets tighten rows here,

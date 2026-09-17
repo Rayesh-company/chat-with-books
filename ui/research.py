@@ -137,6 +137,17 @@ RESEARCH_GRILLING_STAGE_CAP = 3
 # proposal of a kind, this many turns park no NEW proposal of that kind
 # — the damper that breaks the rewrite→approve planning loop.
 PROPOSAL_COOLDOWN_TURNS = 2
+# The Brief plan (ADR-0012, T7) — the proposed section plan of the
+# closing Brief, each section tied to its named open questions and the
+# claims that will support them — is a THIRD proposal kind in the
+# decide flow: parked like every chart edit only on an exploration
+# turn, damped by its own `brief_plan` cooldown key, and accepted
+# APPEND-ONLY (a version per acceptance, never a rewrite). Accepting
+# it is what unlocks section writing (T8).
+# The strangler switch: the one-shot Brief of today keeps running
+# until the per-section writer (T8) lands — then the Brief demands an
+# accepted plan and this flips to True.
+BRIEF_PLANS_REQUIRED = False
 # The open questions' statuses: pending (the frontier), searched (fed),
 # gap (the Books could not feed it — the honest outcome).
 QUESTION_STATUS_LABELS = {
@@ -158,15 +169,18 @@ RESEARCH_INTENTS = (
 )
 
 # The dispatch table (ADR-0012): one row per Research skill, each a
-# declared contract — purpose (the router prompt prints it), kind
-# (chat / chart / work), the allowed stages (None = any; the seam where
-# stage validation runs), its caps, the Tools it may search with, the
-# state it reads and writes, and whether its output passes the verbatim
-# guard. Adding a skill touches this table and nothing else: the
-# router's prompt and its dispatch are generated from it.
+# declared contract — purpose (the router prompt prints it), display
+# name (the approved plain-Persian naming table, CONTEXT.md — T10,
+# GitLab #11), kind (chat / chart / work), the allowed stages (None =
+# any; the seam where stage validation runs), its caps, the Tools it
+# may search with, the state it reads and writes, and whether its
+# output passes the verbatim guard. Adding a skill touches this table
+# and nothing else: the router's prompt and its dispatch are generated
+# from it.
 SKILL_TABLE = (
     {
         "name": "casual_question",
+        "display_name": "میزبان",
         "purpose": "answer normally, no research step",
         "kind": "chat",
         "runner": "chat",
@@ -179,6 +193,7 @@ SKILL_TABLE = (
     },
     {
         "name": "concept_learning",
+        "display_name": "میزبان",
         "purpose": "teach a concept from the Books, no research step",
         "kind": "chat",
         "runner": "chat",
@@ -191,6 +206,7 @@ SKILL_TABLE = (
     },
     {
         "name": "source_lookup",
+        "display_name": "میزبان",
         "purpose": "locate where the Books say it, no research step",
         "kind": "chat",
         "runner": "chat",
@@ -203,6 +219,7 @@ SKILL_TABLE = (
     },
     {
         "name": "research_exploration",
+        "display_name": "راهنما",
         "purpose": "discovering or adjusting the research direction",
         "kind": "chart",
         "runner": "research",
@@ -213,6 +230,7 @@ SKILL_TABLE = (
         "state_writes": (
             "research_question",
             "scope",
+            "brief_plan",
             "subquestions",
             "concepts",
             "fog",
@@ -227,6 +245,7 @@ SKILL_TABLE = (
     },
     {
         "name": "active_research",
+        "display_name": "جست‌وجوگر",
         "purpose": "execute the investigation",
         "kind": "work",
         "runner": "research",
@@ -250,18 +269,20 @@ SKILL_TABLE = (
     },
     {
         "name": "drafting",
+        "display_name": "نویسنده",
         "purpose": "produce the closing research brief",
         "kind": "work",
         "runner": "brief",
         "allowed_stages": None,
         "caps": "one writer pass, one retry",
         "tools": ("hybrid",),
-        "state_reads": ("research_question", "claims", "gaps", "evidence"),
+        "state_reads": ("research_question", "claims", "gaps", "evidence", "brief_plan"),
         "state_writes": ("stage", "phase", "diagnoses"),
         "guarded": True,
     },
     {
         "name": "evidence_audit",
+        "display_name": "بازبین",
         "purpose": "review the claims and their citations",
         "kind": "work",
         "runner": "audit",
@@ -310,6 +331,13 @@ RESEARCH_MAX_CONCEPTS = 18
 # The session's soft cost bound: at this many turns every reply suggests
 # finalizing the Brief — a suggestion, never a refusal.
 RESEARCH_SESSION_TURN_CAP = 40
+# The turn's HARD cost bound (ADR-0012, T3): a wall-clock deadline plus
+# an upstream-call cap, both worker configuration at the highest point
+# (run_research_turn's arguments). The deadline is the spec's 10
+# minutes; the cap sits above every legitimate single-operation turn
+# today (worst gather ≈ 19 upstream calls) and below a runaway chain.
+RESEARCH_TURN_DEADLINE_SECONDS = 600
+RESEARCH_TURN_CALL_CAP = 24
 # The claim ledger's statuses (Wayfinder §11, minus External Knowledge:
 # this platform answers from the Books only, so out-of-corpus content is
 # labeled commentary in notes and may never enter a claim). The first
@@ -353,6 +381,21 @@ RESEARCH_SESSION_CAP_DETAIL = (
 RESEARCH_FAILED_DETAIL = "پاسخ پژوهش ناتمام ماند؛ خطای غیرمنتظره."
 RESEARCH_NO_EVIDENCE_DETAIL = "نقل‌قولی از کتاب‌ها برای این پیام پیدا نشد."
 RESEARCH_EMPTY_REPLY_DETAIL = "پاسخ نگارنده قابل استفاده نبود."
+# The plan checkpoint's honest refusal (T7): once plans are required, a
+# Brief without an accepted plan is not written — the note says what to
+# do first, never a fake start.
+RESEARCH_BRIEF_NEEDS_PLAN_DETAIL = (
+    "خلاصۀ پژوهش بدون برنامۀ پذیرفتۀ بخش‌ها نوشته نمی‌شود؛ اول برنامۀ "
+    "بخش‌ها را بپذیرید."
+)
+# The budget's honest stop (T3): the timeline event and the note the
+# transcript keeps. An over-budget turn names its stop — never a fake
+# completion, never the generic unexpected-error failure.
+RESEARCH_EVENT_BUDGET = "بودجۀ این پیام پژوهش تمام شد؛ کار در همین مرز متوقف شد."
+RESEARCH_BUDGET_STOP_DETAIL = (
+    "بودجۀ این پیام پژوهش تمام شد و کار در همین مرز متوقف شد؛ "
+    "برای ادامه، دوباره بپرسید."
+)
 
 _FARSI_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 
@@ -394,7 +437,11 @@ def new_research_state(goal: str) -> dict:
             "landscape_done": False,
         },
         "grilling": {"asked_in_stage": 0, "current_question": "", "options": []},
-        "proposal_cooldowns": {"research_question": 0, "scope": 0},
+        # The Brief plan's ledger (T7): the accepted plan rides as
+        # `current`, every acceptance appends a version — append-only
+        # provenance like the research question's.
+        "brief_plan": {"current": None, "versions": []},
+        "proposal_cooldowns": {"research_question": 0, "scope": 0, "brief_plan": 0},
         "pending_proposals": [],
         "turns": 0,
         "closed": False,
@@ -424,6 +471,10 @@ def ensure_state_shape(state: dict) -> dict:
     state["grilling"].setdefault("options", [])
     state.setdefault("datasets", list(BOOK_DATASETS))
     state.setdefault("diagnoses", [])
+    # The plan ledger exists from the first session shape on (T7); the
+    # cooldown dict is NOT seeded with the plan's key — a kind's entry
+    # appears when that kind is decided, and every read defaults to 0.
+    state.setdefault("brief_plan", {"current": None, "versions": []})
     cooldowns = state.setdefault("proposal_cooldowns", {})
     for kind in ("research_question", "scope"):
         cooldowns.setdefault(kind, 0)
@@ -577,6 +628,8 @@ def research_state_summary(state: dict) -> dict:
     frontier = frontier_question(state)
     grilling = state.get("grilling", {})
     stage = state.get("stage", "orientation")
+    plan = state.get("brief_plan") or {}
+    plan_current = plan.get("current") or {}
     return {
         "research_question": question.get("current", ""),
         "rq_versions": len(question.get("versions", [])),
@@ -589,7 +642,11 @@ def research_state_summary(state: dict) -> dict:
         ],
         "evidence_count": len(state.get("evidence", [])),
         "claims": [
-            {"text": item.get("text", ""), "status": item.get("status", "")}
+            {
+                "id": item.get("id", ""),
+                "text": item.get("text", ""),
+                "status": item.get("status", ""),
+            }
             for item in state.get("claims", [])[:10]
         ],
         "gaps": [item.get("text", "") for item in state.get("gaps", [])][:6],
@@ -621,6 +678,17 @@ def research_state_summary(state: dict) -> dict:
         "grilling": {
             "question": grilling.get("current_question", ""),
             "options": list(grilling.get("options", []))[:4],
+        },
+        # The Brief plan's projection (T7): whether an accepted plan
+        # exists, how many acceptances accumulated, and the accepted
+        # sections' titles — the router reads this before proposing or
+        # writing against the plan.
+        "brief_plan": {
+            "accepted": bool(plan_current),
+            "versions": len(plan.get("versions", [])),
+            "sections": [
+                section.get("title", "") for section in plan_current.get("sections", [])
+            ][:6],
         },
     }
 
@@ -660,10 +728,13 @@ def next_best_move(state: dict) -> str:
 def research_suggestions(state: dict) -> list:
     """The chip set the sheet renders under the latest reply — the
     journey's own moves, not a fixed row: checkpoint decisions first
-    (a pending decision blocks everything else), then the guided
+    (the pending proposals, decided one pair each), then the guided
     question's options with the skip, then the stage's moves. The
     proposal chips carry SHORT labels; the proposal text rides in the
-    note above, never inside the chip."""
+    note above, never inside the chip. The moves are NEVER hidden
+    behind a waiting proposal (T7 #8, user story 19): deciding must not
+    block working — an explicit command executes even while a proposal
+    waits (ADR-0011), so its chip stays reachable."""
     suggestions = []
     if state.get("pending_proposals"):
         for proposal in state["pending_proposals"]:
@@ -685,7 +756,6 @@ def research_suggestions(state: dict) -> list:
                     "accept": False,
                 }
             )
-        return suggestions[:6]
     grilling = state.get("grilling", {})
     if grilling.get("current_question"):
         for option in grilling.get("options", [])[:4]:
@@ -808,7 +878,10 @@ def build_classify_prompt(message: str, state: dict, tail: str) -> str:
         f"Recent conversation:\n{tail or '(none)'}\n\n"
         f"Latest message: {message}{guided_block}\n\n"
         "Intents (choose exactly one) — the skill table, printed:\n"
-        + "".join(f"- {row['name']}: {row['purpose']}\n" for row in SKILL_TABLE)
+        + "".join(
+            f"- {row['name']} ({row['display_name']}): {row['purpose']}\n"
+            for row in SKILL_TABLE
+        )
         + "\n"
         "These fixed commands map deterministically — recognize them "
         f"exactly: \"{COMMAND_GATHER}\" -> active_research; "
@@ -816,11 +889,11 @@ def build_classify_prompt(message: str, state: dict, tail: str) -> str:
         f"\"{COMMAND_BRIEF}\" -> drafting; \"{COMMAND_AUDIT}\" -> "
         "evidence_audit.\n\n"
         "Also propose, ONLY when the message gives real cause (empty or "
-        "empty list otherwise). The map-mode rule: rq_proposal and "
-        "scope_in/scope_out are CHART edits — propose them ONLY when "
-        "you chose intent research_exploration; on an active-research, "
-        "drafting, or audit turn the user is WORKING, so leave them "
-        "empty:\n"
+        "empty list otherwise). The map-mode rule: rq_proposal, "
+        "scope_in/scope_out, and brief_plan are CHART edits — propose "
+        "them ONLY when you chose intent research_exploration; on an "
+        "active-research, drafting, or audit turn the user is WORKING, "
+        "so leave them empty:\n"
         "- rq_proposal: a refined research question in Farsi, materially "
         "sharper than the current one — never a restatement\n"
         "- reason: one short Farsi sentence saying why the refinement "
@@ -831,6 +904,14 @@ def build_classify_prompt(message: str, state: dict, tail: str) -> str:
         "the Books for\n"
         "- scope_in, scope_out: short Farsi phrases naming what the "
         "investigation should include or exclude\n"
+        "- brief_plan: when the message asks to PLAN the closing Brief "
+        "— its shape before any writing — the proposed section plan as "
+        "a JSON list of two to five objects "
+        '{"title": "<short Farsi section title>", '
+        '"question": "<the name of ONE open question from the map this '
+        'section answers>", "claims": ["c1", ...]} — the claim ids from '
+        "the state's claim ledger that will support the section; empty "
+        "when the message is not about planning the Brief\n"
         "- answer_gist: when the message answers a guided question or "
         "states a direction, ONE short Farsi line gisting the decision "
         "the user just made\n"
@@ -845,7 +926,7 @@ def build_classify_prompt(message: str, state: dict, tail: str) -> str:
         "Reply with ONLY a JSON object, no prose, no code fence:\n"
         '{"intent": "casual_question", "rq_proposal": "", "reason": "", '
         '"concepts": [], "subquestions": [], "scope_in": [], '
-        '"scope_out": [], "answer_gist": "", "fog": [], '
+        '"scope_out": [], "brief_plan": [], "answer_gist": "", "fog": [], '
         '"new_open_questions": []}'
     )
 
@@ -885,6 +966,35 @@ def parse_classify_strict(content):
             }
         )
     out["new_open_questions"] = questions[:4]
+    # The Brief plan's sections (T7): each keeps a title, the named
+    # open question it answers, and its claim ids — junk entries and
+    # titleless sections drop, the rest cap at five.
+    sections = []
+    for item in parsed.get("brief_plan") or []:
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title")
+        if not isinstance(title, str) or not title.strip():
+            continue
+        raw_claims = item.get("claims")
+        claims = (
+            [
+                claim.strip()
+                for claim in raw_claims
+                if isinstance(claim, str) and claim.strip()
+            ]
+            if isinstance(raw_claims, list)
+            else []
+        )
+        question = item.get("question")
+        sections.append(
+            {
+                "title": title.strip()[:80],
+                "question": question.strip() if isinstance(question, str) else "",
+                "claims": claims[:6],
+            }
+        )
+    out["brief_plan"] = sections[:5]
     out["concepts"] = out["concepts"][:DIVE_MAX_SUB_QUESTIONS]
     out["subquestions"] = out["subquestions"][:DIVE_MAX_SUB_QUESTIONS]
     out["scope_in"] = out["scope_in"][:4]
@@ -1048,9 +1158,13 @@ def parse_grilling_reply(content):
     }
 
 
-def author_grilling(state: dict) -> dict:
+def author_grilling(state: dict, budget=None) -> dict:
     """One authoring call (thinking on — the reasoning pass); the
-    guarded question dict, empty on any failure."""
+    guarded question dict, empty on any failure. The authoring call is
+    pre-paid from the turn's budget FIRST — a refusal propagates to the
+    worker's honest stop, never into the author's own failure guard."""
+    if budget is not None:
+        budget.require(1)
     try:
         reply = _composer_reply(
             build_grilling_prompt(state),
@@ -1112,10 +1226,14 @@ def parse_narration_reply(content) -> str:
     return " ".join(sentences[:3])[:600]
 
 
-def narrate(state: dict, facts: dict) -> str:
+def narrate(state: dict, facts: dict, budget=None) -> str:
     """One narration call (thinking off); '' on any failure or junk —
     the operation's reply stands perfectly well without its opening
-    note."""
+    note. An unaffordable narration call is the same silence: the
+    budget's refusal is recorded, and the worker's boundary check stops
+    the turn after the operation's own reply lands."""
+    if budget is not None and not budget.afford(1):
+        return ""
     try:
         reply = _composer_reply(
             build_narration_prompt(state, facts),
@@ -1126,6 +1244,8 @@ def narrate(state: dict, facts: dict) -> str:
         content = _composer_content(reply)
     except Exception:
         return ""
+    if budget is not None:
+        budget.charge(1)
     return parse_narration_reply(content)
 
 
@@ -1294,10 +1414,11 @@ def build_brief_prompt(state: dict, sources) -> str:
     )
 
 
-def _continue_once(prompt: str, blocks: list):
+def _continue_once(prompt: str, blocks: list, budget=None):
     """One continuation call past a length-cut reply; (blocks,
     truncated). A failed or doubly-cut continuation rides on as the
-    salvaged prefix, still cut."""
+    salvaged prefix, still cut. The continuation call is pre-paid from
+    the turn's budget like every bounded step."""
     written = json.dumps({"blocks": blocks}, ensure_ascii=False)
     continuation = (
         prompt
@@ -1310,6 +1431,8 @@ def _continue_once(prompt: str, blocks: list):
         "is already written; never invent or paraphrase a quote. If "
         'nothing is missing, reply with an empty list: {"blocks": []}.'
     )
+    if budget is not None:
+        budget.require(1)
     try:
         reply = _composer_reply(
             continuation, "disabled", RESEARCH_MODEL, urlopen_fn=urlopen
@@ -1321,10 +1444,13 @@ def _continue_once(prompt: str, blocks: list):
     return blocks + extra, reply["choices"][0].get("finish_reason") == "length"
 
 
-def _write_once(prompt: str, sources):
+def _write_once(prompt: str, sources, budget=None):
     """One writer attempt over a pool: (guarded blocks, truncated) — the
     dive's _write_dive_once shape: call, parse, ONE length-cut
-    continuation, guard."""
+    continuation, guard. The writer call is pre-paid from the turn's
+    budget first; a refusal propagates to the worker's honest stop."""
+    if budget is not None:
+        budget.require(1)
     try:
         reply = _composer_reply(prompt, "disabled", RESEARCH_MODEL, urlopen_fn=urlopen)
         content = _composer_content(reply)
@@ -1333,18 +1459,18 @@ def _write_once(prompt: str, sources):
     blocks = parse_quoted_reply(content)
     if reply["choices"][0].get("finish_reason") != "length":
         return guard_blocks(blocks, sources), False
-    blocks, truncated = _continue_once(prompt, blocks)
+    blocks, truncated = _continue_once(prompt, blocks, budget)
     return guard_blocks(blocks, sources), truncated
 
 
-def compose_guarded_reply(prompt: str, sources):
+def compose_guarded_reply(prompt: str, sources, budget=None):
     """One guarded writer pass with the dive's bounded repair: a reply "
     whose guard keeps NOTHING gets ONE writer retry over the same pool —
-    never a loop."""
-    blocks, truncated = _write_once(prompt, sources)
+    never a loop. The turn's budget pre-pays every writer call."""
+    blocks, truncated = _write_once(prompt, sources, budget)
     if blocks:
         return blocks, truncated
-    return _write_once(prompt, sources)
+    return _write_once(prompt, sources, budget)
 
 
 def with_references(blocks: list, sources) -> list:
@@ -1421,6 +1547,108 @@ def record_claims(state: dict, blocks: list, evidence_ids) -> int:
     return added
 
 
+# --- the per-turn budget (ADR-0012, T3) --------------------------------------
+
+
+class BudgetExhausted(Exception):
+    """Raised at a chain boundary when the turn's budget cannot afford
+    the next bounded step (`reason`: "deadline" or "call_cap"). It
+    subclasses Exception directly on purpose: no operation's
+    upstream-failure guard (KeyError/ValueError/OSError) may swallow it
+    — the worker is its only catcher, and the stop must stay honest."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+class TurnBudget:
+    """One turn's hard cost bound (ADR-0012, T3): a wall-clock deadline
+    (default RESEARCH_TURN_DEADLINE_SECONDS) plus an upstream-call cap
+    (default RESEARCH_TURN_CALL_CAP), read through an injected clock so
+    tests exhaust either instantly — no waiting on real time.
+
+    The cap's teeth are afford-before-start: a bounded step is started
+    only when its full known call cost fits (`require` pre-pays it), so
+    a recorded cap can never be exceeded mid-call. The deadline is
+    cooperative like the cancel flag — checked at every chain boundary;
+    an in-flight upstream call is never interrupted, so a turn
+    overshoots its deadline by at most the one call already in flight.
+    The first refusal records `reason`; every later check refuses on
+    it, so the stop's cause is the budget's own word."""
+
+    def __init__(self, clock=time.monotonic, deadline_seconds=None, call_cap=None):
+        self.clock = clock
+        self.deadline_at = self.clock() + (
+            RESEARCH_TURN_DEADLINE_SECONDS
+            if deadline_seconds is None
+            else deadline_seconds
+        )
+        self.call_cap = RESEARCH_TURN_CALL_CAP if call_cap is None else call_cap
+        self.calls = 0
+        self.reason = None
+
+    def expired(self) -> bool:
+        return self.clock() >= self.deadline_at
+
+    def afford(self, calls: int) -> bool:
+        """Whether `calls` more upstream calls fit; a refusal records
+        its reason once and refuses everything after."""
+        if self.reason is not None:
+            return False
+        if self.expired():
+            self.reason = "deadline"
+            return False
+        if self.calls + calls > self.call_cap:
+            self.reason = "call_cap"
+            return False
+        return True
+
+    def charge(self, calls: int) -> None:
+        self.calls += calls
+
+    def require(self, calls: int) -> None:
+        """Pre-pay the next bounded step's known call cost — afford it
+        or raise, never start a step the budget cannot pay for."""
+        if not self.afford(calls):
+            raise BudgetExhausted(self.reason)
+        self.charge(calls)
+
+    def checkpoint(self) -> None:
+        """The chain-boundary check: raise when the deadline has passed
+        or a refusal already happened — the turn stops HERE, between
+        bounded steps, never mid-call."""
+        if self.reason is not None:
+            raise BudgetExhausted(self.reason)
+        if self.expired():
+            self.reason = "deadline"
+            raise BudgetExhausted(self.reason)
+
+
+def turn_status_payload(turn) -> dict:
+    """The poll surface's payload (serve's /research/turn body), built
+    under the registry lock: state, Farsi events, elapsed seconds — and
+    the turn's budget state (T3): the calls charged so far, the cap, and
+    whether the budget stopped the turn (its reason)."""
+    payload = {
+        "state": turn.state,
+        "events": list(turn.events),
+        "elapsed": round(time.monotonic() - turn.started_at, 1),
+    }
+    if turn.budget is not None:
+        payload["budget"] = {
+            "calls": turn.budget.calls,
+            "cap": turn.budget.call_cap,
+            "exhausted": turn.budget.reason is not None,
+            "reason": turn.budget.reason,
+        }
+    if turn.state == "done":
+        payload.update(turn.result)
+    elif turn.state == "failed":
+        payload["detail"] = turn.error
+    return payload
+
+
 # --- the turn registry -----------------------------------------------------
 
 # A turn is a job in an in-process registry (the dive's shape, ADR-0006
@@ -1453,6 +1681,9 @@ class ResearchTurn:
         self.started_at = time.monotonic()
         self.cancel = threading.Event()
         self.done = threading.Event()
+        # The worker installs the turn's TurnBudget here (T3); until
+        # then the poll simply omits the budget field.
+        self.budget = None
 
 
 def _turn_write(turn, state=None, event=None, error=None) -> bool:
@@ -1529,15 +1760,21 @@ def ensure_session(
 
 
 def research_session_state(phone: str, session_id: str):
-    """The state panel's read: one session's summary projection, phone
-    matched; (summary, None) or (None, (status, Farsi detail))."""
+    """The state panel's read: the summary projection under
+    ``research_state`` plus the chip set under ``suggestions`` — a
+    browser refresh re-renders both, so a live guided question's
+    options and its skip survive the reload (T10, GitLab #11);
+    (payload, None) or (None, (status, Farsi detail))."""
     session = research_store.load_session(session_id)
     if session is None or session["phone"] != phone:
         return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
     if session["state"].get("closed"):
         return None, (409, RESEARCH_SESSION_CLOSED_DETAIL)
     ensure_state_shape(session["state"])
-    return research_state_summary(session["state"]), None
+    return {
+        "research_state": research_state_summary(session["state"]),
+        "suggestions": research_suggestions(session["state"]),
+    }, None
 
 
 def research_session_messages(phone: str, session_id: str):
@@ -1605,6 +1842,16 @@ def decide_proposal(phone: str, session_id: str, proposal_id: str, accept: bool)
             if item not in state["scope"]["out"]:
                 state["scope"]["out"].append(item)
         decision = f"دامنۀ پژوهش به‌روز شد: {proposal['text']}"
+    elif proposal["kind"] == "brief_plan":
+        # The plan's acceptance is APPEND-ONLY (T7): each acceptance
+        # adds a version to the plan's ledger — v1 stays intact
+        # underneath — and the accepted plan becomes the current one,
+        # the gate the (required) Brief writes against.
+        sections = proposal.get("sections", [])
+        plan = state.setdefault("brief_plan", {"current": None, "versions": []})
+        plan["versions"].append({"sections": sections, "turn": state["turns"]})
+        plan["current"] = {"sections": sections}
+        decision = f"برنامۀ خلاصۀ پژوهش پذیرفته شد: {proposal['text']}"
     else:
         decision = proposal["text"]
     state["decisions"].append({"text": decision, "turn": state["turns"]})
@@ -1761,6 +2008,43 @@ def _apply_classify_updates(state: dict, classified: dict) -> None:
                 "scope_out": scope_out,
             }
         )
+    # The Brief plan (T7): the THIRD proposal kind, under the same
+    # chart-mode gate — only an exploration turn parks it, its own
+    # cooldown damps it, one plan waits at a time, and a plan whose
+    # summary restates a past decision can never re-park.
+    plan_sections = classified.get("brief_plan", [])
+    if (
+        may_propose
+        and plan_sections
+        and cooldowns.get("brief_plan", 0) <= 0
+        and "brief_plan" not in pending_kinds
+    ):
+        plan_text = _plan_proposal_text(plan_sections)
+        plan_key = normalize_for_match(plan_text)
+        plan_decided = any(
+            plan_key and plan_key in normalize_for_match(item.get("text", ""))
+            for item in state["decisions"]
+        )
+        if not plan_decided:
+            state["pending_proposals"].append(
+                {
+                    "id": f"p{len(state['pending_proposals']) + 1}",
+                    "kind": "brief_plan",
+                    "text": plan_text,
+                    "sections": plan_sections,
+                }
+            )
+
+
+def _plan_proposal_text(sections: list) -> str:
+    """The parked plan's display text — section count and titles, the
+    short line the chips' note, the checkpoint reply, and the decisions
+    index all share (the containment dedupe keys on it)."""
+    titles = "، ".join(
+        f"«{section.get('title', '')}»" for section in sections[:4]
+    )
+    more = "…" if len(sections) > 4 else ""
+    return f"برنامۀ خلاصه در {_farsi_digits(len(sections))} بخش: {titles}{more}"
 
 
 def advance_stage(state: dict, to: str) -> None:
@@ -1824,6 +2108,25 @@ def _checkpoint_reply(state: dict) -> list:
             blocks.append(
                 {"type": "note", "text": f"دامنۀ پژوهش: {proposal['text']}"}
             )
+        elif proposal["kind"] == "brief_plan":
+            # The plan reads section by section: each note ties a
+            # section to its named open question and the claims that
+            # will support it — the diff the user decides on.
+            blocks.append(
+                {"type": "note", "text": f"برنامۀ خلاصۀ پژوهش: {proposal['text']}"}
+            )
+            for section in proposal.get("sections", []):
+                claims = "، ".join(section.get("claims", []))
+                suffix = f" — ادعاها: {claims}" if claims else ""
+                blocks.append(
+                    {
+                        "type": "note",
+                        "text": (
+                            f"بخش «{section.get('title', '')}» برای پرسشِ "
+                            f"«{section.get('question', '')}»{suffix}"
+                        ),
+                    }
+                )
     return blocks
 
 
@@ -1858,6 +2161,7 @@ def _gather(state: dict, turn: ResearchTurn, target: str = None) -> list:
             if item.get("status") == "pending"
         ]
     if not pending:
+        turn.budget.require(1)  # the planning call
         _turn_write(turn, "planning", RESEARCH_EVENT_PLANNING)
         pending = plan_subquestions(state["research_question"]["current"])
         known = {item["text"] for item in state["subquestions"]}
@@ -1871,6 +2175,7 @@ def _gather(state: dict, turn: ResearchTurn, target: str = None) -> list:
         cancel=turn.cancel,
         on_gap=lambda count: _turn_write(turn, event=_gap_event(count)),
         datasets=state.get("datasets"),
+        budget=turn.budget,
     )
     if turn.cancel.is_set():
         return []
@@ -1945,7 +2250,9 @@ def _synthesize(turn: ResearchTurn, state: dict) -> list:
             }
         ]
     _turn_write(turn, "writing", RESEARCH_EVENT_ANALYZING)
-    blocks, _ = compose_guarded_reply(build_synthesis_prompt(state, sources), sources)
+    blocks, _ = compose_guarded_reply(
+        build_synthesis_prompt(state, sources), sources, budget=turn.budget
+    )
     if not blocks:
         return [{"type": "note", "text": RESEARCH_EMPTY_REPLY_DETAIL}]
     record_claims(state, blocks, ids)
@@ -1955,7 +2262,10 @@ def _synthesize(turn: ResearchTurn, state: dict) -> list:
 def _brief(turn: ResearchTurn, state: dict) -> list:
     """The drafting operation: the Research Brief written FROM the state
     — question history, scope, claims, gaps — over the evidence pool,
-    guarded like every writer pass."""
+    guarded like every writer pass. Once plans are required (the T7
+    checkpoint), a session with no ACCEPTED plan refuses before any
+    writer call — the note names what to do first, the same honest
+    shape as the no-claims refusal."""
     sources, _ = _evidence_pool(state)
     if not state.get("claims"):
         return [
@@ -1967,8 +2277,12 @@ def _brief(turn: ResearchTurn, state: dict) -> list:
                 ),
             }
         ]
+    if BRIEF_PLANS_REQUIRED and not (state.get("brief_plan") or {}).get("current"):
+        return [{"type": "note", "text": RESEARCH_BRIEF_NEEDS_PLAN_DETAIL}]
     _turn_write(turn, "writing", RESEARCH_EVENT_BRIEF)
-    blocks, _ = compose_guarded_reply(build_brief_prompt(state, sources), sources)
+    blocks, _ = compose_guarded_reply(
+        build_brief_prompt(state, sources), sources, budget=turn.budget
+    )
     if not blocks:
         return [{"type": "note", "text": RESEARCH_EMPTY_REPLY_DETAIL}]
     state["phase"] = "drafting"
@@ -2006,6 +2320,7 @@ def _conversational(turn: ResearchTurn, state: dict, message: str):
     _turn_write(turn, "searching", RESEARCH_EVENT_SEARCHING)
     if turn.cancel.is_set():
         return [], []
+    turn.budget.require(1)  # the searcher call
     pool = dive_recall(message, state.get("datasets"))
     if turn.cancel.is_set():
         return [], []
@@ -2013,7 +2328,7 @@ def _conversational(turn: ResearchTurn, state: dict, message: str):
         return [{"type": "note", "text": RESEARCH_NO_EVIDENCE_DETAIL}], []
     _turn_write(turn, "writing", RESEARCH_EVENT_WRITING)
     blocks, _ = compose_guarded_reply(
-        build_conversational_prompt(message, pool), pool
+        build_conversational_prompt(message, pool), pool, budget=turn.budget
     )
     if not blocks:
         return [{"type": "note", "text": RESEARCH_NO_EVIDENCE_DETAIL}], []
@@ -2030,7 +2345,7 @@ def _grilling_turn(state: dict, turn: ResearchTurn):
     author came back empty: the worker falls through to the stage's
     ordinary move, never a dead end."""
     _turn_write(turn, "guiding", RESEARCH_EVENT_GUIDING)
-    authored = author_grilling(state)
+    authored = author_grilling(state, budget=turn.budget)
     if not authored["question"]:
         return None
     grilling = state["grilling"]
@@ -2051,6 +2366,7 @@ def _mapping_turn(turn: ResearchTurn, state: dict):
     _turn_write(turn, "searching", RESEARCH_EVENT_MAPPING)
     if turn.cancel.is_set():
         return [], []
+    turn.budget.require(1)  # the searcher call
     pool = dive_recall(question, state.get("datasets"))
     if turn.cancel.is_set():
         return [], []
@@ -2066,7 +2382,9 @@ def _mapping_turn(turn: ResearchTurn, state: dict):
             }
         ], []
     _turn_write(turn, "writing", RESEARCH_EVENT_WRITING)
-    blocks, _ = compose_guarded_reply(build_mapping_prompt(question, pool), pool)
+    blocks, _ = compose_guarded_reply(
+        build_mapping_prompt(question, pool), pool, budget=turn.budget
+    )
     if not blocks:
         return [{"type": "note", "text": RESEARCH_EMPTY_REPLY_DETAIL}], []
     return blocks, pool
@@ -2172,7 +2490,9 @@ def _run_brief_skill(turn, state, classified, message, resolved, intent):
     blocks = _brief(turn, state)
     narration = ""
     if blocks and any(b["type"] == "paragraph" for b in blocks):
-        narration = narrate(state, _narration_facts(state, "brief", [], []))
+        narration = narrate(
+            state, _narration_facts(state, "brief", [], []), budget=turn.budget
+        )
         advance_stage(state, "drafting")
     return blocks, None, narration
 
@@ -2246,7 +2566,13 @@ SKILL_RUNNERS = {
 # --- the turn worker -------------------------------------------------------
 
 
-def run_research_turn(turn: ResearchTurn, session: dict) -> None:
+def run_research_turn(
+    turn: ResearchTurn,
+    session: dict,
+    budget_seconds=None,
+    call_cap=None,
+    clock=None,
+) -> None:
     """The turn worker: classify, route through the JOURNEY — the
     stage machine decides, the model only proposes content — execute at
     most ONE bounded operation, compose the reply with the journey's
@@ -2259,16 +2585,35 @@ def run_research_turn(turn: ResearchTurn, session: dict) -> None:
     never interrupted. Any worker failure marks the turn failed with a
     short Farsi detail; the endpoint never 500s from this thread. Each
     boundary prints one terse line so the journal diagnoses a live turn
-    without the sheet."""
+    without the sheet.
+
+    The turn runs under a hard budget (ADR-0012, T3): a wall-clock
+    deadline plus an upstream-call cap, both configurable HERE — the
+    worker is the seam's highest point — and `clock` (default real
+    monotonic) is the injected clock tests exhaust deterministically.
+    Every bounded step is pre-paid from the budget before it starts, so
+    the cap can never be exceeded mid-call; the deadline is checked at
+    every chain boundary, an in-flight call never interrupted. An
+    over-budget turn stops at that boundary with the honest Farsi note
+    and settles `done` — never a fabricated completion, never the
+    generic failure."""
     state = ensure_state_shape(session["state"])
+    budget = TurnBudget(
+        clock=clock if clock is not None else time.monotonic,
+        deadline_seconds=budget_seconds,
+        call_cap=call_cap,
+    )
+    turn.budget = budget
     try:
         state["turns"] = state.get("turns", 0) + 1
         message = turn.message
+        budget.require(1)  # the classify call
         resolved = resolve_command(message)
         classified = classify_message(message, state, session["messages"])
         anomaly = classified.pop("router_anomaly", None)
         if anomaly:
             record_diagnosis(state, anomaly, classified["intent"])
+        budget.checkpoint()  # the first chain boundary
         if turn.cancel.is_set():
             return
         intent = classified["intent"]
@@ -2300,12 +2645,21 @@ def run_research_turn(turn: ResearchTurn, session: dict) -> None:
         )
         if turn.cancel.is_set():
             return
-        if narration:
-            blocks = [{"type": "note", "text": narration}] + blocks
-        if state.get("turns", 0) >= RESEARCH_SESSION_TURN_CAP:
+        if budget.reason is not None:
+            # The budget ran out mid-skill (a dive round was refused,
+            # the narrator unaffordable): the partial blocks stand and
+            # the honest stop note closes the reply.
+            _turn_write(turn, event=RESEARCH_EVENT_BUDGET)
             blocks = blocks + [
-                {"type": "note", "text": RESEARCH_SESSION_CAP_DETAIL}
+                {"type": "note", "text": RESEARCH_BUDGET_STOP_DETAIL}
             ]
+        else:
+            if narration:
+                blocks = [{"type": "note", "text": narration}] + blocks
+            if state.get("turns", 0) >= RESEARCH_SESSION_TURN_CAP:
+                blocks = blocks + [
+                    {"type": "note", "text": RESEARCH_SESSION_CAP_DETAIL}
+                ]
         if conversational_pool is not None:
             citation_pool = conversational_pool
         else:
@@ -2329,7 +2683,33 @@ def run_research_turn(turn: ResearchTurn, session: dict) -> None:
             f"stage {state.get('stage')}, "
             f"{len(state['evidence'])} evidence, "
             f"{len(state['claims'])} claims, "
-            f"{len(state['gaps'])} gaps",
+            f"{len(state['gaps'])} gaps, "
+            f"budget {budget.calls}/{budget.call_cap}",
+            flush=True,
+        )
+    except BudgetExhausted:
+        # The honest stop: the budget refused a bounded step, so the
+        # turn settles here with the stop note as its whole reply — the
+        # state mutated so far is saved and the transcript tells the
+        # truth (never the generic unexpected-error failure).
+        _turn_write(turn, event=RESEARCH_EVENT_BUDGET)
+        blocks = [{"type": "note", "text": RESEARCH_BUDGET_STOP_DETAIL}]
+        result = {
+            "reply": blocks,
+            "suggestions": research_suggestions(state),
+            "research_state": research_state_summary(state),
+        }
+        with RESEARCH_REGISTRY_LOCK:
+            if turn.state in TURN_TERMINAL_STATES:
+                return
+            turn.result = result
+            turn.state = "done"
+        research_store.save_session(session["id"], state)
+        research_store.append_message(session["id"], "assistant", blocks)
+        print(
+            f"research {turn.id}: turn stopped on budget "
+            f"({budget.reason}) at {budget.calls}/{budget.call_cap} calls, "
+            f"stage {state.get('stage')}",
             flush=True,
         )
     except Exception:
@@ -2401,7 +2781,7 @@ def _journey_fallback(state: dict, turn: ResearchTurn, resolved):
         ]
         if len(state["evidence"]) > before:
             narration = narrate(
-                state, _narration_facts(state, "gather", searched, [])
+                state, _narration_facts(state, "gather", searched, []), budget=turn.budget
             )
             if narration:
                 blocks = [{"type": "note", "text": narration}] + blocks
@@ -2410,13 +2790,17 @@ def _journey_fallback(state: dict, turn: ResearchTurn, resolved):
         blocks = _synthesize(turn, state)
         if state.get("claims"):
             advance_stage(state, "synthesizing")
-            narration = narrate(state, _narration_facts(state, "synthesize", [], []))
+            narration = narrate(
+                state, _narration_facts(state, "synthesize", [], []), budget=turn.budget
+            )
             if narration:
                 blocks = [{"type": "note", "text": narration}] + blocks
         return blocks
     blocks = _brief(turn, state)
     if blocks and any(b["type"] == "paragraph" for b in blocks):
-        narration = narrate(state, _narration_facts(state, "brief", [], []))
+        narration = narrate(
+            state, _narration_facts(state, "brief", [], []), budget=turn.budget
+        )
         if narration:
             blocks = [{"type": "note", "text": narration}] + blocks
         advance_stage(state, "drafting")

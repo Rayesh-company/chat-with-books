@@ -11,6 +11,51 @@
       rel="stylesheet"
     />
     <style>
+      /* The Books' non-embedded Iranian fonts, substituted with the
+         vendored Vazirmatn under their ORIGINAL family names: pdf.js's
+         canvas draws those pages with ctx.font = '"wNazanin", …' — the
+         family must resolve, or the text shatters (no shaping). */
+      @font-face {
+        font-family: "wNazanin";
+        src: url("/vendor/fonts/Vazirmatn-Regular.woff2") format("woff2");
+        font-weight: normal;
+      }
+      @font-face {
+        font-family: "wNazanin";
+        src: url("/vendor/fonts/Vazirmatn-Bold.woff2") format("woff2");
+        font-weight: bold;
+      }
+      @font-face {
+        font-family: "Nazanin";
+        src: url("/vendor/fonts/Vazirmatn-Regular.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "B Nazanin";
+        src: url("/vendor/fonts/Vazirmatn-Regular.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "IRANSharp";
+        src: url("/vendor/fonts/Vazirmatn-Regular.woff2") format("woff2");
+        font-weight: normal;
+      }
+      @font-face {
+        font-family: "IRANSharp";
+        src: url("/vendor/fonts/Vazirmatn-Bold.woff2") format("woff2");
+        font-weight: bold;
+      }
+      @font-face {
+        font-family: "IRANSharp-Light";
+        src: url("/vendor/fonts/Vazirmatn-Light.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "IRANSans";
+        src: url("/vendor/fonts/Vazirmatn-Regular.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "IRANSansLight";
+        src: url("/vendor/fonts/Vazirmatn-Light.woff2") format("woff2");
+      }
+
       :root {
         --table: #1b2a2e;
         --sheet: #e7eadf;
@@ -294,6 +339,11 @@
         padding: 0 0.9rem 0 0;
         border-right: 3px solid var(--clay);
         color: var(--mute);
+        cursor: pointer;
+      }
+
+      .cite:hover {
+        color: var(--ink);
       }
 
       .doc-heading {
@@ -337,7 +387,7 @@
 
       .cite-sent {
         position: relative;
-        cursor: help;
+        cursor: pointer;
         background: rgba(196, 92, 38, 0.12);
         border-bottom: 1px solid var(--clay);
       }
@@ -350,14 +400,14 @@
 
       .cite-sent:hover::after,
       .cite-sent:focus-visible::after {
-        content: attr(data-ref);
+        content: attr(data-ref) "\A" attr(data-hint);
         position: absolute;
         bottom: calc(100% + 0.35rem);
         right: 50%;
         transform: translateX(50%);
         width: max-content;
         max-width: 18rem;
-        white-space: normal;
+        white-space: pre-line;
         background: var(--ink);
         color: var(--sheet);
         font-size: 0.78rem;
@@ -371,6 +421,267 @@
 
       .empty {
         color: var(--mute);
+      }
+
+      /* ===== Book reader (ADR-0007) =====
+         The provenance panel: every quote on the sheet clicks through to
+         the Book's actual PDF page, the quoted letters highlighted. Wide
+         screens split the sheet (chat right, reader left in RTL); below
+         1024px the reader is a full-screen layer. */
+      .status-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-top: 0.6rem;
+      }
+
+      .status-row .status {
+        margin: 0;
+      }
+
+      .browse-btn {
+        font-size: 0.8rem;
+        font-weight: 500;
+        padding: 0.4rem 1rem;
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--ink);
+      }
+
+      .browse-btn:hover:not(:disabled) {
+        background: var(--clay);
+        border-color: var(--clay);
+        color: var(--sheet);
+      }
+
+      #reader {
+        flex-direction: column;
+        background: var(--sheet);
+        border: 1px solid var(--rule);
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+        min-height: 0;
+      }
+
+      @media (min-width: 1024px) {
+        body.reader-open {
+          display: grid;
+          grid-template-columns: minmax(36rem, 46rem) minmax(26rem, 1fr);
+          justify-content: center;
+          column-gap: 1.25rem;
+        }
+
+        body.reader-open main {
+          grid-column: 1;
+        }
+
+        body.reader-open #reader:not([hidden]) {
+          display: flex;
+          grid-column: 2;
+          position: sticky;
+          top: 2.5rem;
+          height: calc(100vh - 6.5rem);
+        }
+      }
+
+      @media (max-width: 1023.98px) {
+        #reader:not([hidden]) {
+          display: flex;
+          position: fixed;
+          inset: 0;
+          z-index: 60;
+        }
+      }
+
+      .reader-head {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.7rem 1rem;
+        border-bottom: 1px solid var(--rule);
+      }
+
+      .reader-title {
+        flex: 1;
+        margin: 0;
+        font-size: 0.92rem;
+        line-height: 1.6;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .reader-books {
+        display: flex;
+        gap: 0.35rem;
+        flex: none;
+      }
+
+      .reader-book {
+        font-size: 0.76rem;
+        font-weight: 500;
+        padding: 0.35rem 0.6rem;
+        background: transparent;
+        color: var(--mute);
+        border: 1px solid var(--rule);
+      }
+
+      .reader-book[aria-pressed="true"] {
+        color: var(--sheet);
+        background: var(--ink);
+        border-color: var(--ink);
+      }
+
+      .reader-close {
+        padding: 0.35rem 0.75rem;
+        flex: none;
+      }
+
+      .reader-tools {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        padding: 0.5rem 1rem;
+        border-bottom: 1px solid var(--rule);
+        font-size: 0.8rem;
+        color: var(--mute);
+      }
+
+      .reader-tools button {
+        padding: 0.28rem 0.7rem;
+        font-size: 0.8rem;
+      }
+
+      .reader-tools label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin: 0;
+      }
+
+      #page-num {
+        width: 3.4rem;
+        text-align: center;
+        border: 0;
+        border-bottom: 1px solid var(--ink);
+        background: transparent;
+        font: inherit;
+        color: var(--ink);
+      }
+
+      .reader-spacer {
+        flex: 1;
+      }
+
+      a.reader-download {
+        font-size: 0.8rem;
+        font-weight: 500;
+        padding: 0.28rem 0.7rem;
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--rule);
+        text-decoration: none;
+      }
+
+      a.reader-download:hover {
+        background: var(--clay);
+        border-color: var(--clay);
+        color: var(--sheet);
+      }
+
+      .reader-pages {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 1.1rem;
+        background: var(--table);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.1rem;
+        scroll-behavior: smooth;
+      }
+
+      .reader-page {
+        position: relative;
+        background: #fdfdfb;
+        box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
+        overflow: hidden;
+        flex: none;
+      }
+
+      .reader-page canvas {
+        display: block;
+      }
+
+      /* The pixel truth: a server-rendered PDFium raster (ADR-0007). */
+      .reader-img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        user-select: none;
+        -webkit-user-drag: none;
+      }
+
+      .reader-page .textLayer {
+        position: absolute;
+        inset: 0;
+        overflow: clip;
+        opacity: 1;
+        line-height: 1;
+        text-align: initial;
+        text-size-adjust: none;
+        forced-color-adjust: none;
+        transform-origin: 0 0;
+      }
+
+      .reader-page .textLayer :is(span, br) {
+        color: transparent;
+        position: absolute;
+        white-space: pre;
+        cursor: text;
+        transform-origin: 0 0;
+      }
+
+      /* The located quotation: a clay band over the raster, positioned
+         from the PDF's own glyph geometry (percentages of the page, so
+         zoom and resize keep it glued). */
+      .pdf-rect {
+        position: absolute;
+        background: rgba(196, 92, 38, 0.38);
+        border-radius: 2px;
+        pointer-events: none;
+      }
+
+      .pdf-rect.fresh {
+        animation: hl-pulse 1.8s ease-out 1;
+      }
+
+      @keyframes hl-pulse {
+        0% {
+          background: rgba(196, 92, 38, 0.85);
+        }
+        100% {
+          background: rgba(196, 92, 38, 0.38);
+        }
+      }
+
+      .reader-note {
+        margin: 0;
+        padding: 0.55rem 1rem;
+        font-size: 0.8rem;
+        line-height: 1.7;
+        color: var(--ink);
+        background: rgba(196, 92, 38, 0.12);
+        border-top: 1px solid var(--rule);
+      }
+
+      .reader-note[data-kind="error"] {
+        color: var(--bad);
+        background: rgba(143, 45, 45, 0.1);
       }
 
       /* The collapsed Evidence pool (issue #28): the summary reads as a
@@ -402,6 +713,246 @@
           transition: none;
         }
       }
+      /* ===== Research Mode (ADR-0008) =====
+         The phase-3 chat: a guided research conversation over the
+         Books. The map is the persistent side rail (T10, GitLab
+         #11): the journey strip and the route summarize the
+         investigation beside the transcript — never a collapsible
+         strip the chat scrolls away. The transcript is user bubbles
+         beside full-width assistant documents — headings, quoted
+         paragraphs, notes, and the server-built references; the chips
+         under the latest reply are the next moves and the checkpoint
+         decisions. */
+      .research-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 1.1rem;
+        align-items: start;
+      }
+
+      .research-rail {
+        order: -1;
+        border: 1px solid var(--rule);
+        background: rgba(27, 42, 46, 0.04);
+        padding: 0.6rem 0.95rem 0.8rem;
+        font-size: 0.85rem;
+      }
+
+      .research-rail-title {
+        margin: 0 0 0.45rem;
+        font-size: 0.85rem;
+        font-weight: 700;
+      }
+
+      @media (min-width: 1024px) {
+        /* The research chat is wide enough for its rail: the sheet
+           widens while phase 3 is the active tab, and the rail sticks
+           so the route stays in view however long the chat grows. */
+        body.research-open main {
+          width: min(58rem, 100%);
+        }
+
+        .research-layout {
+          grid-template-columns: minmax(0, 1fr) 18.5rem;
+        }
+
+        .research-rail {
+          order: 0;
+          position: sticky;
+          top: 1rem;
+          max-height: calc(100vh - 5.5rem);
+          overflow-y: auto;
+        }
+      }
+
+      .research-state-row {
+        margin: 0.35rem 0 0;
+        line-height: 1.7;
+      }
+
+      .research-state-row .k {
+        color: var(--mute);
+      }
+
+      .research-chat {
+        display: flex;
+        flex-direction: column;
+        gap: 0.9rem;
+        margin: 0 0 0.8rem;
+      }
+
+      .research-msg.user {
+        align-self: flex-start;
+        max-width: 85%;
+      }
+
+      .research-msg.user .research-msg-body {
+        background: rgba(196, 92, 38, 0.12);
+        border-radius: 10px 10px 10px 2px;
+        padding: 0.45rem 0.95rem;
+        margin: 0;
+        line-height: 1.8;
+      }
+
+      .research-msg.user .research-msg-body p {
+        margin: 0;
+      }
+
+      .research-msg.assistant {
+        align-self: stretch;
+        border-right: 3px solid var(--clay);
+        padding-right: 0.9rem;
+      }
+
+      .research-note {
+        margin: 0 0 0.55rem;
+        color: var(--mute);
+        line-height: 1.8;
+      }
+
+      .research-suggest {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin: 0 0 0.9rem;
+      }
+
+      .research-chip {
+        font-size: 0.8rem;
+        font-weight: 500;
+        padding: 0.3rem 0.9rem;
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--ink);
+        border-radius: 999px;
+      }
+
+      .research-chip:hover:not(:disabled) {
+        background: var(--clay);
+        border-color: var(--clay);
+        color: var(--sheet);
+      }
+
+      .research-chip.reject {
+        border-style: dashed;
+      }
+
+      /* The journey strip (ADR-0009): the five stages, the walked ones
+         dimmed, the current one emphasized — the route at a glance. */
+      .research-journey {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.2rem 1rem;
+        margin: 0.2rem 0 0.9rem;
+        font-size: 0.78rem;
+        color: var(--mute);
+      }
+
+      .research-journey .stage {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        white-space: nowrap;
+      }
+
+      .research-journey .stage .dot {
+        width: 0.55rem;
+        height: 0.55rem;
+        border-radius: 50%;
+        border: 1px solid var(--mute);
+        flex-shrink: 0;
+      }
+
+      .research-journey .stage.done .dot {
+        background: var(--mute);
+      }
+
+      .research-journey .stage.now {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .research-journey .stage.now .dot {
+        border-color: var(--clay);
+        background: var(--clay);
+      }
+
+      /* The guided question: the journey asks, the user answers —
+         styled louder than a note. */
+      .research-question {
+        margin: 0 0 0.55rem;
+        font-weight: 600;
+        color: var(--ink);
+        line-height: 1.9;
+      }
+
+      /* The map's own rows: the frontier emphasized, the fog muted. */
+      .research-state-row.frontier {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .research-state-row.fog {
+        font-style: italic;
+      }
+
+      .research-form {
+        display: flex;
+        gap: 0.7rem;
+        align-items: flex-end;
+        margin-top: 0.4rem;
+      }
+
+      /* The ask's Book pick (ADR-0011): pill toggles, single-select;
+         the picked one fills like an active chip, none until chosen. */
+      .book-picker {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.45rem;
+        margin-top: 0.2rem;
+        font-size: 0.85rem;
+      }
+
+      .book-toggle {
+        font-size: 0.8rem;
+        font-weight: 500;
+        padding: 0.25rem 0.85rem;
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--ink);
+        border-radius: 999px;
+      }
+
+      .book-toggle.on {
+        background: var(--clay);
+        border-color: var(--clay);
+        color: var(--sheet);
+      }
+
+      /* The widen row: the «جست‌وجوی بیشتر» chip and its status, inside
+         the collapsed pool. */
+      #recall-more-row {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        margin: 0.6rem 0 0.2rem;
+      }
+
+      #recall-more {
+        font-size: 0.85rem;
+      }
+
+      .research-form textarea {
+        flex: 1;
+        min-height: 2.8rem;
+        max-height: 9rem;
+      }
+
+      .research-form button {
+        flex-shrink: 0;
+      }
+
     </style>
   </head>
   <body>
@@ -409,7 +960,10 @@
       <header>
         <p class="kicker">نشست · سه مرحلهٔ پاسخ</p>
         <h1>طرح کلی اندیشۀ اسلامی در قرآن · انسان ۲۵۰ ساله</h1>
-        <p class="status" id="status" data-state="unknown">در حال بررسی سرویس…</p>
+        <div class="status-row">
+          <p class="status" id="status" data-state="unknown">در حال بررسی سرویس…</p>
+          <button type="button" id="reader-browse" class="browse-btn">کتاب‌ها</button>
+        </div>
       </header>
 
       <form id="ask">
@@ -424,6 +978,20 @@
           placeholder="۰۹۱۲۳۴۵۶۷۸۹"
         />
         <p class="phone-hint">هر شماره در روز پنج گفتگو دارد.</p>
+        <!-- The ask's Book pick (ADR-0011): exactly ONE Book per
+             investigation, chosen at platform entry; the ask stays
+             disabled until one is picked. The choice persists in
+             localStorage and survives refreshes. -->
+        <div class="book-picker" role="radiogroup" aria-label="انتخاب کتاب">
+          <span class="k">کتاب پژوهش:</span>
+          <button type="button" class="book-toggle" data-doc="tarhe-kolli" role="radio" aria-checked="false">
+            طرح کلی اندیشۀ اسلامی در قرآن
+          </button>
+          <button type="button" class="book-toggle" data-doc="70143-336" role="radio" aria-checked="false">
+            انسان ۲۵۰ ساله
+          </button>
+          <span id="book-hint" class="phone-hint">اول یک کتاب انتخاب کنید.</span>
+        </div>
         <label for="question" style="margin-top: 1rem">پرسش</label>
         <textarea
           id="question"
@@ -478,7 +1046,7 @@
             disabled
           >
             <span class="phase-dot" aria-hidden="true"></span>
-            <span class="phase-name">مطالعۀ عمیق</span>
+            <span class="phase-name">حالت پژوهش</span>
             <span class="phase-timer" id="timer-3" hidden></span>
           </button>
         </div>
@@ -497,6 +1065,13 @@
             <div id="citations">
               <p class="empty">پس از پاسخ، استناد اینجا می‌آید: هویت کتاب و عبارت نقل‌شده.</p>
             </div>
+            <!-- The widen (ADR-0010): one click broadens the search to
+                 the question's not-yet-covered facets and re-answers
+                 over the merged pool. -->
+            <div id="recall-more-row" hidden>
+              <button type="button" id="recall-more">جست‌وجوی بیشتر</button>
+              <span id="recall-more-status" class="composer-status"></span>
+            </div>
           </details>
         </div>
 
@@ -505,16 +1080,80 @@
         </div>
 
         <div class="phase-panel" id="panel-3" role="tabpanel" aria-labelledby="tab-3" hidden>
-          <!-- The Deep dive is operator-started (ADR 0006): the button
-               arms after the first answer exists; pressing it starts the
-               dive job and the sheet polls its status. -->
-          <div class="actions">
-            <button type="button" id="dive-start" disabled>شروع مطالعۀ عمیق</button>
+          <!-- Research Mode (ADR-0008 + 0009): the guided research
+               journey. The map rides as the persistent side rail
+               (T10, GitLab #11): the journey strip and the route —
+               destination, research question, frontier, open
+               questions, decisions, fog, out of scope — stay beside
+               the chat, always visible without scrolling. The chips
+               under the latest reply are the journey's own moves
+               (guided answers, per-question gathers, checkpoint
+               decisions, the universal skip); the input arms after the
+               first answer exists, seeded by the ask and its Evidence
+               pool. -->
+          <div class="research-layout">
+            <div class="research-chatcol">
+              <div id="research-chat" class="research-chat" aria-live="polite">
+                <p class="empty">پس از پاسخ اول، گفتگوی پژوهش را اینجا آغاز کنید.</p>
+              </div>
+              <div id="research-suggest" class="research-suggest"></div>
+              <form id="research-form" class="research-form">
+                <textarea
+                  id="research-input"
+                  maxlength="2000"
+                  placeholder="پیام پژوهش خود را بنویسید"
+                  disabled
+                ></textarea>
+                <button type="submit" id="research-send" disabled>فرستادن</button>
+              </form>
+            </div>
+            <aside id="research-rail" class="research-rail" aria-label="نقشۀ پژوهش">
+              <h2 class="research-rail-title">نقشۀ پژوهش</h2>
+              <nav
+                id="research-journey"
+                class="research-journey"
+                aria-label="مراحل سفر پژوهش"
+                hidden
+              ></nav>
+              <div id="research-state-body">
+                <p class="empty">پس از آغاز گفتگو، نقشۀ پژوهش اینجا می‌آید.</p>
+              </div>
+            </aside>
           </div>
-          <div id="dive-doc" class="answer"></div>
         </div>
       </section>
     </main>
+
+    <!-- The Book reader (ADR-0007): the original PDFs, page-provenance
+         target of every quote on the sheet. Served from /books (see
+         serve.py's routes); rendered client-side with the vendored
+         pdf.js in ./vendor. -->
+    <aside id="reader" hidden aria-label="کتاب‌خوان">
+      <header class="reader-head">
+        <h2 class="reader-title" id="reader-title">کتاب</h2>
+        <div class="reader-books" role="group" aria-label="انتخاب کتاب">
+          <button type="button" class="reader-book" data-doc="tarhe-kolli" aria-pressed="false">
+            طرح کلی اندیشۀ اسلامی در قرآن
+          </button>
+          <button type="button" class="reader-book" data-doc="70143-336" aria-pressed="false">
+            انسان ۲۵۰ ساله
+          </button>
+        </div>
+        <button type="button" class="reader-close" id="reader-close" aria-label="بستن کتاب‌خوان">✕</button>
+      </header>
+      <div class="reader-tools">
+        <button type="button" id="page-prev">صفحهٔ پیش</button>
+        <label>صفحه <input id="page-num" inputmode="numeric" autocomplete="off" /></label>
+        <span id="page-count" class="reader-page-pos"></span>
+        <button type="button" id="page-next">صفحهٔ بعد</button>
+        <span class="reader-spacer"></span>
+        <button type="button" id="zoom-out" aria-label="کوچک‌نمایی">−</button>
+        <button type="button" id="zoom-in" aria-label="بزرگ‌نمایی">+</button>
+        <a id="book-download" class="reader-download" href="#" download>دانلود PDF</a>
+      </div>
+      <div class="reader-pages" id="reader-pages"></div>
+      <p class="reader-note" id="reader-note" hidden></p>
+    </aside>
 
     <script>
       const form = document.getElementById("ask");
@@ -529,18 +1168,29 @@
       const evidencePoolEl = document.getElementById("evidence-pool");
       const statusEl = document.getElementById("status");
       const quotedDocEl = document.getElementById("quoted-doc");
-      const diveStartEl = document.getElementById("dive-start");
-      const diveDocEl = document.getElementById("dive-doc");
+      const researchChatEl = document.getElementById("research-chat");
+      const researchSuggestEl = document.getElementById("research-suggest");
+      const researchFormEl = document.getElementById("research-form");
+      const researchInputEl = document.getElementById("research-input");
+      const researchSendEl = document.getElementById("research-send");
+      const researchStateBodyEl = document.getElementById("research-state-body");
+      const researchJourneyEl = document.getElementById("research-journey");
       const phaseNowEl = document.getElementById("phase-now");
       // Bumped on every ask so a slow composer reply for an older question
       // is dropped instead of swapping the newer answer or its citations.
-      let citationRun = 0;
-      // In-flight phase 2 / dive fetches; aborted when a new ask starts.
+      let citationRun = 0; // In-flight phase 2 fetches; aborted when a new ask starts.
       let quotedAbort = null;
-      let diveAbort = null;
-      // The current ask's question — the dive is a study of the same
-      // question (CONTEXT.md), never of whatever the box holds later.
-      let diveQuery = null;
+      // The current ask's own state for «جست‌وجوی بیشتر» (ADR-0010):
+      // question, streamed prose (phase 2's framing), and the pool
+      // locator lines so far — grown when the widen returns fresh
+      // passages, then both answers re-run over the merged pool.
+      let askState = null;
+      let recallMoreBusy = false;
+      // The current ask's question and Evidence pool — the seed of the
+      // Research Mode session the first message creates (ADR 0008).
+      let researchQuery = null;
+      let researchSources = [];
+      let researchSessionId = null;
 
       // The three answering phases (PM brief, 2026-09-11): one switchable
       // section each, a pulsing dot on the phase being generated, a
@@ -549,7 +1199,7 @@
       const PHASE_NAMES = {
         1: "پاسخ اول",
         2: "پاسخ استنادی",
-        3: "مطالعۀ عمیق",
+        3: "حالت پژوهش",
       };
       const phaseEls = {
         1: { tab: document.getElementById("tab-1"), timer: null, interval: null, startedAt: null },
@@ -562,6 +1212,10 @@
           phaseEls[p].tab.setAttribute("aria-selected", p === n ? "true" : "false");
           document.getElementById(`panel-${p}`).hidden = p !== n;
         }
+        // The map's side rail needs the room (T10, GitLab #11): phase 3
+        // widens the sheet so chat and rail sit beside each other; the
+        // other phases keep the narrow sheet.
+        document.body.classList.toggle("research-open", n === 3);
       }
       for (const n of [1, 2, 3]) {
         phaseEls[n].tab.addEventListener("click", () => selectPhase(n));
@@ -723,6 +1377,77 @@
         return item.first_page_label || "کتاب";
       }
 
+      // ===== Citation → Book-page targets (ADR-0007) =====
+      // Every quote on the sheet is clickable: its span carries the
+      // Evidence locator's dataset name and page range, and clicking
+      // opens the reader on that page with the quote highlighted.
+      const BOOK_DATASET_BY_TITLE = {
+        "طرح کلی اندیشۀ اسلامی در قرآن": "tarhe-kolli",
+        "انسان ۲۵۰ ساله": "70143-336",
+      };
+
+      // The Evidence locator's machine fields — the client twin of
+      // guard.py's _PAGES_IN_REFERENCE / _DOCUMENT_IN_REFERENCE.
+      function parseReference(reference) {
+        const text = reference || "";
+        const doc = /\bdocument ([A-Za-z0-9._-]+)/.exec(text)?.[1] || "";
+        const range = /\(pages (\d+)-(\d+)\)/.exec(text);
+        if (range) {
+          return { doc, first: Number(range[1]), last: Number(range[2]) };
+        }
+        const single = /\(page (\d+)\)/.exec(text);
+        if (single) {
+          return { doc, first: Number(single[1]), last: Number(single[1]) };
+        }
+        return { doc, first: 0, last: 0 };
+      }
+
+      // A quote part carries no locator — only the server-resolved
+      // labels (guard.py's _citation_labels). The Farsi title maps back
+      // to its dataset; the range label's digits are ASCII (regex
+      // groups), so no digit conversion is needed.
+      function citationTargetFromLabels(part) {
+        const byTitle = BOOK_DATASET_BY_TITLE[part.book_label];
+        const doc =
+          byTitle ||
+          (/^[A-Za-z0-9._-]+$/.test(part.book_label || "")
+            ? part.book_label
+            : "");
+        const range = /صفحات (\d+) تا (\d+)/.exec(part.pages_label || "");
+        const single = /صفحه (\d+)/.exec(part.pages_label || "");
+        const pages = range
+          ? `${range[1]}-${range[2]}`
+          : single
+            ? single[1]
+            : "";
+        return { doc, pages };
+      }
+
+      // One rendered quote span, wired for the reader: dataset + page
+      // range in data attributes, and the click hint in the tooltip.
+      // The span's text is also remembered under its locator (ADR-0010):
+      // a «منابع» reference line carries no passage of its own, so its
+      // click looks the passage up here and locates the highlight like
+      // any quote span — never just the chunk's first page.
+      const locatorPassages = new Map();
+      function locatorKey(doc, pages) {
+        const dash = String(pages || "").indexOf("-");
+        const first = dash === -1 ? Number(pages) : Number(pages.slice(0, dash));
+        const last = dash === -1 ? first : Number(pages.slice(dash + 1));
+        return first ? `${doc}|${first}-${last}` : null;
+      }
+      function wireQuoteSpan(span, doc, pages) {
+        if (doc) span.dataset.doc = doc;
+        if (pages) span.dataset.pages = pages;
+        span.dataset.hint = "برای دیدن در کتاب کلیک کنید";
+        if (doc && pages && span.textContent) {
+          const key = locatorKey(doc, pages);
+          if (key && !locatorPassages.has(key)) {
+            locatorPassages.set(key, span.textContent);
+          }
+        }
+      }
+
       // One paragraph = AI text with embedded verbatim quotes (PM format,
       // 2026-09-10). Each quote sentence hovers to the Citation of exactly
       // the passage it claims — on that passage's first page — and the
@@ -757,6 +1482,10 @@
             // from the Evidence locator's document name) — with two
             // Books the attribution can no longer be implied.
             span.dataset.ref = citationRef(part);
+            // The reader target (ADR-0007): the quote's Book and pages,
+            // from the same labels the tooltip reads.
+            const target = citationTargetFromLabels(part);
+            wireQuoteSpan(span, target.doc, target.pages);
             appendPart(span);
             if (part.pages_label && !labels.includes(part.pages_label)) {
               labels.push(part.pages_label);
@@ -946,6 +1675,10 @@
             // Same tooltip contract as the Quoted paragraph's quotes:
             // Book identity plus the passage's first page.
             span.dataset.ref = citationRef(item);
+            // The reader target straight from the picker's Evidence
+            // locator (the selections carry it verbatim).
+            const located = parseReference(item.reference);
+            wireQuoteSpan(span, located.doc, located.first ? `${located.first}-${located.last}` : "");
             sentence.append(span);
             if (item.pages_label) {
               const pages = document.createElement("span");
@@ -965,56 +1698,96 @@
         }
       }
 
-      // The Deep dive (ADR 0006, issue #26): the phase-3 tab's
-      // operator-started study, now a registry job. The start POST
-      // answers a job identity immediately (202) and the sheet polls
-      // /deep-dive/status on a chained setTimeout — no held request.
-      // sessionStorage keeps the identity so a browser refresh
-      // reconnects to the running dive instead of throwing minutes of
-      // work away. The search shapes are pinned server-side: the sheet
-      // sends only the query and the phone, and names no Cognee search
-      // type.
-      const DIVE_POLL_MS = 2000;
-      let divePollTimer = null;
-      let diveStatusEl = null;
+      // The Research Mode client (ADR-0008): the phase-3 tab's guided
+      // research conversation. A message POST answers a turn identity
+      // immediately (202) and the sheet polls /research/turn on a
+      // chained setTimeout — the dive's job surface, per turn.
+      // sessionStorage keeps the session (and any in-flight turn) so a
+      // browser refresh reconnects instead of throwing the conversation
+      // away. The search shapes stay pinned server-side: the sheet
+      // sends only text, the phone, and — on the creating call — the
+      // ask's question with its Evidence pool.
+      const RESEARCH_POLL_MS = 2000;
+      let researchPollTimer = null;
+      let researchStatusEl = null;
 
-      const storedDiveJob = () => {
+      const storedResearch = () => {
         try {
-          return JSON.parse(sessionStorage.getItem("sessionDive"));
+          return JSON.parse(sessionStorage.getItem("sessionResearch"));
         } catch {
           return null;
         }
       };
-      const storeDiveJob = (job) =>
-        sessionStorage.setItem("sessionDive", JSON.stringify(job));
-      const clearDiveJob = () => sessionStorage.removeItem("sessionDive");
+      const storeResearch = (obj) =>
+        sessionStorage.setItem("sessionResearch", JSON.stringify(obj));
+      const clearResearch = () =>
+        sessionStorage.removeItem("sessionResearch");
 
-      function stopDivePolling() {
-        if (divePollTimer) {
-          clearTimeout(divePollTimer);
-          divePollTimer = null;
+      function stopResearchPolling() {
+        if (researchPollTimer) {
+          clearTimeout(researchPollTimer);
+          researchPollTimer = null;
         }
       }
 
-      // The pulsing status line in panel 3 — the dive is visible while
-      // it runs, gone with the study (or with any failure note).
-      function showDiveStatus(message) {
-        if (!diveStatusEl || !diveStatusEl.isConnected) {
-          diveStatusEl = document.createElement("p");
-          diveStatusEl.className = "composer-status";
-          diveDocEl.replaceChildren(diveStatusEl);
-        }
-        diveStatusEl.textContent = message;
+      function scrollResearch() {
+        researchChatEl.scrollIntoView({ block: "end", behavior: "smooth" });
       }
 
-      function renderDiveStudy(payload) {
+      // One assistant or user bubble; the body is a rendered blocks
+      // document (assistant) or plain text (user, status).
+      function appendResearchMessage(role, bodyEl) {
+        researchChatEl
+          .querySelector(".composer-status")
+          ?.closest(".research-msg")
+          ?.remove();
+        researchStatusEl = null;
+        const bubble = document.createElement("div");
+        bubble.className = `research-msg ${role}`;
+        const inner = document.createElement("div");
+        inner.className = "research-msg-body";
+        inner.append(bodyEl);
+        bubble.append(inner);
+        researchChatEl.append(bubble);
+        scrollResearch();
+        return bubble;
+      }
+
+      function researchText(text, className = "research-note") {
+        const p = document.createElement("p");
+        p.className = className;
+        p.textContent = text;
+        return p;
+      }
+
+      function appendResearchError(text) {
+        appendResearchMessage("assistant", researchText(text, "error"));
+      }
+
+      // The pulsing status bubble — the turn is visible while it runs,
+      // gone with the reply (or any failure note).
+      function showResearchStatus(message) {
+        if (!researchStatusEl || !researchStatusEl.isConnected) {
+          researchStatusEl = document.createElement("p");
+          researchStatusEl.className = "composer-status";
+          const bubble = document.createElement("div");
+          bubble.className = "research-msg assistant";
+          const inner = document.createElement("div");
+          inner.className = "research-msg-body";
+          inner.append(researchStatusEl);
+          bubble.append(inner);
+          researchChatEl.append(bubble);
+        }
+        researchStatusEl.textContent = message;
+        scrollResearch();
+      }
+
+      // One assistant reply's blocks — the dive study's renderer,
+      // per-bubble: headings, quoted paragraphs (click-through to the
+      // reader), server-built references, and the engine's own notes.
+      function researchBlocksNode(blocks) {
         const doc = document.createDocumentFragment();
-        // A study the continuation could not finish says so itself,
-        // above its sections — phase 2's note, reused.
-        if (payload.truncated) {
-          doc.append(truncatedNote());
-        }
-        for (const block of Array.isArray(payload.blocks) ? payload.blocks : []) {
+        for (const block of Array.isArray(blocks) ? blocks : []) {
           if (block.type === "heading") {
             const heading = document.createElement("h3");
             heading.className = "doc-heading";
@@ -1023,8 +1796,6 @@
           } else if (block.type === "paragraph") {
             doc.append(paragraphNode(block));
           } else if (block.type === "references") {
-            // The closing references list — built server-side from the
-            // passages the study actually quoted, never by the model.
             const refHeading = document.createElement("h3");
             refHeading.className = "doc-heading";
             refHeading.textContent = "منابع";
@@ -1035,176 +1806,445 @@
               ref.textContent = item;
               doc.append(ref);
             }
+          } else if (block.type === "note") {
+            doc.append(researchText(block.text));
+          } else if (block.type === "question") {
+            doc.append(researchText(block.text, "research-question"));
           }
         }
-        diveDocEl.replaceChildren(doc);
-        diveStatusEl = null;
-        setPhaseState(3, "done");
-        stopPhaseTimer(3);
-        setRunningPhase(null);
-        // Bring the fresh study forward: each phase shows itself when
-        // it lands.
-        selectPhase(3);
-        diveStartEl.disabled = false;
+        return doc;
       }
 
-      // A dive that will never land says so and hands the sheet back:
-      // the stored job clears, the timer freezes, the button re-arms.
-      function settleDive(message) {
-        stopDivePolling();
-        clearDiveJob();
+      // The state strip, drawn as THE MAP (ADR-0009): the journey strip
+      // naming the five stages, then the route — destination, research
+      // question with its version count, the frontier, the named open
+      // questions, the decisions index, the fog, the out-of-scope, and
+      // the counts row — from the server's summary projection.
+      const RESEARCH_STAGE_LIST = [
+        ["orientation", "نام‌گذاری مقصد"],
+        ["mapping", "نقشه‌برداری"],
+        ["investigating", "گردآوری شواهد"],
+        ["synthesizing", "تحلیل و جمع‌بندی"],
+        ["drafting", "نوشتن خلاصه"],
+      ];
+
+      function renderResearchJourney(stage) {
+        const index = RESEARCH_STAGE_LIST.findIndex(([key]) => key === stage);
+        if (index < 0) {
+          researchJourneyEl.hidden = true;
+          researchJourneyEl.replaceChildren();
+          return;
+        }
+        const frag = document.createDocumentFragment();
+        RESEARCH_STAGE_LIST.forEach(([key, label], i) => {
+          const span = document.createElement("span");
+          span.className = `stage${i < index ? " done" : i === index ? " now" : ""}`;
+          const dot = document.createElement("span");
+          dot.className = "dot";
+          dot.setAttribute("aria-hidden", "true");
+          span.append(dot, document.createTextNode(label));
+          frag.append(span);
+        });
+        researchJourneyEl.hidden = false;
+        researchJourneyEl.replaceChildren(frag);
+      }
+
+      const RESEARCH_STATUS_LABELS = {
+        pending: "در انتظار",
+        searched: "جست‌وجو شد",
+        gap: "شکاف",
+      };
+
+      function renderResearchState(state) {
+        if (!state) return;
+        renderResearchJourney(state.stage);
+        const body = document.createDocumentFragment();
+        const row = (key, value, extraClass) => {
+          const p = document.createElement("p");
+          p.className = extraClass
+            ? `research-state-row ${extraClass}`
+            : "research-state-row";
+          const k = document.createElement("span");
+          k.className = "k";
+          k.textContent = `${key}: `;
+          p.append(k, document.createTextNode(String(value)));
+          body.append(p);
+        };
+        if (state.destination) {
+          row("مقصد", state.destination);
+        }
+        row(
+          "پرسش پژوهش",
+          `${state.research_question || "—"} (نسخهٔ ${state.rq_versions || 1})`
+        );
+        if (state.frontier) {
+          row("در حال پرداختن", `«${state.frontier}»`, "frontier");
+        }
+        if (Array.isArray(state.open_questions) && state.open_questions.length) {
+          row(
+            "پرسش‌های باز",
+            state.open_questions
+              .map(
+                (q) =>
+                  `«${q.name}» (${RESEARCH_STATUS_LABELS[q.status] || q.status})`
+              )
+              .join("؛ ")
+          );
+        }
+        if (Array.isArray(state.decisions) && state.decisions.length) {
+          row("تصمیم‌ها", state.decisions.join(" | "));
+        }
+        if (Array.isArray(state.fog) && state.fog.length) {
+          row("هنوز نامشخص", state.fog.join("؛ "), "fog");
+        }
+        if (Array.isArray(state.out_of_scope) && state.out_of_scope.length) {
+          row("خارج از دامنه", state.out_of_scope.join("؛ "));
+        }
+        row(
+          "شمارش",
+          `شواهد ${state.evidence_count || 0} · ادعاها ${
+            (state.claims || []).length
+          } · شکاف‌ها ${(state.gaps || []).length} · نوبت‌ها ${state.turns || 0}`
+        );
+        researchStateBodyEl.replaceChildren(body);
+      }
+
+      // The chips: the journey's own moves. Move and answer chips send
+      // their text as the user's message (the deterministic commands);
+      // proposal chips resolve the checkpoint through /research/decide —
+      // SHORT labels, the proposal text in the tooltip, never in the
+      // chip.
+      function renderResearchSuggestions(suggestions) {
+        researchSuggestEl.replaceChildren();
+        for (const item of Array.isArray(suggestions) ? suggestions : []) {
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "research-chip";
+          if (item.kind === "move" || item.kind === "answer" || item.kind === "skip") {
+            chip.textContent = item.text;
+            chip.addEventListener("click", () => {
+              if (researchInputEl.disabled) return;
+              researchInputEl.value = item.text;
+              researchFormEl.requestSubmit();
+            });
+          } else if (item.kind === "proposal") {
+            chip.textContent = item.label || (item.accept ? "می‌پذیرم" : "رد می‌کنم");
+            if (item.text) chip.title = item.text;
+            if (!item.accept) chip.classList.add("reject");
+            chip.addEventListener("click", () => {
+              if (researchInputEl.disabled) return;
+              decideResearch(item.id, item.accept);
+            });
+          } else {
+            continue;
+          }
+          researchSuggestEl.append(chip);
+        }
+      }
+
+      function renderResearchReply(payload) {
+        appendResearchMessage("assistant", researchBlocksNode(payload.reply));
+        renderResearchSuggestions(payload.suggestions);
+        renderResearchState(payload.research_state);
+      }
+
+      function armResearchInput() {
+        researchInputEl.disabled = false;
+        researchSendEl.disabled = false;
+      }
+
+      function settleResearchTurn(message) {
+        stopResearchPolling();
+        clearResearch();
+        if (message) appendResearchError(message);
         setPhaseState(3, "failed");
         stopPhaseTimer(3);
         setRunningPhase(null);
-        setText(diveDocEl, message, "error");
-        diveStatusEl = null;
-        diveStartEl.disabled = false;
+        armResearchInput();
       }
 
-      function pollDiveJob(jobId) {
-        const poll = async () => {
-          let payload = null;
-          let gone = false;
-          try {
-            const res = await fetch(
-              `/deep-dive/status?job=${encodeURIComponent(jobId)}`,
-              { headers: phoneHeader(), cache: "no-store" }
-            );
-            if (res.status === 404) {
-              // Unknown job: the server restarted and took the registry
-              // with it — the recorded failure surface, not a hang.
-              gone = true;
-            } else if (res.ok) {
-              payload = await res.json();
-            }
-          } catch {
-            // A transient network blip is not a settled dive — the
-            // next tick retries.
-          }
-          if (gone) {
-            settleDive("مطالعۀ عمیق ناتمام ماند؛ دوباره تلاش کنید.");
-            return;
-          }
-          if (!payload) {
-            divePollTimer = setTimeout(poll, DIVE_POLL_MS);
-            return;
-          }
-          if (payload.state === "done") {
-            if (!phaseEls[3].startedAt) {
-              // Reconnected straight onto a finished study: seed the
-              // frozen chip from the job's own elapsed.
-              phaseEls[3].startedAt = Date.now() - (payload.elapsed || 0) * 1000;
-            }
-            renderDiveStudy(payload);
-            clearDiveJob();
-            return;
-          }
-          if (payload.state === "failed") {
-            // The server names why the dive did not prepare (the
-            // no-evidence note among them) — the generic message is
-            // only the fallback when no detail rode the payload.
-            const detail = Array.isArray(payload.detail)
-              ? payload.detail.join(" ")
-              : payload.detail;
-            settleDive(detail || "مطالعۀ عمیق ناتمام ماند؛ دوباره تلاش کنید.");
-            return;
-          }
-          if (payload.state === "aborted") {
-            settleDive("مطالعۀ عمیق لغو شد.");
-            return;
-          }
-          // Still running: an honest timer across a reload, and the
-          // latest Farsi progress event on the status line.
-          if (!phaseEls[3].startedAt && payload.elapsed) {
-            startPhaseTimer(3, payload.elapsed * 1000);
-          }
-          const events = Array.isArray(payload.events) ? payload.events : [];
-          showDiveStatus(events[events.length - 1] || "در حال نوشتن مطالعۀ عمیق…");
-          divePollTimer = setTimeout(poll, DIVE_POLL_MS);
-        };
-        poll();
-      }
-
-      async function startDive() {
-        const run = citationRun;
-        const query = diveQuery;
-        if (!query) return;
-        setPhaseState(3, "running");
-        setRunningPhase(3);
-        diveStartEl.disabled = true;
-        showDiveStatus("در حال نوشتن مطالعۀ عمیق…");
+      async function decideResearch(proposalId, accept) {
+        if (!researchSessionId || !researchQuery) return;
+        researchInputEl.disabled = true;
+        researchSendEl.disabled = true;
         try {
-          const res = await fetch("/deep-dive", {
+          const res = await fetch("/research/decide", {
             method: "POST",
             headers: {
               "Content-Type": "application/json; charset=utf-8",
               ...phoneHeader(),
             },
-            body: JSON.stringify({ query }),
-            signal: diveAbort.signal,
+            body: JSON.stringify({
+              session_id: researchSessionId,
+              proposal_id: proposalId,
+              accept,
+            }),
           });
-          if (run !== citationRun) return;
           const payload = await res.json().catch(() => ({}));
-          if (run !== citationRun) return;
-          // A rejection — a busy 429 among them — shows the server's
-          // Farsi detail as an error; the timer never started for a
-          // dive that did not begin.
-          if (!res.ok || !payload.job_id) {
+          if (!res.ok) {
+            appendResearchError(
+              payload.detail || "تصمیم ثبت نشد؛ دوباره تلاش کنید."
+            );
+          } else {
+            appendResearchMessage(
+              "user",
+              researchText(accept ? "می‌پذیرم" : "رد می‌کنم", "research-msg-text")
+            );
+            renderResearchReply(payload);
+          }
+        } catch {
+          appendResearchError("ارتباط با سرویس پژوهش قطع شد.");
+        }
+        armResearchInput();
+      }
+
+      function pollResearchTurn(turnId) {
+        const poll = async () => {
+          let payload = null;
+          let gone = false;
+          try {
+            const res = await fetch(
+              `/research/turn?turn=${encodeURIComponent(turnId)}`,
+              { headers: phoneHeader(), cache: "no-store" }
+            );
+            if (res.status === 404) {
+              // Unknown turn: the server restarted and took the registry
+              // with it — the recorded failure surface, not a hang. The
+              // session itself survives in the store.
+              gone = true;
+            } else if (res.ok) {
+              payload = await res.json();
+            }
+          } catch {
+            // A transient network blip is not a settled turn — the next
+            // tick retries.
+          }
+          if (gone) {
+            settleResearchTurn("پاسخ پژوهش ناتمام ماند؛ دوباره تلاش کنید.");
+            return;
+          }
+          if (!payload) {
+            researchPollTimer = setTimeout(poll, RESEARCH_POLL_MS);
+            return;
+          }
+          if (payload.state === "done") {
+            if (!phaseEls[3].startedAt) {
+              // Reconnected straight onto a finished turn: seed the
+              // frozen chip from the turn's own elapsed.
+              phaseEls[3].startedAt = Date.now() - (payload.elapsed || 0) * 1000;
+            }
+            renderResearchReply(payload);
+            clearResearch();
+            if (researchSessionId) {
+              storeResearch({
+                session_id: researchSessionId,
+                phone: phoneEl.value.trim(),
+              });
+            }
+            setPhaseState(3, "done");
+            stopPhaseTimer(3);
+            setRunningPhase(null);
+            selectPhase(3);
+            armResearchInput();
+            return;
+          }
+          if (payload.state === "failed") {
             const detail = Array.isArray(payload.detail)
               ? payload.detail.join(" ")
               : payload.detail;
-            setPhaseState(3, "ready");
-            setRunningPhase(null);
-            setText(
-              diveDocEl,
-              detail || "مطالعۀ عمیق آماده نشد؛ دوباره تلاش کنید.",
-              "error"
+            settleResearchTurn(
+              detail || "پاسخ پژوهش ناتمام ماند؛ دوباره تلاش کنید."
             );
-            diveStatusEl = null;
-            diveStartEl.disabled = false;
             return;
           }
-          // The job is live: keep its identity for a refresh reconnect,
-          // start the phase timer, and enter the polling loop.
-          storeDiveJob({
-            job_id: payload.job_id,
-            query,
+          if (payload.state === "aborted") {
+            settleResearchTurn("پاسخ پژوهش لغو شد.");
+            return;
+          }
+          // Still running: an honest timer across a reload, and the
+          // latest Farsi progress event on the status bubble.
+          if (!phaseEls[3].startedAt && payload.elapsed) {
+            startPhaseTimer(3, payload.elapsed * 1000);
+          }
+          const events = Array.isArray(payload.events) ? payload.events : [];
+          showResearchStatus(
+            events[events.length - 1] || "در حال پیگیری پاسخ پژوهش…"
+          );
+          researchPollTimer = setTimeout(poll, RESEARCH_POLL_MS);
+        };
+        poll();
+      }
+
+      async function sendResearchMessage() {
+        if (!researchQuery || researchInputEl.disabled) return;
+        const text = researchInputEl.value.trim();
+        if (!text) return;
+        researchInputEl.value = "";
+        researchInputEl.disabled = true;
+        researchSendEl.disabled = true;
+        researchSuggestEl.replaceChildren();
+        setPhaseState(3, "running");
+        setRunningPhase(3);
+        appendResearchMessage("user", researchText(text, "research-msg-text"));
+        showResearchStatus("برداشت گفتگو…");
+        const body = { text };
+        if (researchSessionId) {
+          body.session_id = researchSessionId;
+        } else {
+          // The creating call seeds the session with the ask and its
+          // Evidence pool (ADR 0008) — after this, text alone. The
+          // ask's Book selection rides along (ADR-0010): the session's
+          // gathers search the selected Books only.
+          body.question = researchQuery;
+          body.sources = researchSources;
+          if (askState) body.datasets = askState.datasets;
+        }
+        try {
+          const res = await fetch("/research/message", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+              ...phoneHeader(),
+            },
+            body: JSON.stringify(body),
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok || !payload.turn_id) {
+            // A rejection — a busy 429 or a closed session among them —
+            // shows the server's Farsi detail; the timer never started
+            // for a turn that did not begin.
+            appendResearchError(
+              payload.detail || "پیام پژوهش فرستاده نشد؛ دوباره تلاش کنید."
+            );
+            setPhaseState(3, "ready");
+            setRunningPhase(null);
+            armResearchInput();
+            return;
+          }
+          researchSessionId = payload.session_id;
+          storeResearch({
+            session_id: researchSessionId,
+            turn_id: payload.turn_id,
             phone: phoneEl.value.trim(),
           });
           startPhaseTimer(3);
-          pollDiveJob(payload.job_id);
+          pollResearchTurn(payload.turn_id);
         } catch {
-          if (run !== citationRun) return;
-          // The sheet unreachable: the first answer and the Quoted
-          // answer stay where they are.
+          appendResearchError("ارتباط با سرویس پژوهش قطع شد.");
           setPhaseState(3, "ready");
           setRunningPhase(null);
-          setText(diveDocEl, "ارتباط با سرویس مطالعۀ عمیق قطع شد.", "error");
-          diveStatusEl = null;
-          diveStartEl.disabled = false;
+          armResearchInput();
         }
       }
-      diveStartEl.addEventListener("click", startDive);
+      researchFormEl.addEventListener("submit", (event) => {
+        event.preventDefault();
+        sendResearchMessage();
+      });
+      // Enter sends (Shift+Enter breaks a line) — a chat box, not a
+      // document editor.
+      researchInputEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          researchFormEl.requestSubmit();
+        }
+      });
 
-      // Refresh reconnect (issue #26): a stored job id means this phone
-      // has a dive the reload must not throw away — poll once
-      // immediately and re-enter whichever surface the job has reached
-      // (running with the elapsed-seeded timer, the finished study, or
-      // the settled failure note).
-      (function reconnectDive() {
-        const stored = storedDiveJob();
-        if (!stored || !stored.job_id) return;
+      // The ask arms the tab: once the first answer exists, Research
+      // Mode is ready — seeded with the ask and its pool, never
+      // automatic (the dive's operator-start rule, kept).
+      function armResearch(query, sources) {
+        researchQuery = query;
+        researchSources = sources;
+        armResearchInput();
+      }
+
+      // A new ask owns the sheet: stop polling, drop the stored
+      // identities, and reset the conversation surface — the server
+      // aborts the phone's in-flight turn and closes its session on the
+      // ask's own recall POST (ADR 0008).
+      function resetResearch() {
+        stopResearchPolling();
+        clearResearch();
+        researchSessionId = null;
+        researchQuery = null;
+        researchSources = [];
+        researchStatusEl = null;
+        researchChatEl.replaceChildren(
+          researchText("پس از پاسخ اول، گفتگوی پژوهش را اینجا آغاز کنید.", "empty")
+        );
+        researchSuggestEl.replaceChildren();
+        researchJourneyEl.hidden = true;
+        researchJourneyEl.replaceChildren();
+        researchStateBodyEl.replaceChildren(
+          researchText("پس از آغاز گفتگو، نقشۀ پژوهش اینجا می‌آید.", "empty")
+        );
+        researchInputEl.value = "";
+        researchInputEl.disabled = true;
+        researchSendEl.disabled = true;
+      }
+
+      // Refresh reconnect: a stored session means this phone has a
+      // research conversation the reload must not throw away. The
+      // transcript is RE-FETCHED (ADR-0011 — what was said stays
+      // visible across a refresh), the map re-renders from
+      // /research/state, and any in-flight turn is polled to its
+      // settle.
+      (function reconnectResearch() {
+        const stored = storedResearch();
+        if (!stored || !stored.session_id) return;
         if (stored.phone && stored.phone !== phoneEl.value.trim()) {
-          clearDiveJob();
+          clearResearch();
           return;
         }
-        if (stored.query) diveQuery = stored.query;
-        setPhaseState(3, "running");
-        setRunningPhase(3);
-        diveStartEl.disabled = true;
-        showDiveStatus("در حال نوشتن مطالعۀ عمیق…");
+        researchSessionId = stored.session_id;
         selectPhase(3);
-        pollDiveJob(stored.job_id);
+        (async () => {
+          try {
+            const [msgRes, stateRes] = await Promise.all([
+              fetch(
+                `/research/messages?session=${encodeURIComponent(researchSessionId)}`,
+                { headers: phoneHeader(), cache: "no-store" }
+              ),
+              fetch(
+                `/research/state?session=${encodeURIComponent(researchSessionId)}`,
+                { headers: phoneHeader(), cache: "no-store" }
+              ),
+            ]);
+            if (msgRes.ok) {
+              const payload = await msgRes.json();
+              researchChatEl.replaceChildren();
+              for (const message of Array.isArray(payload.messages) ? payload.messages : []) {
+                if (message.role === "user") {
+                  appendResearchMessage(
+                    "user",
+                    researchText(String(message.payload || ""), "research-msg-text")
+                  );
+                } else {
+                  appendResearchMessage(
+                    "assistant",
+                    researchBlocksNode(
+                      Array.isArray(message.payload) ? message.payload : []
+                    )
+                  );
+                }
+              }
+            }
+            if (stateRes.ok) {
+              const payload = await stateRes.json();
+              renderResearchState(payload.research_state || payload);
+              renderResearchSuggestions(payload.suggestions || []);
+            }
+          } catch {
+            appendResearchError("بازخوانی گفتگو نشد؛ ادامه از سرور ممکن است.");
+          }
+          if (!stored.turn_id) return;
+          setPhaseState(3, "running");
+          setRunningPhase(3);
+          researchInputEl.disabled = true;
+          researchSendEl.disabled = true;
+          showResearchStatus("در حال پیگیری پاسخ پژوهش…");
+          pollResearchTurn(stored.turn_id);
+        })();
       })();
 
       async function readSse(res, onEvent) {
@@ -1247,6 +2287,122 @@
         }
       }
 
+      // ===== The ask's Book pick + the «جست‌وجوی بیشتر» widen
+      // (ADR-0010/0011) =====
+      const bookToggles = Array.from(
+        document.querySelectorAll(".book-toggle")
+      );
+      const bookHintEl = document.getElementById("book-hint");
+      const recallMoreRow = document.getElementById("recall-more-row");
+      const recallMoreBtn = document.getElementById("recall-more");
+      const recallMoreStatus = document.getElementById("recall-more-status");
+
+      // The picked Book — EXACTLY ONE per investigation (ADR-0011),
+      // persisted; an ask without a pick never fires.
+      function selectedDatasets() {
+        const picked = bookToggles.find((b) => b.classList.contains("on"));
+        return picked ? [picked.dataset.doc] : [];
+      }
+
+      function askBlockedByBook() {
+        return !bookToggles.some((b) => b.classList.contains("on"));
+      }
+
+      function syncAskGate() {
+        const blocked = askBlockedByBook();
+        buttonEl.disabled = blocked;
+        bookHintEl.hidden = !blocked;
+      }
+
+      function pickBook(toggle) {
+        bookToggles.forEach((b) => {
+          const on = b === toggle;
+          b.classList.toggle("on", on);
+          b.setAttribute("aria-checked", on ? "true" : "false");
+        });
+        try {
+          localStorage.setItem("selectedBook", toggle.dataset.doc);
+        } catch {}
+        syncAskGate();
+      }
+
+      // A stored pick survives the refresh (the recorded complaint: a
+      // reload silently reset the sheet to searching both Books).
+      (function restoreBookPick() {
+        let stored = null;
+        try {
+          stored = localStorage.getItem("selectedBook");
+        } catch {}
+        const match = bookToggles.find((b) => b.dataset.doc === stored);
+        if (match) pickBook(match);
+        syncAskGate();
+      })();
+
+      bookToggles.forEach((toggle) => {
+        toggle.addEventListener("click", () => pickBook(toggle));
+      });
+
+      function showRecallMore() {
+        recallMoreRow.hidden = false;
+        recallMoreBtn.disabled = false;
+        recallMoreStatus.textContent = "";
+      }
+
+      function hideRecallMore() {
+        recallMoreRow.hidden = true;
+        recallMoreStatus.textContent = "";
+      }
+
+      recallMoreBtn.addEventListener("click", async () => {
+        if (recallMoreBusy || !askState) return;
+        recallMoreBusy = true;
+        recallMoreBtn.disabled = true;
+        recallMoreStatus.textContent = "در حال گسترش جست‌وجو…";
+        try {
+          const res = await fetch("/recall-more", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+              ...phoneHeader(),
+            },
+            body: JSON.stringify({
+              question: askState.question,
+              sources: evidenceSources(askState.lines),
+              datasets: askState.datasets,
+            }),
+          });
+          const payload = await res.json().catch(() => ({}));
+          const fresh = Array.isArray(payload.sources) ? payload.sources : [];
+          if (!fresh.length) {
+            recallMoreStatus.textContent =
+              "چیز تازه‌ای پیدا نشد؛ پاسخ‌ها روی همان شواهد می‌مانند.";
+            return;
+          }
+          // Fresh passages join the pool — the visible locator lines
+          // and the ask's own list — and both answers rebuild over the
+          // merged pool (the ask's own flow, re-entered).
+          for (const source of fresh) {
+            askState.lines.push(`${source.reference}: "${source.passage}"`);
+            const p = document.createElement("p");
+            p.className = "cite";
+            p.textContent = `${source.reference}: "${source.passage}"`;
+            citationsEl.append(p);
+          }
+          recallMoreStatus.textContent = "پاسخ‌ها روی شواهد گسترش‌یافته دوباره ساخته می‌شوند…";
+          if (quotedAbort) quotedAbort.abort();
+          quotedAbort = new AbortController();
+          citationRun += 1;
+          renderQuotedAnswer(askState.question, askState.answer, askState.lines, () => {});
+          renderQuoteSelection(askState.question, askState.prose, askState.lines);
+        } catch {
+          if (quotedAbort && quotedAbort.signal.aborted) return;
+          recallMoreStatus.textContent = "گسترش جست‌وجو انجام نشد؛ دوباره تلاش کنید.";
+        } finally {
+          recallMoreBusy = false;
+          recallMoreBtn.disabled = false;
+        }
+      });
+
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const query = questionEl.value.trim();
@@ -1276,26 +2432,22 @@
         }, 250);
         // The clock times the whole pipeline — stream and the composer
         // phase — and stops when phase 2 settles (PM call, 2026-09-10).
-        // Issue #25: the pipeline ends there — the Deep dive is
-        // operator-timed by its own chip, started on the button press.
+        // Issue #25: the pipeline ends there — the research turns are
+        // timed by phase 3's own chip, started on each message.
         const stopTimer = () => {
           clearInterval(tick);
           const seconds = Math.round((Date.now() - started) / 1000);
           elapsedEl.textContent = `${seconds} ثانیه`;
         };
 
-        // A new ask owns the sheet: abort any in-flight phase 2 or dive
-        // of the previous one, then reset all three sections to idle.
-        // The dive's server-side abort rides this ask's own recall POST
-        // (issue #26) — here the client only stops polling and drops
-        // the stored job identity.
+        // A new ask owns the sheet: abort any in-flight phase 2 of the
+        // previous one and reset all three sections to idle. The
+        // research turn's server-side abort rides this ask's own recall
+        // POST (ADR 0008) — here the client only stops polling and
+        // drops the stored session identity.
         if (quotedAbort) quotedAbort.abort();
-        if (diveAbort) diveAbort.abort();
         quotedAbort = new AbortController();
-        diveAbort = new AbortController();
-        stopDivePolling();
-        clearDiveJob();
-        diveStatusEl = null;
+        resetResearch();
         for (const n of [1, 2, 3]) {
           stopPhaseTimer(n);
           phaseEls[n].startedAt = null;
@@ -1306,15 +2458,15 @@
         setRunningPhase(1);
         selectPhase(1);
         quotedDocEl.replaceChildren();
-        diveDocEl.replaceChildren();
-        diveStartEl.disabled = true;
-        diveQuery = query;
         setText(answerEl, "در حال پرسیدن…", "empty");
         citationRun += 1;
+        const run = citationRun;
         // The collapsed pool starts the ask closed — a previous ask's
         // no-citations error note must not sit open on the new one.
         evidencePoolEl.open = false;
         citationsEl.replaceChildren();
+        askState = null;
+        hideRecallMore();
         const waiting = document.createElement("p");
         waiting.className = "empty";
         waiting.textContent = "استناد پس از پاسخ می‌آید.";
@@ -1322,6 +2474,32 @@
 
         const textOf = (payload) =>
           Array.isArray(payload) ? payload[0]?.text || "" : payload.text || "";
+
+        // The phase-1 citation fallback (ADR-0011): the first message's
+        // role is to FIND CITATIONS. When the streamed reply carries no
+        // Evidence block, ONE pinned reference-on search over the
+        // question (the ask's selected Books) fetches the pool so the
+        // Quote selection and phase 2 still run; nothing found lands
+        // the honest no-citation note, never a generic answer.
+        async function fetchFallbackPool() {
+          try {
+            const res = await fetch("/evidence-fallback", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json; charset=utf-8",
+                ...phoneHeader(),
+              },
+              body: JSON.stringify({
+                question: query,
+                datasets: selectedDatasets(),
+              }),
+            });
+            const payload = await res.json().catch(() => ({}));
+            return Array.isArray(payload.sources) ? payload.sources : [];
+          } catch {
+            return [];
+          }
+        }
 
         const renderFinal = (text) => {
           if (!text) {
@@ -1333,29 +2511,67 @@
           const prose = answer || text;
           markFirstToken();
           setPhaseState(1, "done");
-          // The first answer exists — the ask has a question to dive on.
-          // From here the dive is the operator's call, never automatic
-          // (ADR 0006).
+          // The first answer exists — the ask has a question and pool
+          // to seed Research Mode with. From here the research
+          // conversation is the operator's call, never automatic (the
+          // dive's rule, kept; ADR 0008).
           setPhaseState(3, "ready");
-          diveStartEl.disabled = false;
           citationsEl.replaceChildren();
           if (!citations.length) {
-            // No pool, no picker: the streamed prose stays the answer,
-            // exactly as before the Quote selection (issue #28).
-            answerEl.className = "answer";
-            renderMarkdown(answerEl, prose);
-            const missing = document.createElement("p");
-            missing.className = "error";
-            missing.textContent = "استناد در پاسخ نبود.";
-            citationsEl.append(missing);
-            // The failure note must stay readable — open the collapsed
-            // pool for it, then close again on the next ask.
-            evidencePoolEl.open = true;
-            // No Evidence pool means no Quoted answer, but the dive
-            // never needed one — the operator may still start it.
-            skipQuotedPhase();
-            // Without a phase-2 run the pipeline still ends here.
-            stopTimer();
+            // No Evidence block in the stream: the pinned searcher gets
+            // ONE chance to fetch the citation pool before the sheet
+            // concedes (ADR-0011).
+            const status = document.createElement("p");
+            status.className = "composer-status";
+            status.textContent = "استناد در پاسخ نبود؛ مستقیم از کتاب‌ها جست‌وجو می‌کنیم…";
+            citationsEl.append(status);
+            fetchFallbackPool().then((sources) => {
+              if (run !== citationRun) return;
+              citationsEl.replaceChildren();
+              const lines = sources.map(
+                (s) => `${s.reference}: "${s.passage}"`
+              );
+              if (!lines.length) {
+                // No pool anywhere: the streamed prose stays the answer,
+                // exactly as before the Quote selection (issue #28).
+                answerEl.className = "answer";
+                renderMarkdown(answerEl, prose);
+                const missing = document.createElement("p");
+                missing.className = "error";
+                missing.textContent = "استنادی از کتاب‌ها پیدا نشد.";
+                citationsEl.append(missing);
+                // The failure note must stay readable — open the collapsed
+                // pool for it, then close again on the next ask.
+                evidencePoolEl.open = true;
+                // No Evidence pool means no Quoted answer, but the research
+                // session never needed one — the operator may still start
+                // it (its gathers search for their own evidence).
+                skipQuotedPhase();
+                armResearch(query, []);
+                // Without a phase-2 run the pipeline still ends here.
+                stopTimer();
+                return;
+              }
+              // The fetched pool drives the normal path: pool lines,
+              // research seed, phase 2 in parallel with the picker.
+              for (const item of lines) {
+                const p = document.createElement("p");
+                p.className = "cite";
+                p.textContent = item;
+                citationsEl.append(p);
+              }
+              armResearch(query, evidenceSources(lines));
+              askState = {
+                question: query,
+                prose,
+                answer,
+                lines,
+                datasets: selectedDatasets(),
+              };
+              showRecallMore();
+              renderQuotedAnswer(query, answer, lines, stopTimer);
+              renderQuoteSelection(query, prose, lines);
+            });
           } else {
             for (const item of citations) {
               const p = document.createElement("p");
@@ -1363,6 +2579,17 @@
               p.textContent = item;
               citationsEl.append(p);
             }
+            armResearch(query, evidenceSources(citations));
+            // The widen (ADR-0010) works on this ask's state: question,
+            // prose, and the pool lines it can grow.
+            askState = {
+              question: query,
+              prose,
+              answer,
+              lines: citations.slice(),
+              datasets: selectedDatasets(),
+            };
+            showRecallMore();
             // Phase 2 starts right here on the same pool (its exact
             // payload) and runs in PARALLEL with the picker (issue #28):
             // each lands in its own tab.
@@ -1383,7 +2610,7 @@
             body: JSON.stringify({
               searchType: "HYBRID_COMPLETION",
               query,
-              datasets: ["tarhe-kolli", "70143-336"],
+              datasets: selectedDatasets(),
               includeReferences: true,
               stream: true,
             }),
@@ -1451,6 +2678,892 @@
           buttonEl.disabled = false;
         }
       });
+
+      // ===== Book reader (ADR-0007) =====
+      // The original PDFs, served from serve.py's /books routes and
+      // rendered here with the vendored pdf.js. A click on any quote on
+      // the sheet opens this panel on the passage's first page and
+      // highlights the quoted letters: the verbatim guard guarantees
+      // the quote exists letter-for-letter in its passage, and the
+      // pages come from the Evidence locator, so the position is found
+      // by the SAME normalized letter-stream comparison the guard runs
+      // — first against the Book's extracted text index (which page of
+      // the chunk's range), then against the rendered page's own text
+      // layer (which spans to paint).
+
+      const readerEl = document.getElementById("reader");
+      const readerPagesEl = document.getElementById("reader-pages");
+      const readerTitleEl = document.getElementById("reader-title");
+      const readerNoteEl = document.getElementById("reader-note");
+      const pageNumEl = document.getElementById("page-num");
+      const pageCountEl = document.getElementById("page-count");
+      const READER_BOOK_TITLES = {
+        "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
+        "70143-336": "انسان ۲۵۰ ساله",
+      };
+      const toPersianDigits = (value) =>
+        String(value).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[d]);
+
+      const reader = {
+        gen: 0, // bumped on every book switch; stale async work drops out
+        doc: null,
+        pdf: null,
+        pageCount: 0,
+        zoom: 1,
+        recs: new Map(), // page number -> render record
+        observer: null,
+        pagesIndex: null, // fetched /books/<doc>.pages.json, per doc
+        pagesIndexDoc: null,
+        normCache: new Map(), // page number -> normalized page text
+        pending: null, // {first, last, text} from the latest citation click
+        lib: null, // the lazily imported pdf.js module
+        noteTimer: null,
+        stick: null, // the page an in-flight scroll is heading to
+        chain: Promise.resolve(), // serialized page-render queue
+      };
+
+      // pdf.js paints its canvases through requestAnimationFrame, which
+      // never fires in a hidden pane or background tab — a citation
+      // clicked there would hang forever with a blank panel. The
+      // watchdog keeps the native vsync path when the page is visible
+      // and falls back to a timer if the frame doesn't run within half
+      // a second, so hidden surfaces render too.
+      function installAnimationFrameWatchdog() {
+        const native = window.requestAnimationFrame.bind(window);
+        let nextHandle = 1;
+        const pending = new Map();
+        window.requestAnimationFrame = (callback) => {
+          const handle = nextHandle++;
+          let done = false;
+          const fire = (time) => {
+            if (done) return;
+            done = true;
+            pending.delete(handle);
+            callback(time);
+          };
+          const nativeId = native(fire);
+          const timerId = setTimeout(() => fire(performance.now()), 500);
+          pending.set(handle, { nativeId, timerId });
+          return handle;
+        };
+        const nativeCancel = window.cancelAnimationFrame.bind(window);
+        window.cancelAnimationFrame = (handle) => {
+          const entry = pending.get(handle);
+          if (entry) {
+            pending.delete(handle);
+            nativeCancel(entry.nativeId);
+            clearTimeout(entry.timerId);
+            return;
+          }
+          nativeCancel(handle);
+        };
+      }
+      installAnimationFrameWatchdog();
+
+      async function ensurePdfJs() {
+        if (!reader.lib) {
+          reader.lib = await import("./vendor/pdf.min.mjs");
+          reader.lib.GlobalWorkerOptions.workerSrc =
+            "/vendor/pdf.worker.min.mjs";
+        }
+        return reader.lib;
+      }
+
+      function showReaderNote(message, kind) {
+        clearTimeout(reader.noteTimer);
+        readerNoteEl.hidden = !message;
+        readerNoteEl.textContent = message || "";
+        if (kind) readerNoteEl.dataset.kind = kind;
+        else delete readerNoteEl.dataset.kind;
+        // Errors stay until the next action silences them — a note that
+        // vanishes after 8 seconds is a failure nobody saw.
+        if (message && kind !== "error") {
+          reader.noteTimer = setTimeout(() => {
+            readerNoteEl.hidden = true;
+          }, 8000);
+        }
+      }
+
+      // ---- The normalized letter stream: the client twin of
+      // guard.py's normalize_for_match — Arabic yeh/kaf unified,
+      // tashkeel and kashida stripped, every non-word character
+      // deleted (the PDF's backspace noise and ZWNJ among them). JS's
+      // \w is ASCII-only, so the word-character keep is spelled with
+      // Unicode property classes.
+      function normParts(text) {
+        let stream = "";
+        const map = []; // norm char index -> raw UTF-16 index
+        let raw = 0;
+        for (const ch of String(text)) {
+          let c = ch === "ي" ? "ی" : ch === "ك" ? "ک" : ch;
+          if (/[\u064B-\u065F\u0670\u0640]/.test(c)) {
+            raw += ch.length;
+            continue;
+          }
+          if (/[\p{L}\p{N}_]/u.test(c)) {
+            const lc = c.toLowerCase();
+            // The two extractors disagree on the lam-alef ligature's
+            // decomposition order (لا vs ال) — canonicalize so a quote
+            // from one matches a page built by the other.
+            if (lc === "ا" && stream.endsWith("ل")) {
+              const lamRaw = map.pop();
+              stream = stream.slice(0, -1);
+              stream += "ا" + "ل";
+              map.push(raw, lamRaw);
+            } else {
+              stream += lc;
+              map.push(raw);
+            }
+          }
+          raw += ch.length;
+        }
+        return { stream, map };
+      }
+
+      function normStream(text) {
+        return normParts(text).stream;
+      }
+
+      // ---- Citation clicks → the reader. Delegated: quotes render in
+      // three places (Quote selection, Quoted/research paragraphs, the
+      // Evidence pool) and the pool's lines parse at click time.
+      function openCitationFromElement(el) {
+        const doc = el.dataset.doc;
+        if (!doc) return;
+        const range = el.dataset.pages || "";
+        const dash = range.indexOf("-");
+        const first = dash === -1 ? Number(range) : Number(range.slice(0, dash));
+        const last = dash === -1 ? first : Number(range.slice(dash + 1));
+        openCitation(doc, first || 0, last || 0, el.textContent);
+      }
+
+      function splitLocator(line) {
+        const at = line.indexOf(': "');
+        if (at === -1) {
+          return { reference: line.trim(), passage: "" };
+        }
+        return {
+          reference: line.slice(0, at).trim(),
+          passage: line.slice(at + 3).replace(/"$/, "").trim(),
+        };
+      }
+
+      document.addEventListener("click", (event) => {
+        const sent = event.target.closest("span.cite-sent");
+        if (sent) {
+          openCitationFromElement(sent);
+          return;
+        }
+        const cite = event.target.closest("p.cite");
+        if (cite) {
+          const { reference, passage } = splitLocator(cite.textContent || "");
+          const located = parseReference(reference);
+          if (located.doc) {
+            // The reference line names a locator, not a passage: fall
+            // back to the quote span that claimed the same locator
+            // (ADR-0010) so the reader locates and highlights instead
+            // of opening the chunk's first page blind.
+            const located_passage =
+              passage ||
+              locatorPassages.get(
+                `${located.doc}|${located.first}-${located.last}`
+              ) ||
+              "";
+            openCitation(located.doc, located.first, located.last, located_passage);
+          }
+        }
+      });
+      document.addEventListener("keydown", (event) => {
+        if (
+          (event.key === "Enter" || event.key === " ") &&
+          event.target.classList?.contains("cite-sent")
+        ) {
+          event.preventDefault();
+          openCitationFromElement(event.target);
+        }
+      });
+
+      async function openCitation(doc, first, last, text) {
+        openReaderPanel();
+        reader.pending =
+          first && text ? { first, last: last || first, text } : null;
+        await openBook(doc, first || 1);
+        if (!reader.pending) {
+          showReaderNote(
+            first
+              ? ""
+              : "صفحهٔ این نقل‌قول در کتاب مشخص نیست؛ کتاب از آغاز باز شد.",
+            first ? undefined : "error"
+          );
+          return;
+        }
+        await locatePending();
+      }
+
+      // ---- Panel + toolbar wiring.
+      function openReaderPanel() {
+        readerEl.hidden = false;
+        document.body.classList.add("reader-open");
+      }
+
+      function closeReaderPanel() {
+        readerEl.hidden = true;
+        document.body.classList.remove("reader-open");
+      }
+
+      document
+        .getElementById("reader-browse")
+        .addEventListener("click", () => {
+          openReaderPanel();
+          let saved = null;
+          try {
+            saved = JSON.parse(sessionStorage.getItem("readerPos") || "null");
+          } catch {}
+          openBook(
+            saved?.doc && READER_BOOK_TITLES[saved.doc] ? saved.doc : "tarhe-kolli",
+            saved?.page || 1
+          );
+        });
+      document
+        .getElementById("reader-close")
+        .addEventListener("click", closeReaderPanel);
+      document.addEventListener("keydown", (event) => {
+        if (
+          event.key === "Escape" &&
+          !readerEl.hidden &&
+          event.target !== pageNumEl
+        ) {
+          closeReaderPanel();
+        }
+      });
+      document.querySelectorAll(".reader-book").forEach((button) => {
+        button.addEventListener("click", () => {
+          openBook(button.dataset.doc, 1);
+        });
+      });
+
+      const savedPosition = () => {
+        try {
+          return JSON.parse(sessionStorage.getItem("readerPos") || "null");
+        } catch {
+          return null;
+        }
+      };
+      const savePosition = (doc, page) =>
+        sessionStorage.setItem("readerPos", JSON.stringify({ doc, page }));
+
+      function currentPageNumber() {
+        const box = readerPagesEl.getBoundingClientRect();
+        const mid = box.top + box.height / 2;
+        let current = 1;
+        for (const [n, rec] of reader.recs) {
+          const r = rec.el.getBoundingClientRect();
+          if (r.top <= mid && r.bottom > mid) return n;
+          if (r.bottom <= mid) current = Math.min(n + 1, reader.pageCount);
+        }
+        return current;
+      }
+
+      function markCurrentPage(n) {
+        pageNumEl.value = toPersianDigits(n);
+        savePosition(reader.doc, n);
+      }
+
+      // ---- Document loading and lazy page rendering.
+      function resetReaderDom() {
+        reader.recs.clear();
+        reader.normCache.clear();
+        reader.pagesIndex = null;
+        reader.pagesIndexDoc = null;
+        readerPagesEl.replaceChildren();
+      }
+
+      // The visual pipeline is a SERVER-side PDFium raster per page
+      // (/books/<doc>/page/<n>.png — pixel-perfect for these Persian
+      // subset fonts, ADR-0007's rendering addendum); pdf.js stays only
+      // for parsing and the transparent selection layer, never draws.
+
+      const BOOK_PAGE_COUNTS = { "tarhe-kolli": 807, "70143-336": 346 };
+
+      async function openBook(doc, page) {
+        const gen = ++reader.gen;
+        openReaderPanel();
+        showReaderNote("");
+        document.querySelectorAll(".reader-book").forEach((button) => {
+          button.setAttribute(
+            "aria-pressed",
+            String(button.dataset.doc === doc)
+          );
+        });
+        readerTitleEl.textContent = READER_BOOK_TITLES[doc] || doc;
+        document.getElementById("book-download").href =
+          `/books/${encodeURIComponent(doc)}.pdf`;
+
+        const needsDocInit = reader.doc !== doc || !reader.recs.size;
+        if (needsDocInit) {
+          reader.doc = doc;
+          reader.pageCount = BOOK_PAGE_COUNTS[doc] || 807;
+          resetReaderDom();
+          pageCountEl.textContent = `از ${toPersianDigits(reader.pageCount)}`;
+          buildPlaceholders();
+        }
+
+        markCurrentPage(Math.min(Math.max(page || 1, 1), reader.pageCount));
+        await gotoPage(Math.min(Math.max(page || 1, 1), reader.pageCount));
+
+        try {
+          await ensurePdfJs();
+          if (reader.doc === doc && (!reader.pdf || reader.pdfDoc !== doc)) {
+            const previousTask = reader.loadingTask || null;
+            const task = reader.lib.getDocument({
+              url: `/books/${encodeURIComponent(doc)}/book`,
+              cMapUrl: "/vendor/cmaps/",
+              cMapPacked: true,
+              standardFontDataUrl: "/vendor/standard_fonts/",
+              isEvalSupported: false,
+            });
+            reader.loadingTask = task;
+            const pdf = await task.promise;
+            if (gen !== reader.gen) return;
+            if (previousTask) previousTask.destroy();
+            reader.pdf = pdf;
+            reader.pdfDoc = doc;
+            reader.pageCount = pdf.numPages;
+            pageCountEl.textContent = `از ${toPersianDigits(reader.pageCount)}`;
+            const first = await pdf.getPage(1);
+            const vp1 = first.getViewport({ scale: 1 });
+            reader.baseWidth = vp1.width;
+            reader.baseRatio = vp1.height / vp1.width;
+
+            // Upgrade any already-rendered visible pages with text layers
+            for (const [n, rec] of reader.recs) {
+              if (rec.rendered && !rec.el.querySelector(".textLayer")) {
+                rec.rendered = false;
+                renderPage(n);
+              }
+            }
+          }
+        } catch (err) {
+          if (gen !== reader.gen) return;
+          console.error("openBook background pdf.js load failed:", err);
+        }
+      }
+
+      function buildPlaceholders() {
+        if (reader.observer) reader.observer.disconnect();
+        const frag = document.createDocumentFragment();
+        // The panel can be measured at 0 before its first layout — a
+        // negative width would build invisible zero-height placeholders
+        // and the observer would never fire on them, leaving the panel
+        // dark forever. Zoom multiplies the layout width.
+        const width = Math.max(
+          280,
+          Math.round((readerPagesEl.clientWidth - 35) * reader.zoom)
+        );
+        const height = Math.round(width * (reader.baseRatio || 1.414));
+        for (let n = 1; n <= reader.pageCount; n++) {
+          const el = document.createElement("div");
+          el.className = "reader-page";
+          el.dataset.page = n;
+          el.style.width = `${width}px`;
+          el.style.height = `${height}px`;
+          frag.append(el);
+          reader.recs.set(n, { el, rendered: false, job: null });
+        }
+        readerPagesEl.append(frag);
+        // Render entries lazily but SERIALIZED: one page at a time. A
+        // long jump (page 1 → 740) crosses dozens of placeholders, and
+        // concurrent canvas paints would freeze the sheet.
+        reader.chain = Promise.resolve();
+        reader.observer = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue;
+              const n = Number(entry.target.dataset.page);
+              reader.chain = reader.chain
+                .then(() => renderPage(n))
+                .catch(() => {});
+            }
+          },
+          { root: readerPagesEl, rootMargin: "700px 0px" }
+        );
+        for (const rec of reader.recs.values()) {
+          reader.observer.observe(rec.el);
+        }
+      }
+
+      async function renderPage(n) {
+        const rec = reader.recs.get(n);
+        if (!rec || rec.rendered || rec.job) return;
+        const gen = reader.gen;
+        rec.job = (async () => {
+          let vp = null;
+          let page = null;
+          if (reader.pdf && reader.pdfDoc === reader.doc) {
+            try {
+              page = await reader.pdf.getPage(n);
+              vp = page.getViewport({ scale: 1 });
+            } catch (e) {
+              console.warn("pdf.getPage failed for page", n, e);
+            }
+          }
+          const widthPx = Math.max(
+            280,
+            Math.round((readerPagesEl.clientWidth - 35) * reader.zoom)
+          );
+          const heightPx = vp
+            ? Math.round(widthPx * (vp.height / vp.width))
+            : Math.round(widthPx * (reader.baseRatio || 1.414));
+          const dpr = Math.min(2.5, window.devicePixelRatio || 1);
+          const img = document.createElement("img");
+          img.className = "reader-img";
+          img.alt = `صفحهٔ ${toPersianDigits(n)}`;
+          img.decoding = "async";
+          img.src = `/books/${encodeURIComponent(reader.doc)}/page/${n}.png?w=${Math.round(
+            widthPx * dpr
+          )}`;
+          rec.el.replaceChildren(img);
+          rec.el.style.height = `${heightPx}px`;
+
+          // The transparent selection layer, positioned over the raster.
+          if (page && vp) {
+            try {
+              const textLayerEl = document.createElement("div");
+              textLayerEl.className = "textLayer";
+              const layer = new reader.lib.TextLayer({
+                textContentSource: page.streamTextContent(),
+                container: textLayerEl,
+                viewport: page.getViewport({ scale: widthPx / vp.width }),
+              });
+              await layer.render();
+              if (gen !== reader.gen) return;
+              rec.el.append(textLayerEl);
+              const content = await page.getTextContent();
+              if (gen !== reader.gen) return;
+              buildPageParts(rec, content.items, vp);
+            } catch (err) {
+              console.warn("TextLayer render failed:", err);
+            }
+          }
+          rec.rendered = true;
+        })();
+        try {
+          await rec.job;
+        } catch (err) {
+          rec.rendered = false;
+          console.error("renderPage failed:", err);
+          showReaderNote(
+            "رندر صفحه ناموفق بود: " + String(err && err.message ? err.message : err),
+            "error"
+          );
+        } finally {
+          rec.job = null;
+        }
+      }
+
+      // Reading-order item parts: the matcher's ground truth. Each part
+      // keeps its normalized stream, its norm→raw index map inside the
+      // item's own string, and the item's rect in PDF points.
+      function buildPageParts(rec, items, vp) {
+        const lines = [];
+        items.forEach((item) => {
+          if (!item.str || !item.str.trim()) return;
+          const x = item.transform[4];
+          const y = item.transform[5];
+          const h =
+            Math.abs(item.transform[3]) ||
+            Math.hypot(item.transform[2], item.transform[3]) ||
+            10;
+          let line = lines.find((l) => Math.abs(l.y - y) <= h * 0.45);
+          if (!line) {
+            line = { y, hMax: h, entries: [] };
+            lines.push(line);
+          }
+          line.hMax = Math.max(line.hMax, h);
+          line.entries.push({ item, x });
+        });
+        lines.sort((a, b) => b.y - a.y);
+        const parts = [];
+        let stream = "";
+        for (const line of lines) {
+          line.entries.sort((a, b) => b.x - a.x);
+          for (const { item } of line.entries) {
+            const np = normParts(item.str);
+            if (!np.stream) continue;
+            parts.push({
+              x: item.transform[4],
+              y: item.transform[5],
+              h:
+                Math.abs(item.transform[3]) ||
+                Math.hypot(item.transform[2], item.transform[3]) ||
+                10,
+              w: item.width || 0,
+              rawLen: [...item.str].length,
+              stream: np.stream,
+              map: np.map,
+              start: stream.length,
+            });
+            stream += np.stream;
+          }
+        }
+        rec.parts = parts;
+        rec.stream = stream;
+        rec.pageW = vp.width;
+        rec.pageH = vp.height;
+      }
+
+      async function ensureRendered(n) {
+        const rec = reader.recs.get(n);
+        if (!rec) return null;
+        if (!rec.rendered) {
+          // The same serialization chain the observer feeds — an
+          // explicit wait never paints beside the queued renders.
+          reader.chain = reader.chain
+            .then(() => renderPage(n))
+            .catch(() => {});
+          await reader.chain;
+        }
+        return rec.rendered ? rec : null;
+      }
+
+      async function gotoPage(n) {
+        const rec = reader.recs.get(n);
+        if (!rec) return;
+        // The sweep anchors here while the scroll is en route —
+        // mid-flight the visible page is still far away, and sweeping
+        // on that would evict the very page this jump is heading to.
+        // Instant, not smooth: a citation can be 700 pages away.
+        reader.stick = n;
+        readerPagesEl.scrollTo({
+          top: rec.el.offsetTop - 12,
+          behavior: "auto",
+        });
+        await ensureRendered(n);
+      }
+
+      // Far pages drop their rasters: hundreds of full-page images
+      // would pile up on one continuous scroll through a tall Book.
+      function sweepFarPages(current) {
+        const anchor = reader.stick ?? current;
+        for (const [n, rec] of reader.recs) {
+          if (rec.rendered && Math.abs(n - anchor) > 5) {
+            rec.el.replaceChildren();
+            rec.rendered = false;
+            rec.parts = null;
+            rec.stream = null;
+          }
+        }
+      }
+
+      let scrollTick = false;
+      readerPagesEl.addEventListener("scroll", () => {
+        if (scrollTick) return;
+        scrollTick = true;
+        requestAnimationFrame(() => {
+          scrollTick = false;
+          const current = currentPageNumber();
+          if (document.activeElement !== pageNumEl) markCurrentPage(current);
+          if (reader.stick === current) reader.stick = null;
+          sweepFarPages(current);
+        });
+      });
+
+      // ---- Toolbar controls.
+      const inputPage = () => {
+        const n = Number(toAsciiDigits(pageNumEl.value).trim() || 1);
+        if (Number.isFinite(n) && n >= 1) {
+          gotoPage(Math.min(n, reader.pageCount));
+          markCurrentPage(Math.min(n, reader.pageCount));
+        }
+      };
+      pageNumEl.addEventListener("change", inputPage);
+      pageNumEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          inputPage();
+          pageNumEl.blur();
+        }
+      });
+      document
+        .getElementById("page-prev")
+        .addEventListener("click", () => {
+          const n = Math.max(1, currentPageNumber() - 1);
+          gotoPage(n);
+          markCurrentPage(n);
+        });
+      document
+        .getElementById("page-next")
+        .addEventListener("click", () => {
+          const n = Math.min(reader.pageCount, currentPageNumber() + 1);
+          gotoPage(n);
+          markCurrentPage(n);
+        });
+      const setZoom = (zoom) => {
+        reader.zoom = Math.min(4, Math.max(0.6, zoom));
+        const current = currentPageNumber();
+        const width = Math.max(
+          280,
+          Math.round((readerPagesEl.clientWidth - 35) * reader.zoom)
+        );
+        const height = Math.round(width * (reader.baseRatio || 1.414));
+        for (const rec of reader.recs.values()) {
+          rec.el.style.width = `${width}px`;
+          rec.el.style.height = `${height}px`;
+          if (rec.rendered) {
+            rec.el.replaceChildren();
+            rec.rendered = false;
+            rec.parts = null;
+            rec.stream = null;
+          }
+        }
+        gotoPage(current);
+      };
+      document
+        .getElementById("zoom-in")
+        .addEventListener("click", () => setZoom(reader.zoom * 1.15));
+      document
+        .getElementById("zoom-out")
+        .addEventListener("click", () => setZoom(reader.zoom / 1.15));
+
+      let resizeTimer = null;
+      window.addEventListener("resize", () => {
+        if (readerEl.hidden || !reader.pdf) return;
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => setZoom(reader.zoom), 250);
+      });
+
+      // ---- Location: which page of the chunk's range holds the quote,
+      // and where on that page.
+      async function ensurePagesIndex() {
+        if (reader.pagesIndexDoc === reader.doc && reader.pagesIndex) {
+          return reader.pagesIndex;
+        }
+        try {
+          const res = await fetch(
+            `/books/${encodeURIComponent(reader.doc)}.pages.json`,
+            { cache: "no-store" }
+          );
+          if (!res.ok) throw new Error("no index");
+          reader.pagesIndex = (await res.json()).pages;
+          reader.pagesIndexDoc = reader.doc;
+          return reader.pagesIndex;
+        } catch {
+          return null;
+        }
+      }
+
+      function normalizedPageFromIndex(index, n) {
+        if (!reader.normCache.has(n)) {
+          reader.normCache.set(n, normStream(index?.[n] || ""));
+        }
+        return reader.normCache.get(n);
+      }
+
+      // The page's letter stream in READING order. pdf.js emits text
+      // items in extraction order, which for RTL pages scatters lines —
+      // contiguous quotes never match it. So the order is rebuilt from
+      // the items' own geometry: lines grouped by baseline (top of the
+      // page first), items inside a line right-to-left. Each part keeps
+      // its norm→raw index map, so a match in the stream paints onto the
+      // exact spans.
+      // The quote's matched letter range paints as clay rectangles over
+      // the raster: one band per intersecting item, sliced horizontally
+      // by the covered raw-character fraction, positioned in percentages
+      // of the page so zoom and resize keep it glued to the glyphs.
+      function clearHighlights() {
+        for (const rect of readerPagesEl.querySelectorAll(".pdf-rect")) {
+          rect.remove();
+        }
+      }
+
+      function paintMatch(rec, at, len, fresh) {
+        const end = at + len;
+        let painted = false;
+        for (const part of rec.parts) {
+          const partEnd = part.start + part.stream.length;
+          if (partEnd <= at || part.start >= end) continue;
+          const fromNorm = Math.max(0, at - part.start);
+          const toNorm = Math.min(part.stream.length, end - part.start);
+          const rawFrom = part.map[fromNorm];
+          const rawTo = part.map[toNorm - 1] + 1;
+          const fromFrac = Math.min(1, rawFrom / part.rawLen);
+          const toFrac = Math.min(1, rawTo / part.rawLen);
+          if (toFrac <= fromFrac) continue;
+          const rect = document.createElement("div");
+          rect.className = fresh ? "pdf-rect fresh" : "pdf-rect";
+          rect.style.left = `${((part.x + part.w * fromFrac) / rec.pageW) * 100}%`;
+          rect.style.width = `${((part.w * (toFrac - fromFrac)) / rec.pageW) * 100}%`;
+          rect.style.top = `${((rec.pageH - (part.y + part.h * 0.85)) / rec.pageH) * 100}%`;
+          rect.style.height = `${((part.h * 1.3) / rec.pageH) * 100}%`;
+          rec.el.append(rect);
+          painted = true;
+        }
+        return painted;
+      }
+
+      function matchOnPage(rec, needle) {
+        const at = rec.stream.indexOf(needle);
+        if (at !== -1) {
+          return { at, len: needle.length, full: true };
+        }
+        // Reading order is rebuilt geometrically, but a footnote
+        // separator or a running head can still split a long quote.
+        // Fall back to the longest contiguous run the page shares with
+        // the quote and paint that — partial highlight beats none, and
+        // the page-level citation holds either way.
+        const run = longestCommonRun(rec.stream, needle);
+        const floor = Math.min(80, Math.floor(needle.length * 0.6));
+        if (run.len >= floor) {
+          return { at: run.atA, len: run.len, full: run.len >= needle.length * 0.9 };
+        }
+        return null;
+      }
+
+      // Longest common contiguous substring of two letter streams —
+      // the classic one-row DP; streams here are a few hundred letters.
+      function longestCommonRun(a, b) {
+        let best = { atA: 0, len: 0 };
+        let prev = new Uint16Array(b.length + 1);
+        let curr = new Uint16Array(b.length + 1);
+        for (let i = 1; i <= a.length; i++) {
+          const ai = a.charCodeAt(i - 1);
+          for (let j = 1; j <= b.length; j++) {
+            curr[j] = ai === b.charCodeAt(j - 1) ? prev[j - 1] + 1 : 0;
+            if (curr[j] > best.len) {
+              best = { atA: i - curr[j], len: curr[j] };
+            }
+          }
+          const swap = prev;
+          prev = curr;
+          curr = swap;
+        }
+        return best;
+      }
+
+      async function locatePending() {
+        const target = reader.pending;
+        if (!target || !reader.pdf) return;
+        clearHighlights();
+        showReaderNote("");
+        const needle = normStream(target.text).slice(0, 1600);
+        if (needle.length < 8) {
+          reader.pending = null;
+          showReaderNote("عبارت برای جست‌وجو کوتاه است.", "error");
+          return;
+        }
+        // Stage 1 — the extracted text index narrows the chunk's page
+        // range down to the page(s) that actually hold the quote.
+        const first = Math.max(1, target.first);
+        const last = Math.min(target.last || first, reader.pageCount);
+        let candidates = [];
+        let narrowed = false; // true when the index itself found the pages
+        const index = await ensurePagesIndex();
+        if (index) {
+          const from = first || 1;
+          const to = last || reader.pageCount;
+          for (let n = from; n <= to; n++) {
+            if (normalizedPageFromIndex(index, n).includes(needle)) {
+              candidates.push(n);
+            }
+          }
+          if (candidates.length) {
+            narrowed = true;
+          }
+          if (!candidates.length && first) {
+            // The chunk's page label drifts against the extraction index —
+            // recorded live 2026-09-13: a quote labeled 482-484 sat on page
+            // 481. Widen ±2 around the labeled range before falling back.
+            for (
+              let n = Math.max(1, first - 2);
+              n <= Math.min(last + 2, reader.pageCount);
+              n++
+            ) {
+              if (normalizedPageFromIndex(index, n).includes(needle)) {
+                candidates.push(n);
+              }
+            }
+            if (candidates.length) {
+              narrowed = true;
+            }
+          }
+          if (!candidates.length) {
+            // Still nothing (a badly drifted label, or none at all): search
+            // the whole Book in the index — normalization is cached, this
+            // stays cheap. First hit only; a quote lives on one page.
+            for (let n = 1; n <= reader.pageCount; n++) {
+              if (normalizedPageFromIndex(index, n).includes(needle)) {
+                candidates.push(n);
+                narrowed = true;
+                break;
+              }
+            }
+          }
+        }
+        if (!candidates.length && first) {
+          candidates = [];
+          for (let n = first; n <= last; n++) candidates.push(n);
+        }
+        if (!candidates.length) {
+          reader.pending = null;
+          showReaderNote(
+            "این عبارت در متنِ نمایه‌شدهٔ کتاب پیدا نشد؛ صفحهٔ نخستِ استناد باز می‌ماند.",
+            "error"
+          );
+          return;
+        }
+        // Stage 2 — the page's reading-order items for the exact bands.
+        // Index-narrowed candidates are true positives, three tries
+        // enough; a labeled-range fallback (no index, or the quote
+        // nowhere in it) tries the WHOLE range — the recorded live
+        // complaint was a quote on pages 4-5 of a five-page chunk that
+        // never got painted because only the first three were tried.
+        const tryList = narrowed ? candidates.slice(0, 3) : candidates.slice(0, 9);
+        for (const n of tryList) {
+          await gotoPage(n);
+          const rec = await ensureRendered(n);
+          if (!rec) continue;
+          const match = matchOnPage(rec, needle);
+          if (match) {
+            paintMatch(rec, match.at, match.len, true);
+            if (!match.full && match.len < needle.length * 0.7) {
+              showReaderNote(
+                `بخشی از عبارت در صفحهٔ ${toPersianDigits(n)} برجسته شد.`
+              );
+            }
+            reader.pending = null;
+            return;
+          }
+        }
+        // A sentence can straddle a page break: its head ends page p,
+        // its tail opens p+1. Split the needle at every offset past a
+        // short minimum and look for the two halves back to back.
+        for (let pi = 0; pi < candidates.length - 0 && pi < 3; pi++) {
+          const p = candidates[pi];
+          const q = p + 1;
+          const recP = await ensureRendered(p);
+          const recQ = await ensureRendered(q);
+          if (!recP || !recQ) continue;
+          for (let k = 40; k < needle.length - 40; k++) {
+            const head = needle.slice(0, k);
+            const tail = needle.slice(k);
+            if (
+              recP.stream.endsWith(head) &&
+              recQ.stream.startsWith(tail)
+            ) {
+              paintMatch(recP, recP.stream.length - head.length, head.length, true);
+              paintMatch(recQ, 0, tail.length, true);
+              reader.pending = null;
+              return;
+            }
+          }
+        }
+        await gotoPage(candidates[0]);
+        showReaderNote(
+          `عبارت در صفحهٔ ${toPersianDigits(candidates[0])} است؛ برجسته‌سازی دقیق آن ممکن نشد.`,
+          "error"
+        );
+        reader.pending = null;
+      }
 
       ping();
     </script>
