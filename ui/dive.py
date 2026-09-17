@@ -1,12 +1,14 @@
 """The retrieval kernel the Research Mode engine (ADR-0008) rides: the
-pinned searchers over the second Cognee service, the parallel fan-out,
-and the bounded two-round loop with the starvation measure — the pieces
-of the old Deep dive (ADR-0006, issues #25 and #27) that survived the
-rewrite into a multi-turn research conversation. The one-shot dive job
-machinery itself is gone; ui.research's wayfinder turns call in here.
-The kernel talks to the second service's recall behind this module's
-ONE `urlopen` attribute, so the scripted-upstream tests keep a single
-patch point (ui.dive.urlopen)."""
+pinned searchers over the second Cognee service, the Tool registry that
+names every way of searching the Book set (ADR-0012, T4), the parallel
+fan-out, the bounded two-round loop with the starvation measure, and
+the one bounded graph hop — the pieces of the old Deep dive (ADR-0006,
+issues #25 and #27) that survived the rewrite into a multi-turn
+research conversation. The one-shot dive job machinery itself is gone;
+ui.research's wayfinder turns call in here. The kernel talks to the
+second service's recall behind this module's ONE `urlopen` attribute,
+so the scripted-upstream tests keep a single patch point
+(ui.dive.urlopen)."""
 
 from __future__ import annotations
 
@@ -44,6 +46,77 @@ DIVE_STARVED_PASSAGES = 2
 # upstream that starves every sub-question gets exactly two rounds,
 # never a third.
 DIVE_MAX_RETRIEVAL_ROUNDS = 2
+# The fast leash: the vector-only Tools (chunks, summaries) run no LLM
+# round on the second service — one query embedding plus a pgvector
+# lookup — so their fuse is the short one, an order under the
+# graph-backed leash above.
+TOOL_FAST_SEARCH_TIMEOUT = 120
+
+# The Tool registry (ADR-0012, T4): every way of searching the Book set
+# a Research skill row may declare, one entry per Tool — the second
+# service's search type, the Tool's OWN leash, and the shape its reply
+# parses to:
+#   passages — verbatim Book passages with page locators; the only shape
+#              that may enter the evidence ledger and be quoted;
+#   concepts — the graph family's node labels. A graph completion's text
+#              is model-written synthesis — the recorded live reply (the
+#              negative fixture tests/fixtures/
+#              recall-graph-completion-8001.json) carries no Evidence
+#              block and no verbatim passage — so only the labels cross
+#              out of a graph reply, steering citable searches instead;
+#   notes    — pre-generated summaries; context for later skills, never
+#              the pool (a summary is cognee's words, not the Book's).
+# The unsupported modes stay out BY CONSTRUCTION — no caller can name
+# what the registry does not hold: CYPHER and NATURAL_LANGUAGE have no
+# support on the Postgres demo graph, AGENTIC_COMPLETION requires
+# exactly one dataset (the Book set is two), FEELING_LUCKY auto-routes
+# past the pin, and GRAPH_COMPLETION_COT stays the operator probe of
+# serve.py's relay, minutes deep and no Tool of a turn. The sheet must
+# never learn the excluded words either (the session-UI test locks
+# that).
+TOOL_REGISTRY = {
+    "hybrid": {
+        "search_type": "HYBRID_COMPLETION",
+        "timeout": DIVE_SEARCH_TIMEOUT,
+        "shape": "passages",
+    },
+    "chunks": {
+        "search_type": "CHUNKS",
+        "timeout": TOOL_FAST_SEARCH_TIMEOUT,
+        "shape": "passages",
+    },
+    "graph": {
+        "search_type": "GRAPH_COMPLETION",
+        "timeout": DIVE_SEARCH_TIMEOUT,
+        "shape": "concepts",
+    },
+    "decomposition": {
+        "search_type": "GRAPH_COMPLETION_DECOMPOSITION",
+        "timeout": DIVE_SEARCH_TIMEOUT,
+        "shape": "concepts",
+    },
+    "context_extension": {
+        "search_type": "GRAPH_COMPLETION_CONTEXT_EXTENSION",
+        "timeout": DIVE_SEARCH_TIMEOUT,
+        "shape": "concepts",
+    },
+    "summaries": {
+        "search_type": "SUMMARIES",
+        "timeout": TOOL_FAST_SEARCH_TIMEOUT,
+        "shape": "notes",
+    },
+}
+
+# The graph hop's bounds (run_tool's one chain): the node labels that
+# may steer follow-ups, and the citable searches one hop may run.
+GRAPH_HOP_LABEL_CAP = 3
+GRAPH_HOP_FOLLOW_UP_CAP = 2
+
+
+class ToolError(ValueError):
+    """A Tool call the registry refuses: an unregistered name, or a
+    search without the session's picked Book. The caller records the
+    diagnosis — a refusal is never a silent empty pool."""
 
 
 def parse_evidence_sources(text) -> list:
@@ -76,8 +149,28 @@ def parse_evidence_sources(text) -> list:
     return sources
 
 
+def _recall_request(search_type: str, query: str, datasets: list) -> Request:
+    """The recall POST every searcher shares — the shape pinned HERE,
+    never in the browser: references on, the datasets the caller picked."""
+    return Request(
+        f"{NEXT_TIER_URL}/api/v1/recall",
+        data=json.dumps(
+            {
+                "searchType": search_type,
+                "query": query,
+                "datasets": list(datasets),
+                "includeReferences": True,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+
+
 def dive_recall(sub_question: str, datasets=None) -> list:
-    """One searcher: the pinned recall on the second Cognee service.
+    """One phase-1 searcher: the pinned recall on the second Cognee
+    service.
 
     The search shape is pinned HERE, never in the browser:
     HYBRID_COMPLETION over the Book set with references on — not
@@ -87,23 +180,16 @@ def dive_recall(sub_question: str, datasets=None) -> list:
     smoke, ticket #25; ADR 0006 — the negative fixture
     tests/fixtures/recall-graph-completion-8001.json locks it). The
     dataset subset narrows the search to the ask's selected Books
-    (ADR-0010); None or an empty list means the whole Book set. On any
-    failure the searcher contributes nothing; the turn continues on its
-    siblings' pools.
+    (ADR-0010); None or an empty list means the whole Book set — the
+    ASK-path rule. Research Mode's Tools sit one layer up: run_tool
+    demands the session's picked Book and never substitutes this
+    default. On any failure the searcher contributes nothing; the turn
+    continues on its siblings' pools.
     """
-    request = Request(
-        f"{NEXT_TIER_URL}/api/v1/recall",
-        data=json.dumps(
-            {
-                "searchType": "HYBRID_COMPLETION",
-                "query": sub_question,
-                "datasets": list(datasets) if datasets else list(BOOK_DATASETS),
-                "includeReferences": True,
-            },
-            ensure_ascii=False,
-        ).encode("utf-8"),
-        headers={"Content-Type": "application/json; charset=utf-8"},
-        method="POST",
+    request = _recall_request(
+        "HYBRID_COMPLETION",
+        sub_question,
+        list(datasets) if datasets else list(BOOK_DATASETS),
     )
     try:
         with urlopen(request, timeout=DIVE_SEARCH_TIMEOUT) as response:
@@ -190,3 +276,160 @@ def dive_retrieve(
             if count < DIVE_STARVED_PASSAGES
         ]
     return sources, rounds, pending
+
+
+# --- the Tool registry (ADR-0012, T4) ---------------------------------------
+
+# The Book text layer's page marker, the service patch's twin
+# (enable_farsi_evidence.py): a chunks reply's pages read from the same
+# markers its Evidence bullets would.
+_CHUNK_PAGE_MARKER = re.compile(r"Page\s+(\d+)\s*[:：]", re.IGNORECASE)
+
+
+def parse_tool_concepts(payload) -> list:
+    """The graph family's shape: the reply's graph-node labels in rank
+    order, deduped. The completion's own text is model-written
+    synthesis — the recorded live reply carries no Evidence block and
+    no verbatim passage (the negative fixture) — so only the labels
+    cross out of a graph reply, and only as steering for citable
+    searches."""
+    labels = []
+    for item in payload if isinstance(payload, list) else []:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata")
+        entries = metadata.get("evidence") if isinstance(metadata, dict) else None
+        for entry in entries or []:
+            if not isinstance(entry, dict) or entry.get("kind") != "graph_node":
+                continue
+            label = entry.get("label")
+            if isinstance(label, str) and label.strip() and label not in labels:
+                labels.append(label.strip())
+    return labels
+
+
+def parse_tool_summaries(payload) -> list:
+    """The summaries Tool's shape: each reply item's text is one
+    pre-generated summary note — context for later skills, never the
+    citable pool (a summary is cognee's words, not the Book's)."""
+    return [
+        item["text"].strip()
+        for item in (payload if isinstance(payload, list) else [])
+        if isinstance(item, dict) and isinstance(item.get("text"), str)
+        and item["text"].strip()
+    ]
+
+
+def parse_tool_chunks(payload, datasets: list) -> list:
+    """The chunks Tool's shape: each reply item's text IS the verbatim
+    chunk, so the reference is built server-side — the Book identity
+    from the item's dataset name, else the pick when it names exactly
+    one Book, else the chunk drops (an unattributable passage is never
+    quoted) — and the pages from the text layer's Page N: markers, the
+    same provenance the service's Evidence bullets carry. No markers:
+    the reference names the Book alone, never an invented page."""
+    passages = []
+    for item in payload if isinstance(payload, list) else []:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        dataset = item.get("dataset_name")
+        if not isinstance(dataset, str) or not dataset.strip():
+            dataset = datasets[0] if len(datasets) == 1 else None
+        if not dataset:
+            continue
+        pages = sorted(
+            {int(match.group(1)) for match in _CHUNK_PAGE_MARKER.finditer(text)}
+        )
+        if pages:
+            span = (
+                f"(page {pages[0]})"
+                if pages[0] == pages[-1]
+                else f"(pages {pages[0]}-{pages[-1]})"
+            )
+        else:
+            span = ""
+        passages.append(
+            {"reference": f"document {dataset} {span}".strip(), "passage": text}
+        )
+    return passages
+
+
+def run_tool(name: str, query: str, datasets, cancel=None) -> dict:
+    """One Tool search through the registry (ADR-0012, T4): the entry's
+    search type under the entry's OWN leash, the reply parsed by the
+    entry's shape into {tool, shape, passages, concepts, notes} — only
+    the shape's list fills. The registry is the only path to the second
+    service's search modes: an unregistered name raises (the unsupported
+    modes are unreachable by construction), and so does an empty pick —
+    every Tool searches the session's picked Book, never a default. An
+    upstream failure returns the empty result; the turn continues on
+    what its other searches pooled, exactly as the hybrid searcher
+    always has."""
+    tool = TOOL_REGISTRY.get(name)
+    if tool is None:
+        raise ToolError(f"unregistered tool: {name}")
+    if not datasets:
+        raise ToolError(f"{name} refused: no picked Book")
+    picked = list(datasets)
+    result = {
+        "tool": name,
+        "shape": tool["shape"],
+        "passages": [],
+        "concepts": [],
+        "notes": [],
+    }
+    if cancel is not None and cancel.is_set():
+        return result
+    request = _recall_request(tool["search_type"], query, picked)
+    try:
+        with urlopen(request, timeout=tool["timeout"]) as response:
+            payload = json.load(response)
+    except (OSError, ValueError):
+        return result
+    if tool["shape"] == "concepts":
+        result["concepts"] = parse_tool_concepts(payload)
+    elif tool["shape"] == "notes":
+        result["notes"] = parse_tool_summaries(payload)
+    elif name == "chunks":
+        result["passages"] = parse_tool_chunks(payload, picked)
+    else:
+        for item in payload if isinstance(payload, list) else []:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                result["passages"].extend(parse_evidence_sources(item["text"]))
+    return result
+
+
+def graph_hop(seed, datasets, cancel=None, budget=None) -> tuple:
+    """One bounded graph hop (ADR-0012, T4): a GRAPH_COMPLETION search
+    over the seed — its node labels are the Book graph's own concepts —
+    then at most GRAPH_HOP_FOLLOW_UP_CAP citable hybrid searches seeded
+    `seed — label`, so the pool gains the angles one search mode misses.
+    The hop is a bonus angle, never a spine: an unaffordable budget
+    leaves before it starts (the worker's honest stop reports it), every
+    follow-up is afford-checked then charged, and the labels ride back
+    even when no follow-up ran — the map's concept row grows from them.
+    Returns (passages, labels)."""
+    if budget is not None and not budget.afford(1):
+        return [], []
+    hop = run_tool("graph", seed, datasets, cancel=cancel)
+    if budget is not None:
+        budget.charge(1)
+    labels = hop["concepts"][:GRAPH_HOP_LABEL_CAP]
+    passages = []
+    ran = 0
+    for label in labels:
+        if ran >= GRAPH_HOP_FOLLOW_UP_CAP:
+            break
+        if cancel is not None and cancel.is_set():
+            break
+        if budget is not None and not budget.afford(1):
+            break
+        if budget is not None:
+            budget.charge(1)
+        fed = run_tool("hybrid", f"{seed} — {label}", datasets, cancel=cancel)
+        ran += 1
+        passages.extend(fed["passages"])
+    return passages, labels

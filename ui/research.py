@@ -59,8 +59,10 @@ try:
     from ui.dive import (
         BOOK_DATASETS,
         DIVE_MAX_SUB_QUESTIONS,
+        ToolError,
         dive_recall,
         dive_retrieve,
+        graph_hop,
     )
     from ui.guard import (
         _count_word,
@@ -77,8 +79,10 @@ except ImportError:  # the container runs serve.py as a script beside the module
     from dive import (
         BOOK_DATASETS,
         DIVE_MAX_SUB_QUESTIONS,
+        ToolError,
         dive_recall,
         dive_retrieve,
+        graph_hop,
     )
     from guard import (
         _count_word,
@@ -257,8 +261,15 @@ SKILL_TABLE = (
         "kind": "work",
         "runner": "research",
         "allowed_stages": None,
-        "caps": "≤6 searchers × ≤2 rounds per gather",
-        "tools": ("hybrid",),
+        "caps": "≤6 searchers × ≤2 rounds + one graph hop per gather",
+        "tools": (
+            "hybrid",
+            "graph",
+            "chunks",
+            "decomposition",
+            "context_extension",
+            "summaries",
+        ),
         "state_reads": ("research_question", "map", "subquestions", "evidence", "datasets"),
         "state_writes": (
             "evidence",
@@ -581,10 +592,13 @@ def frontier_question(state: dict):
     return pending[0] if pending else None
 
 
-def _merge_evidence(state: dict, sources, found_for: str) -> int:
+def _merge_evidence(state: dict, sources, found_for: str, via: str = "") -> int:
     """Merge parsed (reference, passage) pairs into the ledger; how many
     landed. Dedupe is the guard's normalized letter stream — the same
-    passage re-parsed by a different searcher never counts twice."""
+    passage re-parsed by a different searcher never counts twice. `via`
+    records the Tool that sourced the passage (the graph hop's entries
+    carry `graph`); the hybrid fan-out, the ledger's founding shape,
+    stays unmarked."""
     seen = {normalize_for_match(item["passage"]) for item in state["evidence"]}
     added = 0
     for source in sources:
@@ -600,14 +614,15 @@ def _merge_evidence(state: dict, sources, found_for: str) -> int:
         if key in seen:
             continue
         seen.add(key)
-        state["evidence"].append(
-            {
-                "id": f"e{len(state['evidence']) + 1}",
-                "reference": reference,
-                "passage": passage,
-                "found_for": found_for,
-            }
-        )
+        entry = {
+            "id": f"e{len(state['evidence']) + 1}",
+            "reference": reference,
+            "passage": passage,
+            "found_for": found_for,
+        }
+        if via:
+            entry["via"] = via
+        state["evidence"].append(entry)
         added += 1
     return added
 
@@ -2152,10 +2167,12 @@ def _gather(state: dict, turn: ResearchTurn, target: str = None) -> list:
     """The evidence-gathering operation: run the dive's bounded fan-out
     over the frontier — the targeted open question when a chip named
     one, else every still-pending sub-question (or a decomposition of
-    the research question when none) — merge the pool into the ledger,
-    and record honest gaps for the sub-questions the Books could not
-    feed. The reply is server-composed notes — counts and gaps — so a
-    gather makes no claim a guard would have to check."""
+    the research question when none) — then ONE bounded graph hop whose
+    node labels steer at most two more citable searches, merge every
+    pool into the ledger, and record honest gaps for the sub-questions
+    the Books could not feed. The reply is server-composed notes —
+    counts and gaps — so a gather makes no claim a guard would have to
+    check."""
     pending = []
     if target:
         pending = [
@@ -2192,6 +2209,38 @@ def _gather(state: dict, turn: ResearchTurn, target: str = None) -> list:
     if turn.cancel.is_set():
         return []
     added = _merge_evidence(state, sources, state["research_question"]["current"])
+    # The graph hop (ADR-0012, T4): one graph completion over the gather's
+    # seed, its node labels steering at most two citable hybrid searches —
+    # the ledger gaining the angles one search mode misses. It rides the
+    # frontier-wide gathers only: a targeted chip asked for exactly one
+    # question, and the pin is that exactly that question is searched. A
+    # bonus angle, never the gather's spine: a registry refusal records
+    # the wrong-tool diagnosis and the gather stands on its hybrid pool;
+    # an unaffordable budget leaves before the hop starts and the
+    # worker's honest stop reports it.
+    before_hop = added
+    hop_sources, hop_labels = [], []
+    if not target:
+        seed = pending[0] if pending else state["research_question"]["current"]
+        try:
+            hop_sources, hop_labels = graph_hop(
+                seed,
+                state.get("datasets"),
+                cancel=turn.cancel,
+                budget=turn.budget,
+            )
+        except ToolError as error:
+            record_diagnosis(
+                state, f"tool: graph hop refused: {error}", "the hybrid pool"
+            )
+        if turn.cancel.is_set():
+            return []
+        if hop_sources:
+            added += _merge_evidence(state, hop_sources, seed, via="graph")
+        for label in hop_labels:
+            if label not in state["concepts"]:
+                state["concepts"].append(label)
+        state["concepts"] = state["concepts"][-RESEARCH_MAX_CONCEPTS:]
     for item in state["subquestions"]:
         if item["text"] in pending:
             item["status"] = "searched"
@@ -2204,6 +2253,17 @@ def _gather(state: dict, turn: ResearchTurn, target: str = None) -> list:
                     f"{_farsi_digits(added)} نقل‌قول تازه به شواهد افزوده شد "
                     f"(مجموع {_farsi_digits(len(state['evidence']))} نقل‌قول، "
                     f"{_farsi_digits(rounds)} دور جست‌وجو)."
+                ),
+            }
+        )
+    hop_added = added - before_hop
+    if hop_added:
+        blocks.append(
+            {
+                "type": "note",
+                "text": (
+                    "جست‌وجوی گراف "
+                    f"{_farsi_digits(hop_added)} نقل‌قول تازه به شواهد افزود."
                 ),
             }
         )

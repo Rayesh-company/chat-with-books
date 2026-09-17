@@ -443,12 +443,16 @@ TURN LIFECYCLE (progress events in Farsi, polled every 2s):
       forced by a fixed chip command:
         gather ── the dive's fan-out unchanged: ≤6 parallel searchers on
                    cognee-next-tier (:8001), each HYBRID_COMPLETION over
-                   BOTH datasets, includeReferences:true, own 600s leash;
+                   the picked Book, includeReferences:true, own 600s leash;
                    pools merged into the ledger, deduplicated on the
                    guard's normalized letter stream. Quote-starved
                    sub-questions (<2 passages) get ONE gap round; hard
                    caps 2 rounds × 6 searchers. Still-starved sub-questions
                    become honest GAP entries — never hallucinated fill.
+                   Frontier-wide gathers then ride ONE bounded graph hop
+                   (the Tool registry's `graph`): its node labels steer at
+                   most two further citable hybrid searches; a targeted
+                   chip gathers only its named question, no hop.
                    The reply is server-composed notes (counts and gaps).
         synthesize ── ONE guarded writer pass over the accumulated ledger
                    (thinking OFF — quotes must survive the verbatim guard);
@@ -502,7 +506,17 @@ Why this shape:
   on the second service, GRAPH_COMPLETION returns graph-node metadata **with
   no verbatim passage text**, so the pool would be empty by construction and
   every sub-question would starve into a gap. The negative/positive fixtures
-  are locked in `tests/fixtures/`.
+  are locked in `tests/fixtures/`. The mode is not banned — it is **shaped**:
+  every way of searching the picked Book is a named Tool in `ui/dive.py`'s
+  registry (ADR-0012, T4) with its own leash and result shape — hybrid and
+  chunks parse to citable **passages**; the graph family (`graph`,
+  `decomposition`, `context_extension`) parses to **concepts** (node labels
+  that steer citable searches, their model text never quoted); `summaries`
+  parses to **notes** (cognee's words, never the pool). Every Tool demands
+  the session's picked Book (an empty pick raises, never a default) and the
+  unsupported modes (`CYPHER`, `NATURAL_LANGUAGE`, `AGENTIC_COMPLETION`,
+  `FEELING_LUCKY`, the COT probe) are outside the registry — unreachable by
+  construction, a wrong name a recorded diagnosis.
 - The old `/next-tier-recall` relay (`GRAPH_COMPLETION_COT`, up to ~10 min,
   `NEXT_TIER_TIMEOUT` 1200s) still exists server-side as the **operator's
   manual probe** of the second service; the sheet never calls it.
