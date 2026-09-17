@@ -158,8 +158,10 @@ The approved plain-Persian naming table (ADR-0012): the single source every Rese
 
 **Journey stages**: نام‌گذاری مقصد، نقشه‌برداری، گردآوری شواهد، تحلیل و جمع‌بندی، نوشتن خلاصه.
 
-**Fixed chips and texts**: gather «شواهد بیشتری از کتاب‌ها پیدا کن» · gather-all «همهٔ پرسش‌های باز را جست‌وجو کن» · synthesize «شواهد را تحلیل و جمع‌بندی کن» · brief «خلاصۀ پژوهش را بنویس» · audit «ادعاها و استنادها را بازبینی کن» · guide «ادامهٔ سفر پژوهش» · skip «فعلاً همین کافی است؛ ادامه بده» · stop «توقف پژوهش» · accept/reject «می‌پذیرم» / «رد می‌کنم» · the diagnoser's adjustment menu (T6) «پرسش را محدودتر کن» / «با روش دیگری جست‌وجو کن» / «همین را شکاف اعلام کن» · the closing review's revise (T9) «بازنویسی بخش‌های ناکام خلاصه».
+**Fixed chips and texts**: gather «شواهد بیشتری از کتاب‌ها پیدا کن» · gather-all «همهٔ پرسش‌های باز را جست‌وجو کن» · synthesize «شواهد را تحلیل و جمع‌بندی کن» · brief «خلاصۀ پژوهش را بنویس» · audit «ادعاها و استنادها را بازبینی کن» · guide «ادامهٔ سفر پژوهش» · skip «فعلاً همین کافی است؛ ادامه بده» · stop «توقف پژوهش» · accept/reject «می‌پذیرم» / «رد می‌کنم» · the diagnoser's adjustment menu (T6) «پرسش را محدودتر کن» / «با روش دیگری جست‌وجو کن» / «همین را شکاف اعلام کن» · the closing review's revise (T9) «بازنویسی بخش‌های ناکام خلاصه» · the map keeper's survey (T12) «نقشه را مرتب کن».
 
 **Map rows**: مقصد، پرسش پژوهش، در حال پرداختن (the frontier)، پرسش‌های باز، تصمیم‌ها، تشخیص‌ها (the diagnoser's named causes)، هنوز نامشخص (the fog)، خارج از دامنه، شمارش.
+
+**State caps (T12)**: the working ledgers — evidence, claims, gaps, decisions — keep their newest entries past their hard caps, so the writer prompts stay bounded in a long session. The map's own rows (open questions, fog) never trim silently: the map keeper (نقشه‌بان) surveys them and proposes each cleanup — a duplicate question, stale fog, a finished question's row — as the operator's decision through the usual accept/reject flow.
 
 **Question statuses**: در انتظار، جست‌وجو شد، شکاف. **Claim statuses**: پشتوانهٔ مستقیم، ترکیب شواهد، شواهد ناکافی.

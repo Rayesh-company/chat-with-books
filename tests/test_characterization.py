@@ -142,7 +142,9 @@ def test_a_misrouted_option_chip_keeps_the_question_alive_silently(tmp_path):
 def test_a_conversational_turn_does_not_tick_the_cooldown(tmp_path):
     # [T2 #3: the cooldown ticks on every turn] The decision cooldown
     # decrements only in the research-side branch — a chat, an audit,
-    # or a drafting turn leaves it frozen.
+    # or a drafting turn leaves it frozen. (T12 #13 added the map
+    # keeper's own cooldown key to the seeded shape — the chat turn
+    # leaves it equally untouched.)
     state = research.new_research_state("پرسش پژوهش؟")
     state["proposal_cooldowns"] = {"research_question": 1, "scope": 0}
     upstream = ResearchUpstream(
@@ -157,6 +159,7 @@ def test_a_conversational_turn_does_not_tick_the_cooldown(tmp_path):
     assert session["state"]["proposal_cooldowns"] == {
         "research_question": 1,
         "scope": 0,
+        "map_cleanup": 0,
     }
 
 
@@ -201,36 +204,47 @@ def test_an_empty_pool_burns_the_landscape_turn_and_advances(tmp_path):
 # --- the unbounded ledger (audit 2) ------------------------------------------
 
 
-def test_the_brief_prompt_carries_the_whole_ledger(tmp_path):
-    # [T12 #13: the state caps] Each Brief section's writer prompt
-    # embeds the ENTIRE evidence ledger — today nothing bounds what a
-    # long session ships to the composer, per section now as before.
-    second_passage = "این جمله از قطعهٔ دیگری است."
+def test_the_cap_bounds_the_brief_prompt_and_the_ledger(tmp_path):
+    # [T12 #13: fulfilled — the caps landed] The writer prompt used to
+    # embed the ENTIRE evidence ledger, whatever a long session had
+    # accumulated. The evidence ledger's hard cap (T12) now bounds both
+    # at once — the pool the writers read is the ledger — so a session
+    # grown past RESEARCH_MAX_EVIDENCE passages ships exactly the cap,
+    # the newest kept, the trimmed oldest gone from the prompt.
     state = research.new_research_state("پرسش پژوهش؟")
-    research.seed_evidence(
-        state,
-        [
-            {"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE},
-            {"reference": "chunk 2 of document tarhe-kolli", "passage": second_passage},
-        ],
-        "پرسش پژوهش؟",
-    )
+    passages = [
+        {"reference": f"chunk {i} of document tarhe-kolli", "passage": f"نشانه{i}پایان"}
+        for i in range(research.RESEARCH_MAX_EVIDENCE + 5)
+    ]
+    research.seed_evidence(state, passages, "پرسش پژوهش؟")
+    # The cap kept the newest: the ledger holds exactly the cap, the
+    # oldest survivor's id recorded as the one claim the section pins.
+    assert len(state["evidence"]) == research.RESEARCH_MAX_EVIDENCE
+    oldest = state["evidence"][0]
     state["claims"] = [
-        {"id": "c1", "text": "ادعا", "status": "direct_support", "evidence_ids": ["e1"]}
+        {
+            "id": "c1",
+            "text": "ادعا",
+            "status": "direct_support",
+            "evidence_ids": [oldest["id"]],
+        }
     ]
     sections = [{"title": "بخش یکم", "question": "", "claims": ["c1"]}]
     state["brief_plan"] = {
         "current": {"sections": sections},
         "versions": [{"sections": sections, "turn": 1}],
     }
-    pool = [
-        {"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE},
-        {"reference": "chunk 2 of document tarhe-kolli", "passage": second_passage},
-    ]
     upstream = ResearchUpstream(
         composer_replies=[
             classify_reply("drafting"),
-            composer_reply(json.dumps(guarded_blocks(pool), ensure_ascii=False)),
+            composer_reply(
+                json.dumps(
+                    guarded_blocks(
+                        [{"passage": oldest["passage"], "reference": "r"}]
+                    ),
+                    ensure_ascii=False,
+                )
+            ),
             composer_reply("روایت کوتاه."),
             # The Closing review's judgment (T9).
             composer_reply(
@@ -245,8 +259,13 @@ def test_the_brief_prompt_carries_the_whole_ledger(tmp_path):
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)
     assert turn.state == "done"
     writer_prompt = composer_bodies(upstream)[1]["messages"][0]["content"]
-    assert SENTENCE in writer_prompt
-    assert second_passage in writer_prompt
+    # The trimmed oldest never ride; the cap's newest do.
+    for i in range(5):
+        assert f"نشانه{i}پایان" not in writer_prompt
+    assert "نشانه5پایان" in writer_prompt
+    assert f"نشانه{research.RESEARCH_MAX_EVIDENCE + 4}پایان" in writer_prompt
+    # The ledger stays at the cap through the turn — the bound holds.
+    assert len(session["state"]["evidence"]) == research.RESEARCH_MAX_EVIDENCE
 
 
 # --- the all-starved stall (audit 5) -----------------------------------------

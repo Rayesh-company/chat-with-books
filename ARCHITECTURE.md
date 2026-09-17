@@ -383,8 +383,8 @@ TURN LIFECYCLE (progress events in Farsi, polled every 2s):
   ONE classify call (glm-5.3-flash, thinking ON) reads the message +
   the compact research state + the last 6 turns → intent ∈ {casual,
   concept_learning, source_lookup, research_exploration, active_research,
-  drafting, closing_review, evidence_audit}. A malformed reply degrades
-  to the conversational path — never crashes.
+  drafting, closing_review, evidence_audit, map_keeper}. A malformed
+  reply degrades to the conversational path — never crashes.
 
   CONVERSATION LAYER (casual/learning/lookup):
     ONE searcher over the message + ONE guarded writer pass over its pool;
@@ -499,6 +499,26 @@ TURN LIFECYCLE (progress events in Farsi, polled every 2s):
         audit ── pure code: the claim ledger re-reported, no LLM call —
                    it inspects the claim ledger, not the Brief (that is
                    the review's work).
+        map_keeper ── the map's survey (T12, GitLab #13): pure code, no
+                   upstream call, NOTHING mutated — the cleanups it
+                   finds (duplicate open questions, stale fog, finished
+                   questions beyond the map's readability keep) park as
+                   ONE pending map_cleanup decision through the standing
+                   decide flow, damped by its own two-turn cooldown; the
+                   proposal names every row, the acceptance applies
+                   exactly the named rows, and nothing is deleted
+                   silently or without the operator's decision.
+    • STATE CAPS (T12, GitLab #13): the working ledgers — evidence,
+      claims, gaps, decisions — keep their NEWEST entries past hard
+      caps (RESEARCH_MAX_EVIDENCE / RESEARCH_MAX_CLAIMS /
+      RESEARCH_MAX_GAPS / RESEARCH_MAX_DECISIONS), so the pool the
+      writers read — it IS the ledger — and every prompt stay bounded
+      however long a session runs; an evidence front-trim re-anchors
+      the standing document's quoted positions IN THE SAME MUTATION,
+      and a claim whose recorded support the cap retired is
+      carried by its own append-only record. The map's own rows never
+      trim silently — their cleanup is the map keeper's proposed
+      decision.
     • Every reply stating a Book fact runs the SAME verbatim guard as
       phases 2/3; the closing «منابع» references list is built
       SERVER-SIDE from the passages actually quoted — never the model's

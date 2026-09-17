@@ -254,6 +254,9 @@ def test_context_records_the_approved_persian_display_names():
         # name); the claim-ledger audit is named for its own ledger.
         "closing_review": "بازبین",
         "evidence_audit": "بازبینِ دفتر ادعاها",
+        # The map keeper (T12, GitLab #13): the survey that proposes the
+        # map's cleanups as decisions.
+        "map_keeper": "نقشه‌بان",
     }
     assert {row["name"] for row in research.SKILL_TABLE} == set(expected)
     for row in research.SKILL_TABLE:
@@ -338,3 +341,37 @@ def test_context_names_the_closing_review_and_the_audit():
     assert "| claim-ledger audit (evidence_audit) | بازبینِ دفتر ادعاها |" in text
     assert "بازنویسی بخش‌های ناکام خلاصه" in text
     assert "the closing review's revise (T9)" in text
+
+
+def test_readme_and_architecture_lock_the_state_caps_and_the_map_keeper():
+    # T12 (GitLab #13): the working ledgers cap newest-kept so the
+    # prompts stay bounded; the map's rows clean only through the
+    # map-keeper's proposed decisions — never silently.
+    readme = research_section()
+    assert "state caps" in readme
+    assert "RESEARCH_MAX_EVIDENCE" in readme
+    assert "keep their NEWEST entries" in readme
+    assert "map keeper" in readme
+    assert "نقشه‌بان" in readme
+    assert "نقشه را مرتب کن" in readme
+    assert "never re-parks" in readme
+    assert "provenance stays append-only" in readme
+    section = ARCHITECTURE.read_text(encoding="utf-8").split(
+        "## 8. Research Mode", 1
+    )[1].split("\n## 9.", 1)[0]
+    assert "STATE CAPS" in section
+    assert "RESEARCH_MAX_DECISIONS" in section
+    assert "re-anchors" in section
+    assert "carried by its own append-only record" in section
+    assert "map_keeper" in section.split("intent ∈ {", 1)[1].split("}", 1)[0]
+    assert "map_keeper ──" in section
+
+
+def test_context_names_the_state_caps_and_the_keeper_chip():
+    # T12 (GitLab #13): the vocabulary home records the caps and the
+    # keeper's fixed chip beside the naming table's own row.
+    text = CONTEXT.read_text(encoding="utf-8")
+    assert "**State caps (T12)**" in text
+    assert "| map keeper | نقشه‌بان |" in text
+    assert "نقشه را مرتب کن" in text
+    assert "the map keeper's survey (T12)" in text

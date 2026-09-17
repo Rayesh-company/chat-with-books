@@ -137,6 +137,11 @@ COMMAND_STOP = "توقف پژوهش"
 # review then faces the reassembled document again. Resolved
 # server-side like every fixed command, no classification luck.
 COMMAND_REVISE = "بازنویسی بخش‌های ناکام خلاصه"
+# The map-keeper's chip (T12, ADR-0012): one tap summons the map
+# survey — the keeper proposes the cleanups it finds as the user's
+# decision, never applying one. Resolved server-side like every fixed
+# command, no classification luck.
+COMMAND_KEEP_MAP = "نقشه را مرتب کن"
 # A per-question gather chip: «شواهدِ «نام» را پیدا کن» targets exactly
 # that named open question — the deterministic frontier move.
 TARGETED_GATHER_RE = re.compile(r"^شواهدِ «(.+)» را پیدا کن$")
@@ -187,6 +192,7 @@ RESEARCH_INTENTS = (
     "drafting",
     "closing_review",
     "evidence_audit",
+    "map_keeper",
 )
 
 # The dispatch table (ADR-0012): one row per Research skill, each a
@@ -350,6 +356,19 @@ SKILL_TABLE = (
         "state_writes": (),
         "guarded": False,
     },
+    {
+        "name": "map_keeper",
+        "display_name": "نقشه‌بان",
+        "purpose": "survey the research map and propose its cleanups as decisions",
+        "kind": "work",
+        "runner": "map_keeper",
+        "allowed_stages": None,
+        "caps": "pure code, no upstream calls; one proposal per its cooldown",
+        "tools": (),
+        "state_reads": ("subquestions", "map", "decisions", "pending_proposals"),
+        "state_writes": ("pending_proposals",),
+        "guarded": False,
+    },
 )
 SKILL_TABLE_BY_NAME = {row["name"]: row for row in SKILL_TABLE}
 
@@ -440,6 +459,25 @@ RESEARCH_SESSION_TURN_CAP = 40
 # today (worst gather ≈ 19 upstream calls) and below a runaway chain.
 RESEARCH_TURN_DEADLINE_SECONDS = 600
 RESEARCH_TURN_CALL_CAP = 24
+# The working ledgers' hard caps (T12, ADR-0012): evidence, claims, gaps,
+# and decisions keep their NEWEST entries past these counts, so the
+# writer prompts and the audit stay bounded however long a session runs
+# — the pool a synthesis or a Brief section reads can never exceed
+# RESEARCH_MAX_EVIDENCE passages. These four are WORKING ledgers: the
+# cap is their maintenance, like the sub-questions' and the concepts'
+# below. The MAP's own rows (open questions, fog) are history — they
+# never trim silently; cleaning them is the map-keeper's proposed
+# decision (T12), never an automatic cut.
+RESEARCH_MAX_EVIDENCE = 120
+RESEARCH_MAX_CLAIMS = 40
+RESEARCH_MAX_GAPS = 20
+RESEARCH_MAX_DECISIONS = 40
+# The map-keeper's readability keep (T12): the map holds this many
+# finished (searched/gap) questions before the keeper proposes the
+# older ones for removal — their evidence, claims, and gaps stay in the
+# ledgers; only the map row retires, and only by the operator's
+# accepted decision.
+MAP_KEEPER_DONE_QUESTIONS = 4
 # The claim ledger's statuses (Wayfinder §11, minus External Knowledge:
 # this platform answers from the Books only, so out-of-corpus content is
 # labeled commentary in notes and may never enter a claim). The first
@@ -545,6 +583,19 @@ RESEARCH_STOP_DETAIL = (
 RESEARCH_ADJUSTMENT_CHOICE_DETAIL = (
     "برای پذیرش این پیشنهاد، یکی از انتخاب‌های اصلاح را بفرستید."
 )
+# The map-keeper's honest landings (T12): a survey that found nothing,
+# one the cooldown still damps, and one whose exact cleanup the
+# operator already decided — each says which, never a fake proposal.
+RESEARCH_MAP_CLEAN_NOTE = (
+    "نقشه تمیز است؛ پرسش تکراری یا مهِ قدیمی برای پاک‌سازی پیدا نشد."
+)
+RESEARCH_MAP_COOLDOWN_NOTE = (
+    "پالایش نقشه به‌تازگی تصمیم گرفت؛ چند پیام دیگر دوباره بررسی می‌شود."
+)
+RESEARCH_MAP_DECIDED_NOTE = (
+    "این پاک‌سازی پیش‌تر پیشنهاد شد و تصمیمش ثبت است؛ چیزی تازه برای "
+    "پاک‌سازی نیست."
+)
 
 _FARSI_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 
@@ -606,7 +657,12 @@ def new_research_state(goal: str) -> dict:
         # newest rides as `current` until the operator's decision marks
         # it accepted — provenance like the plan's.
         "closing_review": {"current": None, "versions": []},
-        "proposal_cooldowns": {"research_question": 0, "scope": 0, "brief_plan": 0},
+        "proposal_cooldowns": {
+            "research_question": 0,
+            "scope": 0,
+            "brief_plan": 0,
+            "map_cleanup": 0,
+        },
         "pending_proposals": [],
         "turns": 0,
         "closed": False,
@@ -652,7 +708,7 @@ def ensure_state_shape(state: dict) -> dict:
             state, plan_current["sections"]
         )
     cooldowns = state.setdefault("proposal_cooldowns", {})
-    for kind in ("research_question", "scope"):
+    for kind in ("research_question", "scope", "map_cleanup"):
         cooldowns.setdefault(kind, 0)
     # The standing Brief document and the Closing review's ledger (T9)
     # top up the same way — a session persisted before the review
@@ -713,6 +769,88 @@ def _contract_question_text(state: dict, contract: dict) -> str:
         if named in (item.get("name", ""), item.get("text", "")):
             return item.get("text", "") or named
     return named
+
+
+def _next_ledger_id(items, prefix: str) -> str:
+    """The next id for a capped ledger (T12): the highest recorded
+    suffix plus one, never the list length. A ledger that trims its
+    oldest entries keeps ids stable — a fresh entry can never be handed
+    an id a surviving entry (or a claim's recorded evidence_ids) still
+    holds."""
+    top = 0
+    for item in items:
+        match = re.fullmatch(rf"{prefix}(\d+)", str(item.get("id", "")))
+        if match:
+            top = max(top, int(match.group(1)))
+    return f"{prefix}{top + 1}"
+
+
+def _add_decision(state: dict, text: str) -> None:
+    """One decision line joins the map's index, capped (T12): the
+    newest RESEARCH_MAX_DECISIONS stay, so the dedupe scans and the
+    checkpoint prose stay bounded in a long session."""
+    state["decisions"].append({"text": text, "turn": state["turns"]})
+    state["decisions"] = state["decisions"][-RESEARCH_MAX_DECISIONS:]
+
+
+def _add_gap(state: dict, text: str, subquestion: str = "") -> bool:
+    """One honest gap entry — deduped on the normalized letter stream,
+    capped newest-kept (T12); whether it landed."""
+    known = {normalize_for_match(gap["text"]) for gap in state["gaps"]}
+    if normalize_for_match(text) in known:
+        return False
+    state["gaps"].append(
+        {
+            "id": _next_ledger_id(state["gaps"], "g"),
+            "text": text,
+            "subquestion": subquestion,
+            "turn": state["turns"],
+        }
+    )
+    state["gaps"] = state["gaps"][-RESEARCH_MAX_GAPS:]
+    return True
+
+
+def _reanchor_document_indices(state: dict, dropped: int) -> None:
+    """The standing Brief document's quoted passages ride the evidence
+    pool's positions; the cap's front-trim (T12) shifts every survivor
+    down by the dropped count IN THE SAME MUTATION, so an old section's
+    references never silently point at a shifted passage. A part whose
+    passage the cap retired loses its locator key — the verbatim quote
+    stands (the sheet renders it from the quote alone), the references
+    builder and the review simply skip what the pool no longer holds."""
+    if dropped <= 0:
+        return
+    for entry in (state.get("brief_document") or {}).get("sections", []):
+        if not isinstance(entry, dict):
+            continue
+        for block in entry.get("paragraphs", []):
+            if not isinstance(block, dict) or block.get("type") != "paragraph":
+                continue
+            for part in block.get("parts", []):
+                if not isinstance(part, dict):
+                    continue
+                index = part.get("source")
+                if not isinstance(index, int) or isinstance(index, bool):
+                    continue
+                if index >= dropped:
+                    part["source"] = index - dropped
+                else:
+                    part.pop("source", None)
+
+
+def _trim_evidence(state: dict) -> int:
+    """The evidence ledger's hard cap (T12): the oldest entries beyond
+    RESEARCH_MAX_EVIDENCE drop, the count dropped returned — the
+    standing document re-anchors in the same mutation. The writers'
+    pool reads the ledger whole, so the prompt bound and the ledger
+    bound are one and the same."""
+    over = len(state["evidence"]) - RESEARCH_MAX_EVIDENCE
+    if over <= 0:
+        return 0
+    del state["evidence"][:over]
+    _reanchor_document_indices(state, over)
+    return over
 
 
 def _add_open_question(state: dict, text: str, name: str = "") -> bool:
@@ -819,7 +957,7 @@ def _merge_evidence(state: dict, sources, found_for: str, via: str = "") -> int:
             continue
         seen.add(key)
         entry = {
-            "id": f"e{len(state['evidence']) + 1}",
+            "id": _next_ledger_id(state["evidence"], "e"),
             "reference": reference,
             "passage": passage,
             "found_for": found_for,
@@ -828,6 +966,9 @@ def _merge_evidence(state: dict, sources, found_for: str, via: str = "") -> int:
             entry["via"] = via
         state["evidence"].append(entry)
         added += 1
+    # The ledger's cap (T12): newest kept, the standing document's
+    # quoted positions re-anchored in the same mutation.
+    _trim_evidence(state)
     return added
 
 
@@ -1130,6 +1271,22 @@ def research_suggestions(state: dict) -> list:
             suggestions.append({"kind": "move", "id": "brief", "text": COMMAND_BRIEF})
         if stalled:
             suggestions.append({"kind": "move", "id": "stop", "text": COMMAND_STOP})
+    # The map-keeper's chip (T12): one tap summons the survey when the
+    # map holds something to clean — never while a cleanup waits or its
+    # cooldown runs. The survey is pure code and mutates nothing; a
+    # clean map simply offers no chip.
+    if (
+        state.get("proposal_cooldowns", {}).get("map_cleanup", 0) <= 0
+        and not any(
+            item.get("kind") == "map_cleanup"
+            for item in state.get("pending_proposals", [])
+        )
+    ):
+        survey = map_cleanup_survey(state)
+        if survey["questions"] or survey["fog"]:
+            suggestions.append(
+                {"kind": "move", "id": "map_keeper", "text": COMMAND_KEEP_MAP}
+            )
     if state.get("turns", 0) >= RESEARCH_SESSION_TURN_CAP and not any(
         chip["id"] == "brief" for chip in suggestions
     ):
@@ -1155,6 +1312,8 @@ def resolve_command(message: str):
         return "stop", None
     if stripped == COMMAND_REVISE:
         return "revise", None
+    if stripped == COMMAND_KEEP_MAP:
+        return "map_keeper", None
     match = TARGETED_GATHER_RE.match(stripped)
     if match:
         return "gather", match.group(1).strip()
@@ -1227,7 +1386,7 @@ def build_classify_prompt(message: str, state: dict, tail: str) -> str:
         f"exactly: \"{COMMAND_GATHER}\" -> active_research; "
         f"\"{COMMAND_SYNTHESIZE}\" -> active_research; "
         f"\"{COMMAND_BRIEF}\" -> drafting; \"{COMMAND_AUDIT}\" -> "
-        "evidence_audit.\n\n"
+        f"evidence_audit; \"{COMMAND_KEEP_MAP}\" -> map_keeper.\n\n"
         "Also propose, ONLY when the message gives real cause (empty or "
         "empty list otherwise). The map-mode rule: rq_proposal, "
         "scope_in/scope_out, and brief_plan are CHART edits — propose "
@@ -1866,9 +2025,12 @@ def _write_section(state: dict, contract: dict, sources, ids, budget=None):
 
 def _carries_claims(pinned: dict, blocks: list, evidence_ids) -> bool:
     """Whether the kept blocks quote evidence that supports EVERY pinned
-    claim; nothing pinned means the guard alone decided."""
-    if not pinned:
-        return True
+    claim; nothing pinned means the guard alone decided. A claim whose
+    recorded support no longer sits in the pool — the cap trimmed it
+    (T12) — is carried by its own record: the claim ledger is
+    append-only provenance, and the check cannot demand a quote of a
+    passage the pool no longer holds."""
+    pool = set(evidence_ids)
     carried = set()
     for block in blocks:
         if not isinstance(block, dict) or block.get("type") != "paragraph":
@@ -1881,10 +2043,13 @@ def _carries_claims(pinned: dict, blocks: list, evidence_ids) -> bool:
                 and 0 <= index < len(evidence_ids)
             ):
                 carried.add(evidence_ids[index])
-    return all(
-        any(evidence_id in carried for evidence_id in claim.get("evidence_ids", []))
-        for claim in pinned.values()
-    )
+    for claim in pinned.values():
+        recorded = claim.get("evidence_ids", [])
+        if recorded and not (set(recorded) & pool):
+            continue
+        if not any(evidence_id in carried for evidence_id in recorded):
+            return False
+    return True
 
 
 def with_references(blocks: list, sources) -> list:
@@ -1948,7 +2113,7 @@ def record_claims(state: dict, blocks: list, evidence_ids) -> int:
         existing.add(key)
         state["claims"].append(
             {
-                "id": f"c{len(state['claims']) + 1}",
+                "id": _next_ledger_id(state["claims"], "c"),
                 "text": text,
                 "status": (
                     "direct_support" if len(ids) == 1 else "supported_synthesis"
@@ -1958,6 +2123,11 @@ def record_claims(state: dict, blocks: list, evidence_ids) -> int:
             }
         )
         added += 1
+    # The claim ledger's cap (T12): newest kept. Claims are provenance
+    # records, not positions — a trimmed claim id simply stops pinning
+    # (the contracts and the review filter by existence), never
+    # mis-points.
+    state["claims"] = state["claims"][-RESEARCH_MAX_CLAIMS:]
     return added
 
 
@@ -2288,6 +2458,8 @@ def _apply_decision(state: dict, proposal: dict, accept: bool, choice=None) -> s
         )
     if proposal["kind"] == "adjustment":
         return _apply_adjustment(state, proposal, choice)
+    if proposal["kind"] == "map_cleanup":
+        return _apply_map_cleanup(state, proposal)
     return proposal["text"]
 
 
@@ -2338,7 +2510,7 @@ def decide_proposal(
             if item.get("id") != proposal_id
         ]
         decision = _apply_decision(state, proposal, accept, choice)
-        state["decisions"].append({"text": decision, "turn": state["turns"]})
+        _add_decision(state, decision)
         research_store.save_session(
             session_id,
             state,
@@ -2437,7 +2609,7 @@ def _fold_decision_records(session_id: str, state: dict, records: list) -> dict:
         decision = _apply_decision(
             state, proposal, bool(record.get("accept")), record.get("choice")
         )
-        state["decisions"].append({"text": decision, "turn": state["turns"]})
+        _add_decision(state, decision)
     return state
 
 
@@ -2534,7 +2706,7 @@ def _apply_classify_updates(state: dict, classified: dict) -> None:
     grilling = state.get("grilling", {})
     gist = classified.get("answer_gist", "")
     if grilling.get("current_question") and gist:
-        state["decisions"].append({"text": gist, "turn": state["turns"]})
+        _add_decision(state, gist)
         state["grilling"] = {
             "asked_in_stage": grilling.get("asked_in_stage", 0),
             "current_question": "",
@@ -2654,7 +2826,13 @@ def _stage_should_ask(state: dict, intent: str = None) -> bool:
     on a work intent (ADR-0011): when the classifier read the message as
     an investigation command, in any wording, the journey works instead
     of asking."""
-    if intent in ("active_research", "drafting", "closing_review", "evidence_audit"):
+    if intent in (
+        "active_research",
+        "drafting",
+        "closing_review",
+        "evidence_audit",
+        "map_keeper",
+    ):
         return False
     stage = state.get("stage", "orientation")
     if stage not in ("orientation", "mapping"):
@@ -2747,6 +2925,27 @@ def _checkpoint_reply(state: dict) -> list:
                             f"بخش «{section.get('title', '')}» برای پرسشِ "
                             f"«{section.get('question', '')}»{suffix}"
                         ),
+                    },
+                )
+        elif proposal["kind"] == "map_cleanup":
+            # The cleanup reads row by row (T12): each note names the
+            # exact question or fog line the acceptance would remove —
+            # the diff the user decides on, nothing vague.
+            blocks.append(
+                {"type": "note", "text": f"پالایش نقشه: {proposal['text']}"}
+            )
+            for name in proposal.get("question_names", []):
+                blocks.append(
+                    {
+                        "type": "note",
+                        "text": f"پرسش «{name}» از نقشه برداشته می‌شود.",
+                    }
+                )
+            for fog_text in proposal.get("fog_texts", []):
+                blocks.append(
+                    {
+                        "type": "note",
+                        "text": f"مهِ «{fog_text}» از نقشه برداشته می‌شود.",
                     }
                 )
     return blocks
@@ -2815,6 +3014,163 @@ def _park_adjustment(
             "choices": [dict(choice) for choice in ADJUSTMENT_CHOICES],
         }
     )
+
+
+# --- the map keeper (T12, ADR-0012) -----------------------------------------
+
+
+def map_cleanup_survey(state: dict) -> dict:
+    """The map-keeper's survey (T12): pure code over the map, no
+    upstream call, NOTHING mutated — the removal candidates come back
+    as id lists the keeper parks as the operator's decision. Three
+    findings:
+
+    - duplicate questions: two PENDING open questions on one topic —
+      the older's opening anchor rides inside the newer's text, the
+      same anchor rule the fog graduation reads — propose the older;
+      the conversation's newest phrasing is the one it chose;
+    - stale fog: a fog note whose anchor a question already took — the
+      graduation that should have retired it slipped (the gather's
+      decomposed questions never graduate their fog), so the keeper
+      sweeps what lingers;
+    - safe trims: finished (searched/gap) questions beyond the map's
+      readability keep — their evidence, claims, and gaps stay in the
+      ledgers; only the map row retires, and only by the accepted
+      decision."""
+    questions = [
+        item
+        for item in state.get("subquestions", [])
+        if isinstance(item, dict) and item.get("id")
+    ]
+    drop_questions: list = []
+    pending = [item for item in questions if item.get("status") == "pending"]
+    for index, older in enumerate(pending):
+        older_norm = normalize_for_match(older.get("text", ""))
+        if not older_norm or older["id"] in drop_questions:
+            continue
+        for newer in pending[index + 1 :]:
+            newer_norm = normalize_for_match(newer.get("text", ""))
+            if newer_norm and _fog_anchor_taken(older_norm, newer_norm):
+                drop_questions.append(older["id"])
+                break
+    done = [item for item in questions if item.get("status") != "pending"]
+    for item in done[: max(0, len(done) - MAP_KEEPER_DONE_QUESTIONS)]:
+        if item["id"] not in drop_questions:
+            drop_questions.append(item["id"])
+    drop_fog: list = []
+    for note in state.get("map", {}).get("fog", []):
+        note_norm = normalize_for_match(note.get("text", ""))
+        if not note_norm:
+            continue
+        if any(
+            _fog_anchor_taken(note_norm, normalize_for_match(item.get("text", "")))
+            for item in questions
+        ):
+            drop_fog.append(note.get("id"))
+    return {"questions": drop_questions, "fog": drop_fog}
+
+
+def _cleanup_proposal_payload(state: dict, survey: dict) -> dict:
+    """The parked cleanup's proposal: the id lists the decision applies,
+    the display names the checkpoint's diff reads, and the one-line
+    Farsi text the chips' note, the decision index, and the dedupe all
+    share."""
+    by_id = {
+        item.get("id"): item
+        for item in state.get("subquestions", [])
+        if isinstance(item, dict)
+    }
+    question_names = [
+        by_id[qid].get("name", by_id[qid].get("text", ""))
+        for qid in survey["questions"]
+        if qid in by_id
+    ]
+    fog_texts = [
+        (note.get("text", "") or "")[:60]
+        for note in state.get("map", {}).get("fog", [])
+        if note.get("id") in survey["fog"]
+    ]
+    parts = []
+    if question_names:
+        parts.append(
+            "حذف پرسش‌های " + "، ".join(f"«{name}»" for name in question_names)
+        )
+    if fog_texts:
+        parts.append(
+            f"برداشتن {_farsi_digits(len(fog_texts))} مهِ قدیمی"
+        )
+    return {
+        "kind": "map_cleanup",
+        "text": "؛ ".join(parts),
+        "drop_questions": list(survey["questions"]),
+        "drop_fog": list(survey["fog"]),
+        "question_names": question_names,
+        "fog_texts": fog_texts,
+    }
+
+
+def _park_map_cleanup(state: dict, survey: dict) -> str:
+    """Park the survey's cleanup as the pending checkpoint (T12) — the
+    usual decide flow, the usual damper: one cleanup waits at a time,
+    the map_cleanup cooldown blocks the proposals the turns right after
+    a decision would park, and an exact cleanup the operator already
+    decided (accepted OR rejected — the decision text names it) never
+    re-parks. Returns parked / cooldown / decided / clean."""
+    if not survey["questions"] and not survey["fog"]:
+        return "clean"
+    if any(
+        item.get("kind") == "map_cleanup" for item in state["pending_proposals"]
+    ):
+        return "parked"
+    cooldowns = state.setdefault("proposal_cooldowns", {})
+    if cooldowns.get("map_cleanup", 0) > 0:
+        return "cooldown"
+    payload = _cleanup_proposal_payload(state, survey)
+    key = normalize_for_match(payload["text"])
+    if any(
+        key and key in normalize_for_match(item.get("text", ""))
+        for item in state["decisions"]
+    ):
+        return "decided"
+    payload["id"] = _next_proposal_id(state)
+    state["pending_proposals"].append(payload)
+    return "parked"
+
+
+def _apply_map_cleanup(state: dict, proposal: dict) -> str:
+    """The accepted cleanup's ONE mutation (T12): exactly the named
+    rows leave the map — nothing else, nothing silently — and the
+    decision line names what went. The ledgers and the research
+    question's versions are untouched: the keeper never rewrites
+    history, it retires map rows the operator approved."""
+    question_ids = set(proposal.get("drop_questions", []))
+    fog_ids = set(proposal.get("drop_fog", []))
+    dropped_names = [
+        item.get("name", item.get("text", ""))
+        for item in state["subquestions"]
+        if isinstance(item, dict) and item.get("id") in question_ids
+    ]
+    state["subquestions"] = [
+        item
+        for item in state["subquestions"]
+        if not (isinstance(item, dict) and item.get("id") in question_ids)
+    ]
+    fog_dropped = len(
+        [item for item in state["map"]["fog"] if item.get("id") in fog_ids]
+    )
+    state["map"]["fog"] = [
+        item for item in state["map"]["fog"] if item.get("id") not in fog_ids
+    ]
+    parts = []
+    if dropped_names:
+        parts.append(
+            "پرسش‌های "
+            + "، ".join(f"«{name}»" for name in dropped_names)
+            + " از نقشه برداشته شد"
+        )
+    if fog_dropped:
+        parts.append(f"{_farsi_digits(fog_dropped)} مهِ قدیمی پاک شد")
+    return "نقشه پالایش شد: " + "؛ ".join(parts) + "."
 
 
 def _gather(state: dict, turn: ResearchTurn, target: str = None) -> list:
@@ -2919,22 +3275,12 @@ def _gather(state: dict, turn: ResearchTurn, target: str = None) -> list:
                 ),
             }
         )
-    known_gaps = {normalize_for_match(gap["text"]) for gap in state["gaps"]}
     for sub in starved:
         gap_text = (
             f"کتاب‌ها برای «{sub}» شواهد کافی ندارند؛ این بخش را نمی‌توان "
             "از همین کتاب‌ها اثبات کرد."
         )
-        if normalize_for_match(gap_text) not in known_gaps:
-            known_gaps.add(normalize_for_match(gap_text))
-            state["gaps"].append(
-                {
-                    "id": f"g{len(state['gaps']) + 1}",
-                    "text": gap_text,
-                    "subquestion": sub,
-                    "turn": state["turns"],
-                }
-            )
+        _add_gap(state, gap_text, subquestion=sub)
         for item in state["subquestions"]:
             if item["text"] == sub:
                 item["status"] = "gap"
@@ -3139,17 +3485,7 @@ def _record_brief_gap(state: dict, contract: dict) -> None:
     text = (
         f"بخش «{title}» از خلاصۀ پژوهش نوشته نشد: کتاب‌ها شواهد کافی ندارند."
     )
-    known = {normalize_for_match(gap["text"]) for gap in state["gaps"]}
-    if normalize_for_match(text) in known:
-        return
-    state["gaps"].append(
-        {
-            "id": f"g{len(state['gaps']) + 1}",
-            "text": text,
-            "subquestion": _contract_question_text(state, contract),
-            "turn": state["turns"],
-        }
-    )
+    _add_gap(state, text, subquestion=_contract_question_text(state, contract))
 
 
 # --- the Closing review (T9, ADR-0012) --------------------------------------
@@ -3555,9 +3891,7 @@ def _stop_reply(state: dict) -> list:
     the map and the ledgers stay exactly as they are, and the decision
     joins the map's index. No Brief is fabricated to close with."""
     state["closed"] = True
-    state["decisions"].append(
-        {"text": RESEARCH_STOP_DECISION, "turn": state["turns"]}
-    )
+    _add_decision(state, RESEARCH_STOP_DECISION)
     return [{"type": "note", "text": RESEARCH_STOP_DETAIL}]
 
 
@@ -3572,9 +3906,7 @@ def _skip_reply(state: dict) -> list:
         "current_question": "",
         "options": [],
     }
-    state["decisions"].append(
-        {"text": GRILLING_SKIP_DECISION, "turn": state["turns"]}
-    )
+    _add_decision(state, GRILLING_SKIP_DECISION)
     if stage == "orientation":
         if not state["map"]["destination"]:
             state["map"]["destination"] = state["research_question"]["current"]
@@ -3691,21 +4023,27 @@ def _run_review_skill(turn, state, classified, message, resolved, intent):
     return blocks, None, ""
 
 
-def _run_research_skill(turn, state, classified, message, resolved, intent):
-    """The journey branch (chart and work intents alike): the stage
-    machine decides, the model only proposes content — the checkpoints,
-    the skip, the landscape survey, the guided questions, and the
-    deterministic ladder of moves."""
-    _apply_classify_updates(state, classified)
-    # The decision cooldown ticks down AFTER this turn's parking
-    # check — a fresh cooldown of PROPOSAL_COOLDOWN_TURNS blocks
-    # exactly that many full turns after the decision.
+def _tick_cooldowns(state: dict) -> None:
+    """The decision cooldown ticks down AFTER this turn's parking
+    check — a fresh cooldown of PROPOSAL_COOLDOWN_TURNS blocks
+    exactly that many full turns after the decision. The map-keeper's
+    runner ticks the same damper (T12): its proposals cool like every
+    kind's."""
     cooldowns = state.setdefault(
         "proposal_cooldowns", {"research_question": 0, "scope": 0}
     )
     for kind in cooldowns:
         if cooldowns[kind] > 0:
             cooldowns[kind] -= 1
+
+
+def _run_research_skill(turn, state, classified, message, resolved, intent):
+    """The journey branch (chart and work intents alike): the stage
+    machine decides, the model only proposes content — the checkpoints,
+    the skip, the landscape survey, the guided questions, and the
+    deterministic ladder of moves."""
+    _apply_classify_updates(state, classified)
+    _tick_cooldowns(state)
     _fold_grilling_answer(state, classified, message, bool(resolved))
     # The destination's answer ends the orientation stage: the
     # journey moves to mapping THIS turn (code's decision, on
@@ -3755,12 +4093,41 @@ def _run_research_skill(turn, state, classified, message, resolved, intent):
     return _journey_fallback(state, turn, resolved), None, ""
 
 
+def _run_map_keeper_skill(turn, state, classified, message, resolved, intent):
+    """The map-keeper (T12, ADR-0012): the survey runs pure code — no
+    upstream call, no writer — and what it finds parks as the
+    operator's ONE pending decision through the usual decide flow,
+    damped by the map_cleanup cooldown; a decided cleanup never
+    re-parks. Nothing moves on the map here: the survey mutates
+    nothing, and only the accepted decision applies its named rows.
+    The working ledgers' caps (evidence, claims, gaps, decisions) are
+    the state's own maintenance and ride the gather and the writers —
+    the keeper's scope is the map the operator reads."""
+    _apply_classify_updates(state, classified)
+    _fold_grilling_answer(state, classified, message, bool(resolved))
+    # The parking check runs BEFORE the cooldown tick — the research
+    # runner's recorded order, so a fresh cooldown of
+    # PROPOSAL_COOLDOWN_TURNS blocks exactly that many full turns
+    # after the decision.
+    landing = _park_map_cleanup(state, map_cleanup_survey(state))
+    _tick_cooldowns(state)
+    if landing == "parked":
+        return _checkpoint_reply(state), None, ""
+    note = {
+        "cooldown": RESEARCH_MAP_COOLDOWN_NOTE,
+        "decided": RESEARCH_MAP_DECIDED_NOTE,
+        "clean": RESEARCH_MAP_CLEAN_NOTE,
+    }[landing]
+    return [{"type": "note", "text": note}], None, ""
+
+
 SKILL_RUNNERS = {
     "chat": _run_chat_skill,
     "research": _run_research_skill,
     "brief": _run_brief_skill,
     "review": _run_review_skill,
     "audit": _run_audit_skill,
+    "map_keeper": _run_map_keeper_skill,
 }
 
 
@@ -3831,6 +4198,7 @@ def run_research_turn(
                 "skip": "research_exploration",
                 "guide": "research_exploration",
                 "stop": "research_exploration",
+                "map_keeper": "map_keeper",
             }[resolved[0]]
         # The code disposes (ADR-0012): the picked row is validated
         # against the state — a rejected pick is a recorded diagnosis
@@ -3959,7 +4327,7 @@ def _fold_grilling_answer(
     if not grilling.get("current_question") or is_command:
         return
     gist = classified.get("answer_gist", "") or message.strip()[:160]
-    state["decisions"].append({"text": gist, "turn": state["turns"]})
+    _add_decision(state, gist)
     state["grilling"] = {
         "asked_in_stage": grilling.get("asked_in_stage", 0),
         "current_question": "",
