@@ -202,9 +202,9 @@ def test_an_empty_pool_burns_the_landscape_turn_and_advances(tmp_path):
 
 
 def test_the_brief_prompt_carries_the_whole_ledger(tmp_path):
-    # [T12 #13: the state caps] The Brief's writer prompt embeds the
-    # ENTIRE evidence ledger — today nothing bounds what a long session
-    # ships to the composer.
+    # [T12 #13: the state caps] Each Brief section's writer prompt
+    # embeds the ENTIRE evidence ledger — today nothing bounds what a
+    # long session ships to the composer, per section now as before.
     second_passage = "این جمله از قطعهٔ دیگری است."
     state = research.new_research_state("پرسش پژوهش؟")
     research.seed_evidence(
@@ -218,6 +218,11 @@ def test_the_brief_prompt_carries_the_whole_ledger(tmp_path):
     state["claims"] = [
         {"id": "c1", "text": "ادعا", "status": "direct_support", "evidence_ids": ["e1"]}
     ]
+    sections = [{"title": "بخش یکم", "question": "", "claims": ["c1"]}]
+    state["brief_plan"] = {
+        "current": {"sections": sections},
+        "versions": [{"sections": sections, "turn": 1}],
+    }
     pool = [
         {"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE},
         {"reference": "chunk 2 of document tarhe-kolli", "passage": second_passage},
@@ -226,6 +231,7 @@ def test_the_brief_prompt_carries_the_whole_ledger(tmp_path):
         composer_replies=[
             classify_reply("drafting"),
             composer_reply(json.dumps(guarded_blocks(pool), ensure_ascii=False)),
+            composer_reply("روایت کوتاه."),
         ]
     )
     session = make_session(tmp_path, state=state)

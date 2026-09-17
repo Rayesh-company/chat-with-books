@@ -426,7 +426,7 @@ TURN LIFECYCLE (progress events in Farsi, polled every 2s):
     a persistent state: versioned research question, scope, named open
     questions, evidence ledger, claim ledger, gaps, decisions, stage,
     map (destination/fog/out-of-scope), grilling, phase, proposals, the
-    versioned Brief plan.
+    versioned Brief plan, the accepted plan's section contracts.
     • Checkpoint rule: an RQ or scope change proposed by the classifier
       NEVER applies itself — it lands as a pending proposal resolved via
       POST /research/decide («می‌پذیرم» / «رد می‌کنم» chips); an accepted
@@ -459,9 +459,19 @@ TURN LIFECYCLE (progress events in Farsi, polled every 2s):
                    each kept quoting paragraph records a CLAIM whose status
                    is code-derived: 1 passage = direct_support,
                    ≥2 = supported_synthesis.
-        brief ── the Research Brief written FROM the state (question
-                   history, scope, claims, gaps — never the chat
-                   transcript); refuses without recorded claims.
+        brief ── the Research Brief assembled SECTION BY SECTION (T8,
+                   GitLab #9) from the accepted plan's contracts: each
+                   section is ONE bounded writer op over the state's
+                   ledger (never the chat transcript), guarded, with
+                   exactly ONE retry on a contract miss, then the
+                   honest-gap fallback (a diagnosed, ledgered gap note
+                   under the plan's own heading). The headings are the
+                   accepted plan's own, in its order; acceptance derives
+                   the contracts (claims filtered to the ledger, the
+                   assigned question, the scope lines); the budget stops
+                   the chain with the partial Brief standing; refuses
+                   without recorded claims first, without an accepted
+                   plan second.
         audit ── pure code: the claim ledger re-reported, no LLM call.
     • Every reply stating a Book fact runs the SAME verbatim guard as
       phases 2/3; the closing «منابع» references list is built

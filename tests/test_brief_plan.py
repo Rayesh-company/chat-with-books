@@ -368,10 +368,11 @@ def test_the_skill_table_declares_the_plan_touches():
 # --- the refuse-without-plan gate --------------------------------------------
 
 
-def test_by_default_the_brief_still_writes_without_a_plan():
-    # The strangler switch: the one-shot Brief of today keeps running
-    # until the section writer (T8) lands and flips the requirement.
-    assert research.BRIEF_PLANS_REQUIRED is False
+def test_by_default_the_brief_demands_a_plan():
+    # The strangler switch, flipped by the section writer (T8): the
+    # one-shot Brief of the pre-plan days is gone — the Brief demands
+    # an accepted plan and writes its sections against the contracts.
+    assert research.BRIEF_PLANS_REQUIRED is True
 
 
 def brief_ready_state():
@@ -383,10 +384,7 @@ def brief_ready_state():
     return state
 
 
-def test_the_brief_refuses_without_an_accepted_plan_once_plans_are_required(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(research, "BRIEF_PLANS_REQUIRED", True)
+def test_the_brief_refuses_without_an_accepted_plan(tmp_path):
     upstream = ResearchUpstream(composer_replies=[classify_reply("drafting")])
     session = make_session(tmp_path, state=brief_ready_state())
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)
@@ -398,8 +396,7 @@ def test_the_brief_refuses_without_an_accepted_plan_once_plans_are_required(
     assert any(research.RESEARCH_BRIEF_NEEDS_PLAN_DETAIL in text for text in texts)
 
 
-def test_an_accepted_plan_lets_the_required_brief_write(tmp_path, monkeypatch):
-    monkeypatch.setattr(research, "BRIEF_PLANS_REQUIRED", True)
+def test_an_accepted_plan_lets_the_brief_write_per_section(tmp_path):
     state = brief_ready_state()
     state["brief_plan"] = {
         "current": {"sections": PLAN_SECTIONS},
@@ -410,11 +407,14 @@ def test_an_accepted_plan_lets_the_required_brief_write(tmp_path, monkeypatch):
         composer_replies=[
             classify_reply("drafting"),
             composer_reply(json.dumps(guarded_blocks(pool), ensure_ascii=False)),
+            composer_reply(json.dumps(guarded_blocks(pool), ensure_ascii=False)),
+            composer_reply("روایت کوتاه."),
         ]
     )
     session = make_session(tmp_path, state=state)
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)
     assert turn.state == "done"
-    # Classify, writer, narrator — the writer ran WITH its plan.
-    assert len(composer_bodies(upstream)) == 3
+    # Classify, one writer op per planned section, the narrator — the
+    # writer ran WITH its plan, section by section.
+    assert len(composer_bodies(upstream)) == 4
     assert any(b["type"] == "paragraph" for b in turn.result["reply"])

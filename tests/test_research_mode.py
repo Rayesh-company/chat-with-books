@@ -667,17 +667,27 @@ def test_a_brief_turn_refuses_without_claims_and_writes_from_state(tmp_path):
         for b in turn.result["reply"]
     )
 
-    # With claims recorded, the Brief is written FROM the state — the
-    # prompt carries the question history, the claims, and the gaps,
-    # never the chat transcript.
+    # With claims recorded and the section plan accepted, the Brief
+    # writes section by section FROM the state — each section's prompt
+    # carries its contract (the title, the claims by their ledger
+    # text), never the chat transcript.
     state["claims"] = [
         {"id": "c1", "text": "ادعا", "status": "direct_support", "evidence_ids": ["e1"]}
     ]
+    sections = [{"title": "بخش یکم", "question": "", "claims": ["c1"]}]
+    state["brief_plan"] = {
+        "current": {"sections": sections},
+        "versions": [{"sections": sections, "turn": 1}],
+    }
+    state["section_contracts"] = research._section_contracts_from_plan(
+        state, sections
+    )
     pool = [{"reference": "chunk 1 of document tarhe-kolli", "passage": SENTENCE}]
     upstream = ResearchUpstream(
         composer_replies=[
             classify_reply("drafting"),
             composer_reply(json.dumps(guarded_blocks(pool), ensure_ascii=False)),
+            composer_reply("روایت کوتاه."),
         ]
     )
     session = make_session(tmp_path, state=state)
@@ -689,8 +699,8 @@ def test_a_brief_turn_refuses_without_claims_and_writes_from_state(tmp_path):
         if "chat/completions" in url
     ]
     writer_prompt = composer_bodies[1]["messages"][0]["content"]
-    assert "ادعا [پشتوانهٔ مستقیم]" in writer_prompt
-    assert "Question history" in writer_prompt
+    assert "ادعا" in writer_prompt
+    assert "بخش یکم" in writer_prompt
     assert state["phase"] == "drafting"
 
 

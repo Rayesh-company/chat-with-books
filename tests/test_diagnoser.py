@@ -366,10 +366,23 @@ def test_a_starved_session_reaches_the_brief_through_the_escape(tmp_path):
     assert turn.state == "done"
     assert len(session["state"]["claims"]) == 1
 
+    # The accepted one-section plan (T8): the Brief writes its sections
+    # against the contracts, and the escape still ends at a written
+    # Brief.
+    state = session["state"]
+    sections = [{"title": "بخش یکم", "question": "", "claims": ["c1"]}]
+    state["brief_plan"] = {
+        "current": {"sections": sections},
+        "versions": [{"sections": sections, "turn": state["turns"]}],
+    }
+    state["section_contracts"] = research._section_contracts_from_plan(
+        state, sections
+    )
     upstream = ResearchUpstream(
         composer_replies=[
             classify_reply("drafting"),
             guarded_writer(),
+            composer_reply("روایت کوتاه."),
         ]
     )
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)

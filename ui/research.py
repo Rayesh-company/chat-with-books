@@ -158,10 +158,10 @@ PROPOSAL_COOLDOWN_TURNS = 2
 # turn, damped by its own `brief_plan` cooldown key, and accepted
 # APPEND-ONLY (a version per acceptance, never a rewrite). Accepting
 # it is what unlocks section writing (T8).
-# The strangler switch: the one-shot Brief of today keeps running
-# until the per-section writer (T8) lands — then the Brief demands an
-# accepted plan and this flips to True.
-BRIEF_PLANS_REQUIRED = False
+# The strangler switch, flipped (T8): the per-section writer landed,
+# so the Brief demands an accepted plan — the one-shot writer call of
+# the pre-plan Brief is gone.
+BRIEF_PLANS_REQUIRED = True
 # The open questions' statuses: pending (the frontier), searched (fed),
 # gap (the Books could not feed it — the honest outcome).
 QUESTION_STATUS_LABELS = {
@@ -296,10 +296,17 @@ SKILL_TABLE = (
         "kind": "work",
         "runner": "brief",
         "allowed_stages": None,
-        "caps": "one writer pass, one retry",
+        "caps": "one writer pass per section, one retry each",
         "tools": ("hybrid",),
-        "state_reads": ("research_question", "claims", "gaps", "evidence", "brief_plan"),
-        "state_writes": ("stage", "phase", "diagnoses"),
+        "state_reads": (
+            "research_question",
+            "claims",
+            "gaps",
+            "evidence",
+            "brief_plan",
+            "section_contracts",
+        ),
+        "state_writes": ("stage", "phase", "diagnoses", "gaps"),
         "guarded": True,
     },
     {
@@ -455,6 +462,12 @@ RESEARCH_BRIEF_NEEDS_PLAN_DETAIL = (
     "خلاصۀ پژوهش بدون برنامۀ پذیرفتۀ بخش‌ها نوشته نمی‌شود؛ اول برنامۀ "
     "بخش‌ها را بپذیرید."
 )
+# A section's honest-gap fallback (T8): after the guard and exactly one
+# retry, a section its contract cannot feed is written AS a gap — the
+# note the Brief keeps in its place, never an invented fill.
+RESEARCH_BRIEF_SECTION_GAP_NOTE = (
+    "کتاب‌ها برای ادعاهای این بخش شواهد کافی ندارند؛ به‌جای ساختن، شکاف ثبت شد."
+)
 # The budget's honest stop (T3): the timeline event and the note the
 # transcript keeps. An over-budget turn names its stop — never a fake
 # completion, never the generic unexpected-error failure.
@@ -519,8 +532,12 @@ def new_research_state(goal: str) -> dict:
         "grilling": {"asked_in_stage": 0, "current_question": "", "options": []},
         # The Brief plan's ledger (T7): the accepted plan rides as
         # `current`, every acceptance appends a version — append-only
-        # provenance like the research question's.
+        # provenance like the research question's. The section
+        # contracts (T8) are what acceptance DERIVES: one per planned
+        # section, the claims it must carry, the question it answers,
+        # the scope lines it must not cross.
         "brief_plan": {"current": None, "versions": []},
+        "section_contracts": [],
         "proposal_cooldowns": {"research_question": 0, "scope": 0, "brief_plan": 0},
         "pending_proposals": [],
         "turns": 0,
@@ -556,6 +573,16 @@ def ensure_state_shape(state: dict) -> dict:
     # up the V0.1 pair — a kind's entry appears here when that kind is
     # first decided, and every read defaults to 0 either way.
     state.setdefault("brief_plan", {"current": None, "versions": []})
+    # The section contracts (T8) top up the same way — and a session
+    # persisted between the plan checkpoint and the section writer may
+    # hold an accepted plan with no contracts yet: derive them once
+    # here, from the same accepted sections and claim ledger.
+    contracts = state.setdefault("section_contracts", [])
+    plan_current = (state.get("brief_plan") or {}).get("current") or {}
+    if not contracts and plan_current.get("sections"):
+        state["section_contracts"] = _section_contracts_from_plan(
+            state, plan_current["sections"]
+        )
     cooldowns = state.setdefault("proposal_cooldowns", {})
     for kind in ("research_question", "scope"):
         cooldowns.setdefault(kind, 0)
@@ -571,6 +598,44 @@ def _short_name(text: str) -> str:
     chips and replies refer to it by (Wayfinder's refer-by-name)."""
     words = [word for word in str(text).split() if word.strip()]
     return " ".join(words[:5])
+
+
+def _section_contracts_from_plan(state: dict, sections: list) -> list:
+    """One Section contract per accepted plan section (T8): the claims
+    it must carry — the plan's claim ids filtered to the ledger, so a
+    plan that names an unrecorded id cannot pin a section to a forever
+    miss — the question it answers (the plan's own reference), and the
+    scope lines as they stood at acceptance. The record the writer is
+    bound to and checked against."""
+    return [
+        {
+            "title": section.get("title", ""),
+            "question": section.get("question", ""),
+            "claims": [
+                claim_id
+                for claim_id in section.get("claims", [])
+                if any(claim.get("id") == claim_id for claim in state["claims"])
+            ],
+            "scope_in": list(state.get("scope", {}).get("in", [])),
+            "scope_out": list(state.get("scope", {}).get("out", [])),
+        }
+        for section in sections
+        if isinstance(section, dict) and section.get("title")
+    ]
+
+
+def _contract_question_text(state: dict, contract: dict) -> str:
+    """The contract's assigned question as TEXT: the plan names one
+    open question; the name (or the raw text itself) resolves against
+    the map's named questions — the writer briefs on the question, not
+    its label."""
+    named = contract.get("question", "")
+    for item in state.get("subquestions", []):
+        if not isinstance(item, dict):
+            continue
+        if named in (item.get("name", ""), item.get("text", "")):
+            return item.get("text", "") or named
+    return named
 
 
 def _add_open_question(state: dict, text: str, name: str = "") -> bool:
@@ -1512,59 +1577,59 @@ def build_synthesis_prompt(state: dict, sources) -> str:
     )
 
 
-def build_brief_prompt(state: dict, sources) -> str:
-    """The closing Brief's brief: built FROM the research state — the
-    versioned question, the scope, the claim ledger, the gaps — never
-    reconstructed from the chat history (Wayfinder §19)."""
-    question = state["research_question"]
-    history = "\n".join(
-        f"- v{n + 1}: {version['text']}"
-        + (f" ({version.get('reason', '')})" if version.get("reason") else "")
-        for n, version in enumerate(question["versions"])
-    )
-    scope = state.get("scope", {})
+def build_section_prompt(state: dict, contract: dict, sources) -> str:
+    """ONE Brief section's brief (T8, ADR-0012's assembly line): built
+    FROM the research state against the accepted Section contract — the
+    claims it must carry, the question it answers, the scope lines it
+    must not cross — over the evidence pool, never the chat history.
+    The one-shot Brief prompt of the pre-plan writer is gone: sections
+    are written one bounded op each, and the sheet adds the headings,
+    so the writer returns paragraphs only."""
+    claims_by_id = {claim["id"]: claim for claim in state.get("claims", [])}
+    claim_lines = "\n".join(
+        f"- {claims_by_id[claim_id]['text']} (its supporting passages, "
+        "quoted verbatim)"
+        for claim_id in contract.get("claims", [])
+        if claim_id in claims_by_id
+    ) or "- (none pinned — the passages themselves carry this section)"
+    scope = contract.get("scope_in", []), contract.get("scope_out", [])
     scope_lines = []
-    if scope.get("in"):
-        scope_lines.append("داخل دامنه: " + "؛ ".join(scope["in"]))
-    if scope.get("out"):
-        scope_lines.append("خارج دامنه: " + "؛ ".join(scope["out"]))
-    claims = "\n".join(
-        f"- {claim['text']} [{CLAIM_STATUSES.get(claim['status'], claim['status'])}]"
-        for claim in state.get("claims", [])
-    ) or "- (none yet)"
-    gaps = (
-        "\n".join(f"- {gap['text']}" for gap in state.get("gaps", []))
-        or "- (none)"
-    )
-    passages = _numbered_passages(sources)
+    if scope[0]:
+        scope_lines.append("داخل دامنه: " + "؛ ".join(scope[0]))
+    if scope[1]:
+        scope_lines.append("خارج دامنه: " + "؛ ".join(scope[1]))
     scope_block = "\n".join(scope_lines) or "- (unset)"
+    passages = _numbered_passages(sources)
     return (
-        "You are writing the Research Brief that closes a Farsi research "
-        "conversation over a fixed set of Books.\n\n"
-        f"Research question (current): {question['current']}\n\n"
-        f"Question history:\n{history}\n\n"
-        f"Scope:\n{scope_block}\n\n"
-        f"Claims established so far:\n{claims}\n\n"
-        f"Gaps (the Books could not establish):\n{gaps}\n\n"
+        "You are writing ONE section of the Research Brief that closes "
+        "a Farsi research conversation over a fixed set of Books.\n\n"
+        f"Research question (current): "
+        f"{state['research_question']['current']}\n\n"
+        "This section's contract:\n"
+        f"- Title: «{contract.get('title', '')}» — write ONLY this "
+        "section; the sheet adds the heading itself.\n"
+        f"- The question it answers: "
+        f"{_contract_question_text(state, contract)}\n"
+        f"- The claims it must carry:\n{claim_lines}\n"
+        f"- The scope lines it must not cross:\n{scope_block}\n\n"
         "Passages (numbered, the investigation's accumulated Evidence; "
         "text-layer noise like \\b backspaces may appear between words):\n"
         f"{passages}\n\n"
-        "Task: write the Brief in three to six sections with headings: "
-        "the refined question and why it changed; what the Books "
-        "establish about it, weaving the passages' verbatim sentences "
-        "into your own Farsi text; what the Books do NOT establish (the "
-        "gaps above, in your own words); and suggested next steps for "
-        "the researcher. Each quoted sentence is a complete Farsi "
-        "sentence copied VERBATIM from exactly ONE passage (ignore the "
-        "\\b noise; write proper Farsi). Do not paraphrase, do not "
-        "merge, do not shorten. Never state a Book claim the passages "
-        "do not support; never a paragraph of bare quotes; never invent "
-        "a quote.\n"
-        "Do NOT write a references list — the sheet appends the "
-        "references itself.\n\n"
+        "Task: write two to four interleaved paragraphs for THIS "
+        "section only, weaving the passages that carry its claims. "
+        "Every paragraph is one unit: your own Farsi text with quoted "
+        "sentences embedded inside it. Each quoted sentence is a "
+        "complete Farsi sentence copied VERBATIM from exactly ONE "
+        "passage (ignore the \\b noise; write proper Farsi). Do not "
+        "paraphrase, do not merge, do not shorten. Never state a Book "
+        "claim the passages do not support; never write a paragraph "
+        "without at least one quoted sentence; never invent a quote. "
+        "If the passages do not carry this section's claims, write "
+        'nothing: reply with an empty blocks list ({"blocks": []}).\n'
+        "Do NOT write headings or a references list — the sheet adds "
+        "both itself.\n\n"
         "Reply with ONLY a JSON object, no prose, no code fence:\n"
-        '{"blocks": [{"type": "heading", "text": "..."}, '
-        '{"type": "paragraph", "parts": [{"text": "..."}, '
+        '{"blocks": [{"type": "paragraph", "parts": [{"text": "..."}, '
         '{"quote": "<verbatim sentence>", "source": <passage index>}, '
         '{"text": "..."}]}]}'
     )
@@ -1627,6 +1692,80 @@ def compose_guarded_reply(prompt: str, sources, budget=None):
     if blocks:
         return blocks, truncated
     return _write_once(prompt, sources, budget)
+
+
+def _write_section_once(prompt: str, sources, title: str, budget=None):
+    """One section-writing attempt (T8): call, parse, guard under the
+    section's SERVER-composed heading. The heading rides in before the
+    guard so the swap threshold judges a real section (one quoting
+    paragraph plus its heading passes alone), and the assembly later
+    keeps the plan's own title — the writer never supplies a heading
+    and its stray ones are dropped here. One call, no length-cut
+    continuation: a section is a bounded op of at most two writer
+    calls (this plus the retry), and the guard + contract check own the
+    honesty either way. Pre-paid from the turn's budget first."""
+    if budget is not None:
+        budget.require(1)
+    try:
+        reply = _composer_reply(prompt, "disabled", RESEARCH_MODEL, urlopen_fn=urlopen)
+        content = _composer_content(reply)
+    except (KeyError, ValueError, OSError):
+        return []
+    blocks = parse_quoted_reply(content)
+    paragraphs = [
+        block
+        for block in blocks
+        if isinstance(block, dict) and block.get("type") == "paragraph"
+    ]
+    return guard_blocks(
+        [{"type": "heading", "text": title}] + paragraphs, sources
+    )
+
+
+def _write_section(state: dict, contract: dict, sources, ids, budget=None):
+    """One section, one bounded op (T8): the write against its
+    contract, and on a miss — a guard that kept nothing, or a section
+    that does not carry its claims — EXACTLY ONE retry over the same
+    brief, then None: the caller falls back to the honest gap. The
+    budget refusal of a write propagates (BudgetExhausted): the chain
+    stops between bounded ops, the partial Brief standing."""
+    claims_by_id = {claim["id"]: claim for claim in state.get("claims", [])}
+    pinned = {
+        claim_id: claims_by_id[claim_id]
+        for claim_id in contract.get("claims", [])
+        if claim_id in claims_by_id
+    }
+    prompt = build_section_prompt(state, contract, sources)
+    blocks = _write_section_once(prompt, sources, contract.get("title", ""), budget)
+    if blocks and _carries_claims(pinned, blocks, ids):
+        return blocks
+    blocks = _write_section_once(prompt, sources, contract.get("title", ""), budget)
+    if blocks and _carries_claims(pinned, blocks, ids):
+        return blocks
+    return None
+
+
+def _carries_claims(pinned: dict, blocks: list, evidence_ids) -> bool:
+    """Whether the kept blocks quote evidence that supports EVERY pinned
+    claim; nothing pinned means the guard alone decided."""
+    if not pinned:
+        return True
+    carried = set()
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "paragraph":
+            continue
+        for part in block.get("parts", []):
+            index = part.get("source")
+            if (
+                isinstance(index, int)
+                and not isinstance(index, bool)
+                and 0 <= index < len(evidence_ids)
+            ):
+                carried.add(evidence_ids[index])
+    return all(
+        any(evidence_id in carried for evidence_id in claim.get("evidence_ids", []))
+        for claim in pinned.values()
+    )
 
 
 def with_references(blocks: list, sources) -> list:
@@ -2015,11 +2154,15 @@ def decide_proposal(
         # The plan's acceptance is APPEND-ONLY (T7): each acceptance
         # adds a version to the plan's ledger — v1 stays intact
         # underneath — and the accepted plan becomes the current one,
-        # the gate the (required) Brief writes against.
+        # the gate the (required) Brief writes against. Acceptance also
+        # DERIVES the Section contracts (T8): one per planned section,
+        # snapped against the claim ledger and the scope as they stand
+        # now — the record each section is written against.
         sections = proposal.get("sections", [])
         plan = state.setdefault("brief_plan", {"current": None, "versions": []})
         plan["versions"].append({"sections": sections, "turn": state["turns"]})
         plan["current"] = {"sections": sections}
+        state["section_contracts"] = _section_contracts_from_plan(state, sections)
         decision = f"برنامۀ خلاصۀ پژوهش پذیرفته شد: {proposal['text']}"
     elif proposal["kind"] == "adjustment":
         decision = _apply_adjustment(state, proposal, choice)
@@ -2606,13 +2749,19 @@ def _synthesize(turn: ResearchTurn, state: dict) -> list:
 
 
 def _brief(turn: ResearchTurn, state: dict) -> list:
-    """The drafting operation: the Research Brief written FROM the state
-    — question history, scope, claims, gaps — over the evidence pool,
-    guarded like every writer pass. Once plans are required (the T7
-    checkpoint), a session with no ACCEPTED plan refuses before any
-    writer call — the note names what to do first, the same honest
-    shape as the no-claims refusal."""
-    sources, _ = _evidence_pool(state)
+    """The drafting operation (T8, ADR-0012's assembly line): the Brief
+    assembled section by section, each written as ONE bounded op
+    against its accepted Section contract — the claims it must carry,
+    the question it answers, the scope lines it must not cross — with
+    the guard and exactly one retry, then the honest-gap fallback: a
+    section the Books cannot feed is written AS a gap (a diagnosed,
+    ledgered note under the plan's own heading), never an invented
+    fill. The headings are the accepted plan's own, in its order, so
+    the finished Brief matches what the operator accepted. The
+    refuse-without-claims rule stands first; the plan gate (the
+    strangler flip) stands second — a session with no ACCEPTED plan
+    refuses before any writer call."""
+    sources, ids = _evidence_pool(state)
     if not state.get("claims"):
         return [
             {
@@ -2625,15 +2774,71 @@ def _brief(turn: ResearchTurn, state: dict) -> list:
         ]
     if BRIEF_PLANS_REQUIRED and not (state.get("brief_plan") or {}).get("current"):
         return [{"type": "note", "text": RESEARCH_BRIEF_NEEDS_PLAN_DETAIL}]
-    _turn_write(turn, "writing", RESEARCH_EVENT_BRIEF)
-    blocks, _ = compose_guarded_reply(
-        build_brief_prompt(state, sources), sources, budget=turn.budget
+    contracts = state.get("section_contracts") or _section_contracts_from_plan(
+        state, (state.get("brief_plan") or {}).get("current", {}).get("sections", [])
     )
+    _turn_write(turn, "writing", RESEARCH_EVENT_BRIEF)
+    blocks = []
+    for contract in contracts:
+        if turn.cancel.is_set():
+            return blocks
+        title = contract.get("title", "")
+        try:
+            written = _write_section(state, contract, sources, ids, budget=turn.budget)
+        except BudgetExhausted:
+            # The budget refused the next bounded op mid-chain: the
+            # sections written so far stand, the stop note closes the
+            # reply at the worker's boundary check.
+            break
+        blocks.append({"type": "heading", "text": title})
+        if written:
+            # The guarded result rides under the heading this assembly
+            # itself appended — the plan's title, never the writer's.
+            blocks.extend(
+                block for block in written if block.get("type") == "paragraph"
+            )
+            continue
+        record_failure(
+            state,
+            "starved_corpus",
+            f"section «{title}» missed its contract after one retry",
+        )
+        blocks.append(
+            {
+                "type": "note",
+                "text": f"بخش «{title}»: {RESEARCH_BRIEF_SECTION_GAP_NOTE}",
+            }
+        )
+        _record_brief_gap(state, contract)
     if not blocks:
-        record_failure(state, "guard_drop", "the brief writer kept nothing")
+        # Unreachable through the parse-guarded plan shape (every
+        # planned section carries a title), but an empty reply is never
+        # an honest landing — the note says so if it ever happens.
+        record_failure(state, "guard_drop", "the brief wrote no sections")
         return [{"type": "note", "text": RESEARCH_EMPTY_REPLY_DETAIL}]
     state["phase"] = "drafting"
     return blocks
+
+
+def _record_brief_gap(state: dict, contract: dict) -> None:
+    """A fallen section becomes an honest gap entry (T8) — the map's
+    ledger and the Closing review read it like any starvation. Deduped
+    on the guard's normalized letter stream, like every gap."""
+    title = contract.get("title", "")
+    text = (
+        f"بخش «{title}» از خلاصۀ پژوهش نوشته نشد: کتاب‌ها شواهد کافی ندارند."
+    )
+    known = {normalize_for_match(gap["text"]) for gap in state["gaps"]}
+    if normalize_for_match(text) in known:
+        return
+    state["gaps"].append(
+        {
+            "id": f"g{len(state['gaps']) + 1}",
+            "text": text,
+            "subquestion": _contract_question_text(state, contract),
+            "turn": state["turns"],
+        }
+    )
 
 
 def _audit(state: dict) -> list:

@@ -274,3 +274,31 @@ def test_serve_pins_the_research_routes():
         assert route in text
     # The superseded dive routes never return.
     assert "/deep-dive" not in text
+
+def test_readme_and_architecture_lock_the_per_section_brief():
+    # T8 (GitLab #9): the Brief assembly line — sections written one
+    # bounded op each against their accepted Section contracts, guarded,
+    # exactly one retry, honest-gap fallback; the plan's own headings.
+    readme = research_section()
+    assert "assembled section by section" in readme
+    assert "Section contracts" in readme
+    assert "exactly one retry" in readme
+    assert "cannot drift from it" in readme
+    assert "without an accepted plan second" in readme
+    section = ARCHITECTURE.read_text(encoding="utf-8").split(
+        "## 8. Research Mode", 1
+    )[1].split("\n## 9.", 1)[0]
+    assert "SECTION BY SECTION" in section
+    assert "ONE bounded writer op" in section
+    assert "exactly ONE retry" in section
+    assert "honest-gap fallback" in section
+    assert "section contracts" in section
+
+
+def test_context_glossary_holds_the_section_contract():
+    text = CONTEXT.read_text(encoding="utf-8")
+    assert "**Section contract**" in text
+    assert (
+        "which claims (by identity) it must carry, which question it "
+        "answers, and which scope lines it must not cross" in text
+    )
