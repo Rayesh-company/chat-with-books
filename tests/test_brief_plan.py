@@ -409,12 +409,20 @@ def test_an_accepted_plan_lets_the_brief_write_per_section(tmp_path):
             composer_reply(json.dumps(guarded_blocks(pool), ensure_ascii=False)),
             composer_reply(json.dumps(guarded_blocks(pool), ensure_ascii=False)),
             composer_reply("روایت کوتاه."),
+            # The Closing review's judgment (T9).
+            composer_reply(
+                json.dumps(
+                    {"verdict": "delivers", "reason": "سند می‌رساند."},
+                    ensure_ascii=False,
+                )
+            ),
         ]
     )
     session = make_session(tmp_path, state=state)
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)
     assert turn.state == "done"
-    # Classify, one writer op per planned section, the narrator — the
-    # writer ran WITH its plan, section by section.
-    assert len(composer_bodies(upstream)) == 4
+    # Classify, one writer op per planned section, the narrator, the
+    # ONE judgment call — the writer ran WITH its plan, section by
+    # section.
+    assert len(composer_bodies(upstream)) == 5
     assert any(b["type"] == "paragraph" for b in turn.result["reply"])

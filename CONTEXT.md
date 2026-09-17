@@ -151,13 +151,14 @@ The approved plain-Persian naming table (ADR-0012): the single source every Rese
 | synthesize | تحلیل‌گر |
 | Brief sections writer | نویسنده |
 | Closing review | بازبین |
+| claim-ledger audit (evidence_audit) | بازبینِ دفتر ادعاها |
 | conversational (chat skills) | میزبان |
 | map keeper | نقشه‌بان |
 | diagnoser | تشخیص‌گر |
 
 **Journey stages**: نام‌گذاری مقصد، نقشه‌برداری، گردآوری شواهد، تحلیل و جمع‌بندی، نوشتن خلاصه.
 
-**Fixed chips and texts**: gather «شواهد بیشتری از کتاب‌ها پیدا کن» · gather-all «همهٔ پرسش‌های باز را جست‌وجو کن» · synthesize «شواهد را تحلیل و جمع‌بندی کن» · brief «خلاصۀ پژوهش را بنویس» · audit «ادعاها و استنادها را بازبینی کن» · guide «ادامهٔ سفر پژوهش» · skip «فعلاً همین کافی است؛ ادامه بده» · stop «توقف پژوهش» · accept/reject «می‌پذیرم» / «رد می‌کنم» · the diagnoser's adjustment menu (T6) «پرسش را محدودتر کن» / «با روش دیگری جست‌وجو کن» / «همین را شکاف اعلام کن».
+**Fixed chips and texts**: gather «شواهد بیشتری از کتاب‌ها پیدا کن» · gather-all «همهٔ پرسش‌های باز را جست‌وجو کن» · synthesize «شواهد را تحلیل و جمع‌بندی کن» · brief «خلاصۀ پژوهش را بنویس» · audit «ادعاها و استنادها را بازبینی کن» · guide «ادامهٔ سفر پژوهش» · skip «فعلاً همین کافی است؛ ادامه بده» · stop «توقف پژوهش» · accept/reject «می‌پذیرم» / «رد می‌کنم» · the diagnoser's adjustment menu (T6) «پرسش را محدودتر کن» / «با روش دیگری جست‌وجو کن» / «همین را شکاف اعلام کن» · the closing review's revise (T9) «بازنویسی بخش‌های ناکام خلاصه».
 
 **Map rows**: مقصد، پرسش پژوهش، در حال پرداختن (the frontier)، پرسش‌های باز، تصمیم‌ها، تشخیص‌ها (the diagnoser's named causes)، هنوز نامشخص (the fog)، خارج از دامنه، شمارش.
 

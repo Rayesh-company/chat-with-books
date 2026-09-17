@@ -131,6 +131,11 @@ COMMAND_GUIDE = "ادامهٔ سفر پژوهش"
 # session on their own word — the map and the ledgers stay, no Brief is
 # fabricated to close with.
 COMMAND_STOP = "توقف پژوهش"
+# The Closing review's revise chip (T9, ADR-0012): the second chip of
+# the review's verdict — one tap reruns ONLY the failing sections, the
+# review then faces the reassembled document again. Resolved
+# server-side like every fixed command, no classification luck.
+COMMAND_REVISE = "بازنویسی بخش‌های ناکام خلاصه"
 # A per-question gather chip: «شواهدِ «نام» را پیدا کن» targets exactly
 # that named open question — the deterministic frontier move.
 TARGETED_GATHER_RE = re.compile(r"^شواهدِ «(.+)» را پیدا کن$")
@@ -179,6 +184,7 @@ RESEARCH_INTENTS = (
     "research_exploration",
     "active_research",
     "drafting",
+    "closing_review",
     "evidence_audit",
 )
 
@@ -310,8 +316,29 @@ SKILL_TABLE = (
         "guarded": True,
     },
     {
-        "name": "evidence_audit",
+        "name": "closing_review",
         "display_name": "بازبین",
+        "purpose": "review the finished Brief — traceability plus the destination judgment",
+        "kind": "work",
+        "runner": "review",
+        "allowed_stages": None,
+        "caps": "pure-code traceability plus one judgment call, no writer",
+        "tools": (),
+        "state_reads": (
+            "research_question",
+            "claims",
+            "gaps",
+            "map",
+            "brief_plan",
+            "section_contracts",
+            "brief_document",
+        ),
+        "state_writes": ("closing_review", "pending_proposals", "diagnoses"),
+        "guarded": False,
+    },
+    {
+        "name": "evidence_audit",
+        "display_name": "بازبینِ دفتر ادعاها",
         "purpose": "review the claims and their citations",
         "kind": "work",
         "runner": "audit",
@@ -468,6 +495,34 @@ RESEARCH_BRIEF_NEEDS_PLAN_DETAIL = (
 RESEARCH_BRIEF_SECTION_GAP_NOTE = (
     "کتاب‌ها برای ادعاهای این بخش شواهد کافی ندارند؛ به‌جای ساختن، شکاف ثبت شد."
 )
+# The Closing review (T9, ADR-0012): the finished Brief faces two axes
+# before it is done — pure-code traceability, then ONE destination-
+# judgment call. The verdict's plain-Persian labels (the reply's note,
+# the proposal text, the decisions index) and the code findings' labels
+# (the findings the judgment prompt reads). unjudged is the honest
+# landing of a judgment call that failed or came back unusable — the
+# traceability findings stand alone, never a silence.
+RESEARCH_EVENT_REVIEW = "بازبینی پایانیِ خلاصه…"
+REVIEW_MODEL_VERDICTS = ("delivers", "honest_gaps", "not_yet")
+REVIEW_VERDICT_LABELS = {
+    "delivers": "سندِ خلاصه مقصد پژوهش را می‌رساند",
+    "honest_gaps": "سندِ خلاصه صادقانه می‌گوید کتاب‌ها چه چیزی را نمی‌توانند اثبات کنند",
+    "not_yet": "سندِ خلاصه هنوز مقصد پژوهش را نمی‌رساند",
+    "unjudged": "داوری مقصد انجام نشد؛ یافته‌های ردیابی کد معتبرند",
+}
+REVIEW_FINDING_LABELS = {
+    "ok": "ردیابی شد",
+    "claims": "ادعاهای پین‌شده را نمی‌رساند",
+    "scope": "از خط دامنه بیرون می‌زند",
+    "gap": "شکاف صادقانه ثبت شد",
+    "destination": "داوری مقصد سند را نپذیرفت",
+}
+# The review picked as its own skill on a session with no standing
+# document: the honest refusal — the review never fabricates a Brief to
+# review.
+RESEARCH_REVIEW_NO_DOCUMENT_DETAIL = (
+    "خلاصه‌ای برای بازبینی نوشته نشده؛ اول خلاصۀ پژوهش را بنویسید."
+)
 # The budget's honest stop (T3): the timeline event and the note the
 # transcript keeps. An over-budget turn names its stop — never a fake
 # completion, never the generic unexpected-error failure.
@@ -538,6 +593,18 @@ def new_research_state(goal: str) -> dict:
         # the scope lines it must not cross.
         "brief_plan": {"current": None, "versions": []},
         "section_contracts": [],
+        # The standing Brief document (T9): one entry per assembled
+        # section — its title, its guarded paragraphs, and whether the
+        # honest gap stands in its place — plus whether the assembly
+        # ran to completion (a budget-stopped chain leaves it False).
+        # The Closing review traces THIS document, and a revise reruns
+        # only its flagged sections.
+        "brief_document": {"complete": False, "sections": []},
+        # The Closing review's ledger (T9): every review run appends a
+        # version (the findings, the verdict, the failing set); the
+        # newest rides as `current` until the operator's decision marks
+        # it accepted — provenance like the plan's.
+        "closing_review": {"current": None, "versions": []},
         "proposal_cooldowns": {"research_question": 0, "scope": 0, "brief_plan": 0},
         "pending_proposals": [],
         "turns": 0,
@@ -586,6 +653,15 @@ def ensure_state_shape(state: dict) -> dict:
     cooldowns = state.setdefault("proposal_cooldowns", {})
     for kind in ("research_question", "scope"):
         cooldowns.setdefault(kind, 0)
+    # The standing Brief document and the Closing review's ledger (T9)
+    # top up the same way — a session persisted before the review
+    # existed gains the empty shapes; the next drafting run fills the
+    # document and the review fills the ledger.
+    state.setdefault("brief_document", {"complete": False, "sections": []})
+    review = state.setdefault("closing_review", {"current": None, "versions": []})
+    if isinstance(review, dict):
+        review.setdefault("current", None)
+        review.setdefault("versions", [])
     for item in state.get("subquestions", []):
         if isinstance(item, dict):
             item.setdefault("id", f"q{len(state['subquestions']) + 1}")
@@ -780,6 +856,12 @@ def research_state_summary(state: dict) -> dict:
     stage = state.get("stage", "orientation")
     plan = state.get("brief_plan") or {}
     plan_current = plan.get("current") or {}
+    document = state.get("brief_document") or {}
+    document_sections = [
+        item for item in document.get("sections", []) if isinstance(item, dict)
+    ]
+    review = state.get("closing_review") or {}
+    review_current = review.get("current") or {}
     return {
         "research_question": question.get("current", ""),
         "rq_versions": len(question.get("versions", [])),
@@ -852,6 +934,18 @@ def research_state_summary(state: dict) -> dict:
             "sections": [
                 section.get("title", "") for section in plan_current.get("sections", [])
             ][:6],
+        },
+        # The standing Brief document and the Closing review's
+        # projection (T9): how many sections stand, whether the review
+        # has accepted the Brief, the newest verdict, and the sections
+        # a revise would rerun — the router reads this before picking
+        # the review, and the sheet can show the verdict.
+        "brief_sections": len(document_sections),
+        "closing_review": {
+            "reviewed": review_current.get("status") == "accepted",
+            "verdict": review_current.get("verdict", ""),
+            "failing": list(review_current.get("failing", []))[:4],
+            "versions": len(review.get("versions", [])),
         },
     }
 
@@ -937,6 +1031,28 @@ def research_suggestions(state: dict) -> list:
                         "accept": False,
                     }
                 )
+            elif proposal["kind"] == "closing_review":
+                # The verdict's own pair (T9): the accept chip through
+                # the decide flow, and — when sections failed — the
+                # revise chip, which SENDS its command so the rerun
+                # starts on the tap (fixing the Brief is one tap).
+                suggestions.append(
+                    {
+                        "kind": "proposal",
+                        "id": proposal["id"],
+                        "label": "می‌پذیرم",
+                        "text": proposal["text"],
+                        "accept": True,
+                    }
+                )
+                if proposal.get("failing"):
+                    suggestions.append(
+                        {
+                            "kind": "move",
+                            "id": "revise",
+                            "text": COMMAND_REVISE,
+                        }
+                    )
             else:
                 suggestions.append(
                     {
@@ -1036,6 +1152,8 @@ def resolve_command(message: str):
         return "guide", None
     if stripped == COMMAND_STOP:
         return "stop", None
+    if stripped == COMMAND_REVISE:
+        return "revise", None
     match = TARGETED_GATHER_RE.match(stripped)
     if match:
         return "gather", match.group(1).strip()
@@ -2164,6 +2282,20 @@ def decide_proposal(
         plan["current"] = {"sections": sections}
         state["section_contracts"] = _section_contracts_from_plan(state, sections)
         decision = f"برنامۀ خلاصۀ پژوهش پذیرفته شد: {proposal['text']}"
+    elif proposal["kind"] == "closing_review":
+        # The verdict's acceptance (T9): the Brief is marked reviewed —
+        # the newest review run's status flips in place, the decision
+        # line joins the map's index. A rejection drops the checkpoint
+        # without marking anything: the revise chip, not the reject, is
+        # the fix path.
+        review = state.setdefault("closing_review", {"current": None, "versions": []})
+        current = review.get("current") or {}
+        current["status"] = "accepted"
+        review["current"] = current
+        decision = (
+            "خلاصۀ پژوهش بازبینی و پذیرفته شد؛ "
+            f"{REVIEW_VERDICT_LABELS.get(current.get('verdict', ''), '')}"
+        )
     elif proposal["kind"] == "adjustment":
         decision = _apply_adjustment(state, proposal, choice)
     else:
@@ -2354,7 +2486,7 @@ def _apply_classify_updates(state: dict, classified: dict) -> None:
     ):
         state["pending_proposals"].append(
             {
-                "id": f"p{len(state['pending_proposals']) + 1}",
+                "id": _next_proposal_id(state),
                 "kind": "research_question",
                 "text": rq,
                 "reason": classified.get("reason", ""),
@@ -2375,7 +2507,7 @@ def _apply_classify_updates(state: dict, classified: dict) -> None:
             parts.append("خارج دامنه: " + "؛ ".join(scope_out))
         state["pending_proposals"].append(
             {
-                "id": f"p{len(state['pending_proposals']) + 1}",
+                "id": _next_proposal_id(state),
                 "kind": "scope",
                 "text": "، ".join(parts),
                 "scope_in": scope_in,
@@ -2402,7 +2534,7 @@ def _apply_classify_updates(state: dict, classified: dict) -> None:
         if not plan_decided:
             state["pending_proposals"].append(
                 {
-                    "id": f"p{len(state['pending_proposals']) + 1}",
+                    "id": _next_proposal_id(state),
                     "kind": "brief_plan",
                     "text": plan_text,
                     "sections": plan_sections,
@@ -2439,7 +2571,7 @@ def _stage_should_ask(state: dict, intent: str = None) -> bool:
     on a work intent (ADR-0011): when the classifier read the message as
     an investigation command, in any wording, the journey works instead
     of asking."""
-    if intent in ("active_research", "drafting", "evidence_audit"):
+    if intent in ("active_research", "drafting", "closing_review", "evidence_audit"):
         return False
     stage = state.get("stage", "orientation")
     if stage not in ("orientation", "mapping"):
@@ -2496,6 +2628,25 @@ def _checkpoint_reply(state: dict) -> list:
                 blocks.append(
                     {"type": "note", "text": f"انتخاب‌ها: {labels}."}
                 )
+        elif proposal["kind"] == "closing_review":
+            # The verdict replays as its plain-Persian label with the
+            # sections a revise would rerun — the diff the user
+            # decides on (T9).
+            label = REVIEW_VERDICT_LABELS.get(proposal.get("verdict", ""), "")
+            blocks.append(
+                {"type": "note", "text": f"بازبینی پایانی: {label}"}
+            )
+            failing = proposal.get("failing", [])
+            if failing:
+                blocks.append(
+                    {
+                        "type": "note",
+                        "text": (
+                            f"بخش‌های نیازمند بازنویسی: "
+                            f"{_titles_line(failing)}."
+                        ),
+                    }
+                )
         elif proposal["kind"] == "brief_plan":
             # The plan reads section by section: each note ties a
             # section to its named open question and the claims that
@@ -2522,6 +2673,26 @@ def _gap_event(starved: int) -> str:
     digits = _farsi_digits(starved)
     verb = "می‌شود" if starved == 1 else "می‌شوند"
     return f"{digits} زیرپرسشِ کم‌شواهد دوباره جست‌وجو {verb}…"
+
+
+def _next_proposal_id(state: dict) -> str:
+    """The next pending-proposal id, unique among the proposals now
+    waiting. Ids are generated from the waiting count, so a decided
+    proposal frees its number — and a superseded park (T9's fresh
+    review) shrinks the list — either of which must never hand a
+    SECOND waiting proposal an id one of its neighbours already holds,
+    or a chip could resolve the wrong checkpoint."""
+    taken = {item.get("id") for item in state["pending_proposals"]}
+    suffix = len(state["pending_proposals"]) + 1
+    while f"p{suffix}" in taken:
+        suffix += 1
+    return f"p{suffix}"
+
+
+def _titles_line(titles: list) -> str:
+    """The «t1»، «t2» line the review's notes and the checkpoint's diff
+    both name the failing sections with."""
+    return "، ".join(f"«{title}»" for title in titles)
 
 
 def _park_adjustment(
@@ -2553,7 +2724,7 @@ def _park_adjustment(
         return
     state["pending_proposals"].append(
         {
-            "id": f"p{len(state['pending_proposals']) + 1}",
+            "id": _next_proposal_id(state),
             "kind": "adjustment",
             "text": text,
             "cause": cause,
@@ -2748,7 +2919,7 @@ def _synthesize(turn: ResearchTurn, state: dict) -> list:
     return blocks
 
 
-def _brief(turn: ResearchTurn, state: dict) -> list:
+def _brief(turn: ResearchTurn, state: dict, revise: bool = False) -> list:
     """The drafting operation (T8, ADR-0012's assembly line): the Brief
     assembled section by section, each written as ONE bounded op
     against its accepted Section contract — the claims it must carry,
@@ -2760,7 +2931,16 @@ def _brief(turn: ResearchTurn, state: dict) -> list:
     the finished Brief matches what the operator accepted. The
     refuse-without-claims rule stands first; the plan gate (the
     strangler flip) stands second — a session with no ACCEPTED plan
-    refuses before any writer call."""
+    refuses before any writer call.
+
+    The assembled sections stand in the state (T9's brief_document) —
+    the record the Closing review traces and a revise splices. A revise
+    turn (the review's second chip) rewrites ONLY the flagged sections:
+    the passing sections keep their written paragraphs verbatim, and
+    the whole document re-renders from the spliced entries. A
+    budget-stopped chain marks the document incomplete — the sections
+    written so far stand, the stop note closes the reply at the
+    worker's boundary check."""
     sources, ids = _evidence_pool(state)
     if not state.get("claims"):
         return [
@@ -2778,24 +2958,51 @@ def _brief(turn: ResearchTurn, state: dict) -> list:
         state, (state.get("brief_plan") or {}).get("current", {}).get("sections", [])
     )
     _turn_write(turn, "writing", RESEARCH_EVENT_BRIEF)
-    blocks = []
+    document = state.setdefault("brief_document", {"complete": False, "sections": []})
+    standing = {
+        entry.get("title", ""): entry
+        for entry in document.get("sections", [])
+        if isinstance(entry, dict)
+    }
+    failing_titles = set(
+        ((state.get("closing_review") or {}).get("current") or {}).get(
+            "failing", []
+        )
+    )
+    entries = []
+    complete = True
     for contract in contracts:
         if turn.cancel.is_set():
-            return blocks
+            return _render_document(entries)
         title = contract.get("title", "")
+        if revise and title in standing and title not in failing_titles:
+            # The revise keeps what passed: the standing entry rides
+            # into the reassembled document untouched.
+            entries.append(standing[title])
+            continue
         try:
             written = _write_section(state, contract, sources, ids, budget=turn.budget)
         except BudgetExhausted:
             # The budget refused the next bounded op mid-chain: the
             # sections written so far stand, the stop note closes the
-            # reply at the worker's boundary check.
+            # reply at the worker's boundary check — and the document
+            # is marked incomplete, so the review does not judge a
+            # half-assembled Brief.
+            complete = False
             break
-        blocks.append({"type": "heading", "text": title})
         if written:
             # The guarded result rides under the heading this assembly
-            # itself appended — the plan's title, never the writer's.
-            blocks.extend(
-                block for block in written if block.get("type") == "paragraph"
+            # itself appends — the plan's title, never the writer's.
+            entries.append(
+                {
+                    "title": title,
+                    "paragraphs": [
+                        block
+                        for block in written
+                        if block.get("type") == "paragraph"
+                    ],
+                    "gap": False,
+                }
             )
             continue
         record_failure(
@@ -2803,13 +3010,11 @@ def _brief(turn: ResearchTurn, state: dict) -> list:
             "starved_corpus",
             f"section «{title}» missed its contract after one retry",
         )
-        blocks.append(
-            {
-                "type": "note",
-                "text": f"بخش «{title}»: {RESEARCH_BRIEF_SECTION_GAP_NOTE}",
-            }
-        )
+        entries.append({"title": title, "paragraphs": [], "gap": True})
         _record_brief_gap(state, contract)
+    document["sections"] = entries
+    document["complete"] = complete
+    blocks = _render_document(entries)
     if not blocks:
         # Unreachable through the parse-guarded plan shape (every
         # planned section carries a title), but an empty reply is never
@@ -2817,6 +3022,29 @@ def _brief(turn: ResearchTurn, state: dict) -> list:
         record_failure(state, "guard_drop", "the brief wrote no sections")
         return [{"type": "note", "text": RESEARCH_EMPTY_REPLY_DETAIL}]
     state["phase"] = "drafting"
+    return blocks
+
+
+def _render_document(entries: list) -> list:
+    """The standing document as the reply's blocks: the plan's own
+    headings in plan order, a written section's guarded paragraphs
+    under its heading, an honest gap as its diagnosed note (T8's
+    assembled shape, now rendered from the state's entries)."""
+    blocks = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        title = entry.get("title", "")
+        blocks.append({"type": "heading", "text": title})
+        if entry.get("gap"):
+            blocks.append(
+                {
+                    "type": "note",
+                    "text": f"بخش «{title}»: {RESEARCH_BRIEF_SECTION_GAP_NOTE}",
+                }
+            )
+        else:
+            blocks.extend(entry.get("paragraphs", []))
     return blocks
 
 
@@ -2839,6 +3067,292 @@ def _record_brief_gap(state: dict, contract: dict) -> None:
             "turn": state["turns"],
         }
     )
+
+
+# --- the Closing review (T9, ADR-0012) --------------------------------------
+
+
+def _section_text(entry: dict) -> str:
+    """One standing section's OWN words: the filler text of its
+    paragraphs — the haystack the scope check reads. Verbatim quotes
+    are Book fact the contract's claim pass already vetted; a Book
+    sentence that merely mentions an out-of-scope topic is evidence,
+    not drift."""
+    words = []
+    for block in entry.get("paragraphs", []):
+        if not isinstance(block, dict) or block.get("type") != "paragraph":
+            continue
+        for part in block.get("parts", []):
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                words.append(part["text"])
+    return " ".join(words)
+
+
+def _scope_drift(contract: dict, entry: dict) -> str:
+    """The first out-of-scope line the section's own text crosses, or
+    '' — the review's code-side drift flag: the scope lines are the
+    contract's own, as they stood at acceptance, matched on the guard's
+    normalized letter stream."""
+    haystack = normalize_for_match(_section_text(entry))
+    if not haystack:
+        return ""
+    for line in contract.get("scope_out", []):
+        needle = normalize_for_match(line)
+        if needle and needle in haystack:
+            return line
+    return ""
+
+
+def closing_review_findings(state: dict) -> list:
+    """Axis one of the Closing review (T9): pure code, no LLM — every
+    section of the standing document traced to its contract. A written
+    section must carry the evidence of EVERY claim its contract pinned
+    (the writer's own rule, re-checked over the assembled document) and
+    must not cross a scope line; a gap section reads as the honest
+    starvation it is, never a miss. An entry whose title no standing
+    contract holds (a plan accepted after the assembly ran) pins
+    nothing and crosses no recorded line — the guard's verbatim
+    guarantee is its traceability, the same rule a contract with no
+    pinned claims lives by. The judgment call runs only after these
+    findings stand."""
+    document = state.get("brief_document") or {}
+    contracts = {
+        contract.get("title", ""): contract
+        for contract in state.get("section_contracts", [])
+        if isinstance(contract, dict)
+    }
+    claims_by_id = {claim["id"]: claim for claim in state.get("claims", [])}
+    _, evidence_ids = _evidence_pool(state)
+    findings = []
+    for entry in document.get("sections", []):
+        if not isinstance(entry, dict):
+            continue
+        title = entry.get("title", "")
+        contract = contracts.get(title, {})
+        if entry.get("gap"):
+            findings.append({"title": title, "status": "gap", "detail": ""})
+            continue
+        paragraphs = entry.get("paragraphs", [])
+        pinned = {
+            claim_id: claims_by_id[claim_id]
+            for claim_id in contract.get("claims", [])
+            if claim_id in claims_by_id
+        }
+        if pinned and not _carries_claims(pinned, paragraphs, evidence_ids):
+            findings.append(
+                {
+                    "title": title,
+                    "status": "claims",
+                    "detail": "نقل‌قول‌های این بخش، ادعاهای پین‌شده را پشتیبانی نمی‌کنند",
+                }
+            )
+            continue
+        drift = _scope_drift(contract, entry)
+        if drift:
+            findings.append({"title": title, "status": "scope", "detail": drift})
+            continue
+        findings.append({"title": title, "status": "ok", "detail": ""})
+    return findings
+
+
+def _review_destination(state: dict) -> str:
+    """The text the destination judgment judges against: the map's
+    destination when the journey named one, else the research question
+    itself — the one line the document must deliver."""
+    return (
+        state.get("map", {}).get("destination")
+        or state["research_question"]["current"]
+    )
+
+
+def build_review_judgment_prompt(state: dict, findings: list) -> str:
+    """The destination judgment's ONE brief (T9): the standing document
+    and the destination it must deliver, beside the code findings —
+    authoritative, already standing before this call runs. Process
+    speech only: the verdict judges the document, it never states a
+    Book fact."""
+    destination = _review_destination(state)
+    document_lines = []
+    for entry in (state.get("brief_document") or {}).get("sections", []):
+        if not isinstance(entry, dict):
+            continue
+        title = entry.get("title", "")
+        if entry.get("gap"):
+            document_lines.append(f"- «{title}»: (شکاف ثبت‌شده — این بخش نوشته نشد)")
+        else:
+            document_lines.append(f"- «{title}»: {_section_text(entry)}")
+    finding_lines = "\n".join(
+        f"- «{finding['title']}»: "
+        f"{REVIEW_FINDING_LABELS.get(finding['status'], finding['status'])}"
+        + (f" ({finding['detail']})" if finding.get("detail") else "")
+        for finding in findings
+    )
+    return (
+        "You are the closing reviewer of a Farsi research Brief "
+        "(ADR-0012's Closing review). The document below was assembled "
+        "section by section from the Books by a guarded writer; pure "
+        "code has already traced every section to its contract — its "
+        "findings are authoritative.\n\n"
+        f"Destination (what the operator wants to walk away with): "
+        f"{destination}\n\n"
+        "The document:\n" + "\n".join(document_lines) + "\n\n"
+        "Code traceability findings (authoritative):\n"
+        f"{finding_lines}\n\n"
+        "Task: ONE destination judgment — does this document deliver "
+        "the destination, or does it honestly state what the Books "
+        "cannot establish? Judge the document as written; never invent "
+        "a Book fact; the reason is one short sentence about the "
+        "document, not a new claim.\n\n"
+        "Reply with ONLY a JSON object, no prose, no code fence:\n"
+        '{"verdict": "delivers" | "honest_gaps" | "not_yet", '
+        '"reason": "<one short Farsi sentence>"}'
+    )
+
+
+def _review_judgment(state: dict, findings: list, budget=None):
+    """Axis two of the Closing review (T9): the ONE destination-judgment
+    call — (verdict, reason). A call the budget cannot afford, an
+    upstream failure, or an unusable reply lands `unjudged` with the
+    diagnosis recorded — never a silence, never a fabricated verdict."""
+    prompt = build_review_judgment_prompt(state, findings)
+    if budget is not None and not budget.afford(1):
+        record_diagnosis(
+            state,
+            "closing review judgment refused by the turn budget",
+            "traceability-only review",
+        )
+        return "unjudged", ""
+    try:
+        reply = _composer_reply(prompt, "disabled", RESEARCH_MODEL, urlopen_fn=urlopen)
+        content = _composer_content(reply)
+    except (KeyError, ValueError, OSError) as error:
+        record_diagnosis(
+            state,
+            f"closing review judgment call failed: {error}",
+            "traceability-only review",
+        )
+        return "unjudged", ""
+    if budget is not None:
+        budget.charge(1)
+    parsed = _json_object(content)
+    verdict = parsed.get("verdict") if isinstance(parsed, dict) else None
+    if verdict not in REVIEW_MODEL_VERDICTS:
+        record_diagnosis(
+            state,
+            f"closing review judgment unusable: {str(content)[:200]}",
+            "traceability-only review",
+        )
+        return "unjudged", ""
+    reason = parsed.get("reason")
+    if not isinstance(reason, str):
+        return verdict, ""
+    # Clipped hard like the narrator's note — a rambling reason is
+    # worse than a short one.
+    return verdict, reason.strip()[:300]
+
+
+def run_closing_review(turn: ResearchTurn, state: dict) -> list:
+    """The Closing review (T9): the finished Brief faces two axes
+    before it is done — the pure-code traceability first, then the ONE
+    destination-judgment call over the document and the code findings.
+    A judgment that fails the destination with no code-flagged section
+    flags every written section: the failing set is always explicit,
+    and the revise command reruns only what it names. The result joins
+    the state's versioned ledger, supersedes any parked review
+    proposal, and the verdict's notes return for the reply."""
+    document = state.get("brief_document") or {}
+    if not document.get("sections"):
+        return []
+    findings = closing_review_findings(state)
+    failing = [
+        finding["title"]
+        for finding in findings
+        if finding["status"] in ("claims", "scope")
+    ]
+    _turn_write(turn, "reviewing", RESEARCH_EVENT_REVIEW)
+    if turn.cancel.is_set():
+        return []
+    verdict, reason = _review_judgment(state, findings, budget=turn.budget)
+    if verdict == "not_yet" and not failing:
+        # The document traces cleanly but the destination judgment
+        # still says no: every written section joins the revise set —
+        # its finding upgrades to the judgment's flag, one finding per
+        # section, the failing set always explicit.
+        written = {
+            entry.get("title", "")
+            for entry in document.get("sections", [])
+            if isinstance(entry, dict) and not entry.get("gap")
+        }
+        findings = [
+            {**finding, "status": "destination"}
+            if finding["status"] == "ok" and finding["title"] in written
+            else finding
+            for finding in findings
+        ]
+        failing = [
+            finding["title"] for finding in findings
+            if finding["status"] == "destination"
+        ]
+    result = {
+        "turn": state.get("turns", 0),
+        "destination": _review_destination(state),
+        "findings": findings,
+        "verdict": verdict,
+        "reason": reason,
+        "failing": failing,
+        "status": "pending",
+    }
+    review = state.setdefault("closing_review", {"current": None, "versions": []})
+    review["versions"].append(result)
+    review["current"] = result
+    _park_closing_review(state, result)
+    return _review_notes(result)
+
+
+def _park_closing_review(state: dict, result: dict) -> None:
+    """Park the verdict as the pending checkpoint (T9) — the accept and
+    revise chips. A fresh review SUPERSEDES a pending one (the revise
+    rerun's new verdict replaces the stale), never two reviews wait."""
+    state["pending_proposals"] = [
+        item
+        for item in state["pending_proposals"]
+        if item.get("kind") != "closing_review"
+    ]
+    state["pending_proposals"].append(
+        {
+            "id": _next_proposal_id(state),
+            "kind": "closing_review",
+            "text": (
+                "بازبینی پایانی: "
+                f"{REVIEW_VERDICT_LABELS.get(result['verdict'], result['verdict'])}"
+            ),
+            "verdict": result["verdict"],
+            "failing": list(result["failing"]),
+        }
+    )
+
+
+def _review_notes(result: dict) -> list:
+    """The verdict's server-composed notes — the label and the
+    judgment's reason, then the failing sections a revise would rerun.
+    Process speech: no Book claim, nothing for the guard to check."""
+    label = REVIEW_VERDICT_LABELS.get(result["verdict"], result["verdict"])
+    text = f"بازبینی پایانی: {label}"
+    if result["reason"] and result["verdict"] != "unjudged":
+        text += f"؛ {result['reason']}"
+    notes = [{"type": "note", "text": text + "."}]
+    if result["failing"]:
+        notes.append(
+            {
+                "type": "note",
+                "text": (
+                    f"بخش‌های نیازمند بازنویسی: "
+                    f"{_titles_line(result['failing'])} — با دکمۀ "
+                    f"«{COMMAND_REVISE}» فقط همین بخش‌ها دوباره نوشته می‌شوند."
+                ),
+            }
+        )
+    return notes
 
 
 def _audit(state: dict) -> list:
@@ -3058,17 +3572,40 @@ def _run_audit_skill(turn, state, classified, message, resolved, intent):
 
 
 def _run_brief_skill(turn, state, classified, message, resolved, intent):
-    """The Brief: one guarded writer pass written FROM the state; a
-    reply with surviving paragraphs narrates and lands the drafting
-    stage."""
-    blocks = _brief(turn, state)
+    """The drafting skill (T8's assembly line) closed by the Closing
+    review (T9): the sections write against their contracts, the
+    narrator opens the reply, and the finished document faces the two
+    axes — the verdict lands with the accept/revise chips. The revise
+    command (the review's second chip) reruns ONLY the flagged
+    sections."""
+    revise = bool(resolved and resolved[0] == "revise")
+    blocks = _brief(turn, state, revise=revise)
     narration = ""
+    document = state.get("brief_document") or {}
     if blocks and any(b["type"] == "paragraph" for b in blocks):
         narration = narrate(
             state, _narration_facts(state, "brief", [], []), budget=turn.budget
         )
         advance_stage(state, "drafting")
+    if blocks and document.get("complete"):
+        # The review faces every COMPLETED assembly — an all-gap Brief
+        # most of all: the judgment exists to bless (or refuse) exactly
+        # the document that honestly states what the Books cannot
+        # establish. A chain the budget stopped mid-sections gets the
+        # honest stop note, not a verdict on a half document.
+        blocks = blocks + run_closing_review(turn, state)
     return blocks, None, narration
+
+
+def _run_review_skill(turn, state, classified, message, resolved, intent):
+    """The Closing review picked as its own skill (T9): the standing
+    document is reviewed in place — pure-code traceability plus the ONE
+    judgment call, no writer, no rewrite. No standing document: the
+    honest refusal — the review never fabricates a Brief to review."""
+    blocks = run_closing_review(turn, state)
+    if not blocks:
+        return [{"type": "note", "text": RESEARCH_REVIEW_NO_DOCUMENT_DETAIL}], None, ""
+    return blocks, None, ""
 
 
 def _run_research_skill(turn, state, classified, message, resolved, intent):
@@ -3139,6 +3676,7 @@ SKILL_RUNNERS = {
     "chat": _run_chat_skill,
     "research": _run_research_skill,
     "brief": _run_brief_skill,
+    "review": _run_review_skill,
     "audit": _run_audit_skill,
 }
 
@@ -3202,6 +3740,10 @@ def run_research_turn(
                 "gather": "active_research",
                 "synthesize": "active_research",
                 "brief": "drafting",
+                # The Closing review's revise chip (T9): the failing
+                # sections rerun through the drafting skill, the review
+                # then facing the reassembled document again.
+                "revise": "drafting",
                 "audit": "evidence_audit",
                 "skip": "research_exploration",
                 "guide": "research_exploration",
@@ -3381,11 +3923,17 @@ def _journey_fallback(state: dict, turn: ResearchTurn, resolved):
                 blocks = [{"type": "note", "text": narration}] + blocks
         return blocks
     blocks = _brief(turn, state)
-    if blocks and any(b["type"] == "paragraph" for b in blocks):
+    wrote_paragraphs = any(b["type"] == "paragraph" for b in blocks)
+    document = state.get("brief_document") or {}
+    if wrote_paragraphs:
         narration = narrate(
             state, _narration_facts(state, "brief", [], []), budget=turn.budget
         )
         if narration:
             blocks = [{"type": "note", "text": narration}] + blocks
         advance_stage(state, "drafting")
+        # The ladder's Brief faces the Closing review like any other
+        # (T9) — a completed assembly, all-gap ones included.
+        if document.get("complete"):
+            blocks = blocks + run_closing_review(turn, state)
     return blocks

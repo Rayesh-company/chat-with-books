@@ -107,6 +107,15 @@ def section_reply(index, passage, extra=()):
 
 NARRATION = composer_reply("نقشۀ پژوهش به خلاصه رسید.")
 
+# The Closing review's judgment reply (T9): the ONE call that closes a
+# completed assembly — the review's verdict on the finished document.
+JUDGMENT = composer_reply(
+    json.dumps(
+        {"verdict": "delivers", "reason": "سند مقصد را می‌رساند."},
+        ensure_ascii=False,
+    )
+)
+
 
 # --- acceptance derives the contracts ---------------------------------------
 
@@ -199,15 +208,16 @@ def test_the_brief_writes_section_by_section_against_the_contracts(tmp_path):
             section_reply(0, SENTENCE),
             section_reply(1, OTHER_SENTENCE),
             NARRATION,
+            JUDGMENT,
         ]
     )
     session = make_session(tmp_path, state=state)
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)
     assert turn.state == "done"
     bodies = composer_bodies(upstream)
-    # The classify, ONE bounded writer op per section, the narrator —
-    # the one-shot Brief call is gone.
-    assert len(bodies) == 4
+    # The classify, ONE bounded writer op per section, the narrator,
+    # and the ONE judgment call (T9) — the one-shot Brief call is gone.
+    assert len(bodies) == 5
     first = bodies[1]["messages"][0]["content"]
     assert "شهود و ساحت" in first
     # The contract rides the prompt: the assigned question resolved by
@@ -243,6 +253,7 @@ def test_the_writer_never_supplies_the_headings(tmp_path):
             ),
             section_reply(1, OTHER_SENTENCE),
             NARRATION,
+            JUDGMENT,
         ]
     )
     session = make_session(tmp_path, state=state)
@@ -267,13 +278,14 @@ def test_a_contract_miss_retries_once_then_falls_back_honestly(tmp_path):
             section_reply(1, OTHER_SENTENCE),  # the one retry misses too
             section_reply(1, OTHER_SENTENCE),  # c2 needs e2 — carried
             NARRATION,
+            JUDGMENT,
         ]
     )
     session = make_session(tmp_path, state=state)
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)
     assert turn.state == "done"
     bodies = composer_bodies(upstream)
-    assert len(bodies) == 5
+    assert len(bodies) == 6
     # Exactly one retry, and it rides the SAME brief.
     assert bodies[1]["messages"][0]["content"] == bodies[2]["messages"][0]["content"]
     reply = turn.result["reply"]
@@ -323,12 +335,13 @@ def test_an_unguardable_section_falls_back_after_the_same_one_retry(tmp_path):
             composer_reply("این اصلاً JSON نیست."),
             section_reply(1, OTHER_SENTENCE),
             NARRATION,
+            JUDGMENT,
         ]
     )
     session = make_session(tmp_path, state=state)
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)
     assert turn.state == "done"
-    assert len(composer_bodies(upstream)) == 5
+    assert len(composer_bodies(upstream)) == 6
     reply = turn.result["reply"]
     assert [b["text"] for b in reply if b["type"] == "heading"] == [
         "شهود و ساحت",

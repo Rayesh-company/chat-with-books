@@ -232,6 +232,13 @@ def test_the_brief_prompt_carries_the_whole_ledger(tmp_path):
             classify_reply("drafting"),
             composer_reply(json.dumps(guarded_blocks(pool), ensure_ascii=False)),
             composer_reply("روایت کوتاه."),
+            # The Closing review's judgment (T9).
+            composer_reply(
+                json.dumps(
+                    {"verdict": "delivers", "reason": "سند می‌رساند."},
+                    ensure_ascii=False,
+                )
+            ),
         ]
     )
     session = make_session(tmp_path, state=state)

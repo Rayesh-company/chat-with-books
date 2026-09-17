@@ -688,6 +688,14 @@ def test_a_brief_turn_refuses_without_claims_and_writes_from_state(tmp_path):
             classify_reply("drafting"),
             composer_reply(json.dumps(guarded_blocks(pool), ensure_ascii=False)),
             composer_reply("روایت کوتاه."),
+            # The Closing review's judgment (T9): the finished Brief is
+            # reviewed in the same turn.
+            composer_reply(
+                json.dumps(
+                    {"verdict": "delivers", "reason": "سند می‌رساند."},
+                    ensure_ascii=False,
+                )
+            ),
         ]
     )
     session = make_session(tmp_path, state=state)

@@ -250,7 +250,10 @@ def test_context_records_the_approved_persian_display_names():
         "research_exploration": "راهنما",
         "active_research": "جست‌وجوگر",
         "drafting": "نویسنده",
-        "evidence_audit": "بازبین",
+        # The Closing review owns بازبین (T9, the ticket's approved
+        # name); the claim-ledger audit is named for its own ledger.
+        "closing_review": "بازبین",
+        "evidence_audit": "بازبینِ دفتر ادعاها",
     }
     assert {row["name"] for row in research.SKILL_TABLE} == set(expected)
     for row in research.SKILL_TABLE:
@@ -302,3 +305,36 @@ def test_context_glossary_holds_the_section_contract():
         "which claims (by identity) it must carry, which question it "
         "answers, and which scope lines it must not cross" in text
     )
+
+
+def test_readme_and_architecture_lock_the_closing_review():
+    # T9 (GitLab #10): the finished Brief faces the Closing review
+    # before it is done — code traceability first, then the ONE
+    # destination-judgment call; the verdict lands with accept/revise
+    # chips and revise reruns only the failing sections.
+    readme = research_section()
+    assert "Closing review" in readme
+    assert "destination-judgment" in readme
+    assert "accept/revise chips" in readme
+    assert "ONLY the flagged sections" in readme
+    assert "بازنویسی بخش‌های ناکام خلاصه" in readme
+    assert "`unjudged`" in readme
+    section = ARCHITECTURE.read_text(encoding="utf-8").split(
+        "## 8. Research Mode", 1
+    )[1].split("\n## 9.", 1)[0]
+    assert "Closing review" in section
+    assert "destination-judgment call" in section
+    assert "brief_document" in section
+    assert "closing_review ledger" in section
+    assert "closing_review" in section.split("intent ∈ {", 1)[1].split("}", 1)[0]
+
+
+def test_context_names_the_closing_review_and_the_audit():
+    # The naming table: the Closing review owns بازبین (the ticket's
+    # approved name); the claim-ledger audit is named for its own
+    # ledger so the router prompt never lists two skills of one name.
+    text = CONTEXT.read_text(encoding="utf-8")
+    assert "| Closing review | بازبین |" in text
+    assert "| claim-ledger audit (evidence_audit) | بازبینِ دفتر ادعاها |" in text
+    assert "بازنویسی بخش‌های ناکام خلاصه" in text
+    assert "the closing review's revise (T9)" in text

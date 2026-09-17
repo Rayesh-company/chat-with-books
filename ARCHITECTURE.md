@@ -378,13 +378,13 @@ Browser ── POST /research/message {text, question?, sources?, session_id?}
                    refresh reconnects via /research/turn)
 
 TURN LIFECYCLE (progress events in Farsi, polled every 2s):
-  classifying ──▶ [route by intent] ──▶ planning/searching/writing ──▶ done
+  classifying ──▶ [route by intent] ──▶ planning/searching/writing/reviewing ──▶ done
                                                                        │ or failed
   ONE classify call (glm-5.3-flash, thinking ON) reads the message +
   the compact research state + the last 6 turns → intent ∈ {casual,
   concept_learning, source_lookup, research_exploration, active_research,
-  drafting, evidence_audit}. A malformed reply degrades to the
-  conversational path — never crashes.
+  drafting, closing_review, evidence_audit}. A malformed reply degrades
+  to the conversational path — never crashes.
 
   CONVERSATION LAYER (casual/learning/lookup):
     ONE searcher over the message + ONE guarded writer pass over its pool;
@@ -422,11 +422,14 @@ TURN LIFECYCLE (progress events in Farsi, polled every 2s):
       («می‌پذیرم» / «رد می‌کنم») with the proposal text in the note
       above.
 
-  RESEARCH STATE LAYER (exploration/active/drafting/audit):
+  RESEARCH STATE LAYER (exploration/active/drafting/review/audit):
     a persistent state: versioned research question, scope, named open
     questions, evidence ledger, claim ledger, gaps, decisions, stage,
     map (destination/fog/out-of-scope), grilling, phase, proposals, the
-    versioned Brief plan, the accepted plan's section contracts.
+    versioned Brief plan, the accepted plan's section contracts, the
+    standing Brief document (brief_document: one entry per assembled
+    section — title, guarded paragraphs, honest-gap flag, completeness),
+    and the versioned Closing review ledger.
     • Checkpoint rule: an RQ or scope change proposed by the classifier
       NEVER applies itself — it lands as a pending proposal resolved via
       POST /research/decide («می‌پذیرم» / «رد می‌کنم» chips); an accepted
@@ -472,7 +475,30 @@ TURN LIFECYCLE (progress events in Farsi, polled every 2s):
                    the chain with the partial Brief standing; refuses
                    without recorded claims first, without an accepted
                    plan second.
-        audit ── pure code: the claim ledger re-reported, no LLM call.
+        review ── the Closing review (T9, GitLab #10) faces the finished
+                   Brief BEFORE it is done, two axes in order: pure-code
+                   traceability first (every section of the standing
+                   document carries its contract's pinned claims by
+                   quoted evidence, no scope line crossed in the
+                   section's own words, an honest gap read as starvation
+                   not failure), then the ONE destination-judgment call.
+                   The verdict lands in the same reply with the
+                   accept/revise chips: accept marks the Brief reviewed
+                   via /research/decide; the revise chip
+                   («بازنویسی بخش‌های ناکام خلاصه») SENDS its command and
+                   reruns ONLY the flagged sections — the passing
+                   sections keep their paragraphs — and the review then
+                   faces the reassembled document again, the fresh
+                   verdict superseding the parked one. The result joins
+                   the state's versioned closing_review ledger. A
+                   judgment the budget refuses or that answers unusably
+                   lands `unjudged` with a diagnosis — the code findings
+                   and the chips stand alone; a judgment that fails the
+                   destination with no flagged section flags every
+                   written section, so the revise set is always explicit.
+        audit ── pure code: the claim ledger re-reported, no LLM call —
+                   it inspects the claim ledger, not the Brief (that is
+                   the review's work).
     • Every reply stating a Book fact runs the SAME verbatim guard as
       phases 2/3; the closing «منابع» references list is built
       SERVER-SIDE from the passages actually quoted — never the model's

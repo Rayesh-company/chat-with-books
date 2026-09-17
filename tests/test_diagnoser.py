@@ -383,6 +383,13 @@ def test_a_starved_session_reaches_the_brief_through_the_escape(tmp_path):
             classify_reply("drafting"),
             guarded_writer(),
             composer_reply("روایت کوتاه."),
+            # The Closing review's judgment (T9).
+            composer_reply(
+                json.dumps(
+                    {"verdict": "delivers", "reason": "سند می‌رساند."},
+                    ensure_ascii=False,
+                )
+            ),
         ]
     )
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)
