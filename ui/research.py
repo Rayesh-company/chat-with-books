@@ -60,10 +60,12 @@ try:
     from ui.dive import (
         BOOK_DATASETS,
         DIVE_MAX_SUB_QUESTIONS,
+        DIVE_STARVED_PASSAGES,
         ToolError,
         dive_recall,
         dive_retrieve,
         graph_hop,
+        run_tool,
     )
     from ui.guard import (
         _count_word,
@@ -80,10 +82,12 @@ except ImportError:  # the container runs serve.py as a script beside the module
     from dive import (
         BOOK_DATASETS,
         DIVE_MAX_SUB_QUESTIONS,
+        DIVE_STARVED_PASSAGES,
         ToolError,
         dive_recall,
         dive_retrieve,
         graph_hop,
+        run_tool,
     )
     from guard import (
         _count_word,
@@ -142,6 +146,11 @@ COMMAND_REVISE = "بازنویسی بخش‌های ناکام خلاصه"
 # decision, never applying one. Resolved server-side like every fixed
 # command, no classification luck.
 COMMAND_KEEP_MAP = "نقشه را مرتب کن"
+# The fog probe's chip (T13, ADR-0012): one tap sends کاوشگر at the
+# oldest fog note still without a verdict — the map grows on evidence,
+# not vibes. Resolved server-side like every fixed command, no
+# classification luck.
+COMMAND_PROBE_FOG = "مه را کاوش کن"
 # A per-question gather chip: «شواهدِ «نام» را پیدا کن» targets exactly
 # that named open question — the deterministic frontier move.
 TARGETED_GATHER_RE = re.compile(r"^شواهدِ «(.+)» را پیدا کن$")
@@ -192,6 +201,7 @@ RESEARCH_INTENTS = (
     "drafting",
     "closing_review",
     "evidence_audit",
+    "fog_probe",
     "map_keeper",
 )
 
@@ -354,6 +364,19 @@ SKILL_TABLE = (
         "tools": (),
         "state_reads": ("claims", "gaps"),
         "state_writes": (),
+        "guarded": False,
+    },
+    {
+        "name": "fog_probe",
+        "display_name": "کاوشگر",
+        "purpose": "probe one fog note with one bounded search — graduate it on evidence, predict its Gap early, refuse the out-of-scope",
+        "kind": "work",
+        "runner": "fog_probe",
+        "allowed_stages": None,
+        "caps": "one hybrid search per probe, no re-search round, no graph hop; the scope/stale vetoes are pure code and free",
+        "tools": ("hybrid",),
+        "state_reads": ("map", "scope", "subquestions", "evidence"),
+        "state_writes": ("map", "subquestions", "evidence", "diagnoses"),
         "guarded": False,
     },
     {
@@ -596,6 +619,10 @@ RESEARCH_MAP_DECIDED_NOTE = (
     "این پاک‌سازی پیش‌تر پیشنهاد شد و تصمیمش ثبت است؛ چیزی تازه برای "
     "پاک‌سازی نیست."
 )
+# The fog probe's honest landing when the map holds no note left to
+# probe (T13): every note carries its verdict already, or the fog is
+# empty — either way the turn costs one honest note and no search.
+RESEARCH_PROBE_NO_FOG_DETAIL = "مه‌ای برای کاوش روی نقشه نیست."
 
 _FARSI_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 
@@ -1271,6 +1298,15 @@ def research_suggestions(state: dict) -> list:
             suggestions.append({"kind": "move", "id": "brief", "text": COMMAND_BRIEF})
         if stalled:
             suggestions.append({"kind": "move", "id": "stop", "text": COMMAND_STOP})
+    # The fog probe's chip (T13): one tap sends کاوشگر at the oldest
+    # fog note still without a verdict — the map grows on evidence, not
+    # vibes. A note the probe already judged is never probed twice (the
+    # Books are fixed in a session), so a fully probed fog offers no
+    # chip at all.
+    if _next_fog_to_probe(state) is not None:
+        suggestions.append(
+            {"kind": "move", "id": "fog_probe", "text": COMMAND_PROBE_FOG}
+        )
     # The map-keeper's chip (T12): one tap summons the survey when the
     # map holds something to clean — never while a cleanup waits or its
     # cooldown runs. The survey is pure code and mutates nothing; a
@@ -1314,6 +1350,8 @@ def resolve_command(message: str):
         return "revise", None
     if stripped == COMMAND_KEEP_MAP:
         return "map_keeper", None
+    if stripped == COMMAND_PROBE_FOG:
+        return "fog_probe", None
     match = TARGETED_GATHER_RE.match(stripped)
     if match:
         return "gather", match.group(1).strip()
@@ -1386,7 +1424,8 @@ def build_classify_prompt(message: str, state: dict, tail: str) -> str:
         f"exactly: \"{COMMAND_GATHER}\" -> active_research; "
         f"\"{COMMAND_SYNTHESIZE}\" -> active_research; "
         f"\"{COMMAND_BRIEF}\" -> drafting; \"{COMMAND_AUDIT}\" -> "
-        f"evidence_audit; \"{COMMAND_KEEP_MAP}\" -> map_keeper.\n\n"
+        f"evidence_audit; \"{COMMAND_KEEP_MAP}\" -> map_keeper; "
+        f"\"{COMMAND_PROBE_FOG}\" -> fog_probe.\n\n"
         "Also propose, ONLY when the message gives real cause (empty or "
         "empty list otherwise). The map-mode rule: rq_proposal, "
         "scope_in/scope_out, and brief_plan are CHART edits — propose "
@@ -3173,6 +3212,164 @@ def _apply_map_cleanup(state: dict, proposal: dict) -> str:
     return "نقشه پالایش شد: " + "؛ ".join(parts) + "."
 
 
+# --- the fog probe (T13, ADR-0012) -------------------------------------------
+
+
+def _next_fog_to_probe(state: dict):
+    """The note the probe works: the OLDEST fog note still without a
+    verdict — the fog's own frontier, the same oldest-first rule the
+    open questions' frontier reads. A probed note keeps its verdict:
+    the Books are fixed within a session, so a starved or out-of-scope
+    note is never probed twice."""
+    for note in state.get("map", {}).get("fog", []):
+        if isinstance(note, dict) and note.get("text") and not note.get("probe"):
+            return note
+    return None
+
+
+def fog_probe_specifiable(state: dict, note: dict) -> tuple:
+    """The probe's pure-code veto (T13): (specifiable, reason). A fog
+    note the operator's own scope ledger has ruled out never graduates —
+    the scope line's opening anchor rides inside the note's text, the
+    same anchor rule the graduation reads — and a note whose anchor an
+    existing open question already took is stale: its topic is asked
+    already (the map keeper's stale-fog rule), nothing new to specify.
+    Both are not specifiable, and neither spends a search."""
+    text_norm = normalize_for_match(note.get("text", ""))
+    if not text_norm:
+        return False, "out_of_scope"
+    for line in state.get("scope", {}).get("out", []):
+        line_norm = normalize_for_match(line)
+        if line_norm and _fog_anchor_taken(line_norm, text_norm):
+            return False, "out_of_scope"
+    for item in state.get("subquestions", []):
+        if not isinstance(item, dict):
+            continue
+        if _fog_anchor_taken(
+            text_norm, normalize_for_match(item.get("text", ""))
+        ):
+            return False, "already_asked"
+    return True, ""
+
+
+def _probe_fog(state: dict, turn: ResearchTurn, note: dict) -> list:
+    """The fog probe (T13, ADR-0012's کاوشگر): ONE bounded search over
+    ONE fog note reports whether the topic is fertile, real but
+    starved, or not specifiable — and the verdict rides the note in the
+    state, so the map grows on evidence, not vibes.
+
+    fertile — the search pooled at least the kernel's own starvation
+    bar (DIVE_STARVED_PASSAGES, the gather's per-question measure): the
+    note graduates into a NAMED pending open question on that evidence,
+    through the gather's own graduation rule (the question's anchor
+    retires the note it took over), and the pooled passages join the
+    ledger — the next gather feeds the new question.
+
+    real but starved — specifiable, in scope, but the Books pooled
+    under the bar: the Diagnoser predicts the Gap EARLY (the recorded
+    diagnosis rides the map's تشخیص‌ها row) instead of letting a full
+    gather discover it later; the few passages found still merge, and
+    the formal gap stays the full gather's honest outcome to declare.
+
+    not specifiable — out of scope by the operator's own chart, or
+    stale (a question already took the topic): NEVER graduates, and the
+    veto is pure code, so not even one search is spent.
+
+    The one search is pre-paid from the turn's budget like every
+    bounded step (T3): the budget refuses, the turn stops honestly at
+    that boundary with the note unmarked and no verdict faked."""
+    text = note.get("text", "")
+    specifiable, reason = fog_probe_specifiable(state, note)
+    if not specifiable:
+        note["probe"] = {
+            "verdict": "not_specifiable",
+            "reason": reason,
+            "turn": state.get("turns", 0),
+        }
+        if reason == "out_of_scope":
+            detail = (
+                f"کاوشگر: «{text}» بیرون از دامنۀ پژوهش است و هرگز به "
+                "پرسش باز تبدیل نمی‌شود."
+            )
+        else:
+            detail = (
+                f"کاوشگر: موضوع «{text}» پیش‌تر در پرسش‌های باز هست؛ به "
+                "پرسش تازه تبدیل نمی‌شود."
+            )
+        return [{"type": "note", "text": detail}]
+    turn.budget.require(1)  # the one bounded search
+    _turn_write(turn, "searching", RESEARCH_EVENT_SEARCHING)
+    try:
+        result = run_tool("hybrid", text, state.get("datasets"), cancel=turn.cancel)
+    except ToolError as error:
+        record_failure(state, "wrong_tool", f"fog probe refused: {error}")
+        return [
+            {
+                "type": "note",
+                "text": (
+                    "کاوشگر: جست‌وجو با این پرسش سازگار نبود؛ مه سر جای "
+                    "خود ماند."
+                ),
+            }
+        ]
+    if turn.cancel.is_set():
+        return []
+    passages = result["passages"]
+    added = _merge_evidence(state, passages, text)
+    if len(passages) >= DIVE_STARVED_PASSAGES:
+        note["probe"] = {
+            "verdict": "fertile",
+            "passages": len(passages),
+            "turn": state.get("turns", 0),
+        }
+        if _add_open_question(state, text):
+            _graduate_fog(state, text)
+            return [
+                {
+                    "type": "note",
+                    "text": (
+                        f"کاوشگر: مهِ «{text}» پربار بود "
+                        f"({_farsi_digits(added)} نقل‌قول تازه) و به پرسش "
+                        f"باز «{_short_name(text)}» تبدیل شد؛ شواهدِ آن "
+                        "در دفتر ثبت است."
+                    ),
+                }
+            ]
+        # The question's landing was refused (deduped or the list's
+        # cap): the verdict still stands, the note keeps its place,
+        # and the reply says so — never a silent half-graduation.
+        return [
+            {
+                "type": "note",
+                "text": (
+                    f"کاوشگر: مهِ «{text}» پربار بود، اما پرسش تازه‌ای "
+                    "روی نقشه جا نشد؛ مه سر جای خود ماند."
+                ),
+            }
+        ]
+    record_failure(
+        state,
+        "starved_corpus",
+        f"fog probe starved: {len(passages)} passages for «{text}»",
+    )
+    note["probe"] = {
+        "verdict": "starved",
+        "passages": len(passages),
+        "turn": state.get("turns", 0),
+    }
+    return [
+        {
+            "type": "note",
+            "text": (
+                f"کاوشگر: برای «{text}» شواهد کافی پیدا نشد "
+                f"({_farsi_digits(added)} نقل‌قول). تشخیص‌گر پیش‌بینی "
+                "می‌کند این پرسش به شکاف برسد؛ جمع‌آوری کامل همان را "
+                "رسمی می‌کند."
+            ),
+        }
+    ]
+
+
 def _gather(state: dict, turn: ResearchTurn, target: str = None) -> list:
     """The evidence-gathering operation: run the dive's bounded fan-out
     over the frontier — the targeted open question when a chip named
@@ -4121,6 +4318,21 @@ def _run_map_keeper_skill(turn, state, classified, message, resolved, intent):
     return [{"type": "note", "text": note}], None, ""
 
 
+def _run_fog_probe_skill(turn, state, classified, message, resolved, intent):
+    """The fog probe (T13, ADR-0012's کاوشگر): a work skill that never
+    asks and never moves a stage. The chip resolves it server-side (no
+    classification luck) and the router can pick it too; either way the
+    probe works the OLDEST fog note still without a verdict. Nothing to
+    probe: the honest note, zero searches — never a fake verdict."""
+    _apply_classify_updates(state, classified)
+    _fold_grilling_answer(state, classified, message, bool(resolved))
+    _tick_cooldowns(state)
+    note = _next_fog_to_probe(state)
+    if note is None:
+        return [{"type": "note", "text": RESEARCH_PROBE_NO_FOG_DETAIL}], None, ""
+    return _probe_fog(state, turn, note), None, ""
+
+
 SKILL_RUNNERS = {
     "chat": _run_chat_skill,
     "research": _run_research_skill,
@@ -4128,6 +4340,7 @@ SKILL_RUNNERS = {
     "review": _run_review_skill,
     "audit": _run_audit_skill,
     "map_keeper": _run_map_keeper_skill,
+    "fog_probe": _run_fog_probe_skill,
 }
 
 
@@ -4199,6 +4412,7 @@ def run_research_turn(
                 "guide": "research_exploration",
                 "stop": "research_exploration",
                 "map_keeper": "map_keeper",
+                "fog_probe": "fog_probe",
             }[resolved[0]]
         # The code disposes (ADR-0012): the picked row is validated
         # against the state — a rejected pick is a recorded diagnosis

@@ -85,7 +85,7 @@ The journey's two modes (ADR-0011): chart edits (question/scope proposals) land 
 _Avoid_: approval loop, planning phase
 
 **Fog**:
-A question the investigation can see coming but cannot yet state sharply enough to ask (هنوز نامشخص); it graduates into an open question when the journey makes it specifiable. Out-of-scope items never graduate.
+A question the investigation can see coming but cannot yet state sharply enough to ask (هنوز نامشخص); it graduates into an open question when the journey makes it specifiable — and the fog probe (کاوشگر) makes that graduation earn itself: one bounded search over the oldest unprobed note graduates it on evidence, predicts its Gap early when the Books starve it, and refuses the out-of-scope. Out-of-scope items never graduate.
 _Avoid_: backlog, TODO, open item
 
 **Claim ledger**:
@@ -158,7 +158,7 @@ The approved plain-Persian naming table (ADR-0012): the single source every Rese
 
 **Journey stages**: نام‌گذاری مقصد، نقشه‌برداری، گردآوری شواهد، تحلیل و جمع‌بندی، نوشتن خلاصه.
 
-**Fixed chips and texts**: gather «شواهد بیشتری از کتاب‌ها پیدا کن» · gather-all «همهٔ پرسش‌های باز را جست‌وجو کن» · synthesize «شواهد را تحلیل و جمع‌بندی کن» · brief «خلاصۀ پژوهش را بنویس» · audit «ادعاها و استنادها را بازبینی کن» · guide «ادامهٔ سفر پژوهش» · skip «فعلاً همین کافی است؛ ادامه بده» · stop «توقف پژوهش» · accept/reject «می‌پذیرم» / «رد می‌کنم» · the diagnoser's adjustment menu (T6) «پرسش را محدودتر کن» / «با روش دیگری جست‌وجو کن» / «همین را شکاف اعلام کن» · the closing review's revise (T9) «بازنویسی بخش‌های ناکام خلاصه» · the map keeper's survey (T12) «نقشه را مرتب کن».
+**Fixed chips and texts**: gather «شواهد بیشتری از کتاب‌ها پیدا کن» · gather-all «همهٔ پرسش‌های باز را جست‌وجو کن» · synthesize «شواهد را تحلیل و جمع‌بندی کن» · brief «خلاصۀ پژوهش را بنویس» · audit «ادعاها و استنادها را بازبینی کن» · guide «ادامهٔ سفر پژوهش» · skip «فعلاً همین کافی است؛ ادامه بده» · stop «توقف پژوهش» · accept/reject «می‌پذیرم» / «رد می‌کنم» · the diagnoser's adjustment menu (T6) «پرسش را محدودتر کن» / «با روش دیگری جست‌وجو کن» / «همین را شکاف اعلام کن» · the closing review's revise (T9) «بازنویسی بخش‌های ناکام خلاصه» · the map keeper's survey (T12) «نقشه را مرتب کن» · the fog probe (T13) «مه را کاوش کن».
 
 **Map rows**: مقصد، پرسش پژوهش، در حال پرداختن (the frontier)، پرسش‌های باز، تصمیم‌ها، تشخیص‌ها (the diagnoser's named causes)، هنوز نامشخص (the fog)، خارج از دامنه، شمارش.
 

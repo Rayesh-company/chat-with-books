@@ -383,8 +383,8 @@ TURN LIFECYCLE (progress events in Farsi, polled every 2s):
   ONE classify call (glm-5.3-flash, thinking ON) reads the message +
   the compact research state + the last 6 turns → intent ∈ {casual,
   concept_learning, source_lookup, research_exploration, active_research,
-  drafting, closing_review, evidence_audit, map_keeper}. A malformed
-  reply degrades to the conversational path — never crashes.
+  drafting, closing_review, evidence_audit, map_keeper, fog_probe}. A
+  malformed reply degrades to the conversational path — never crashes.
 
   CONVERSATION LAYER (casual/learning/lookup):
     ONE searcher over the message + ONE guarded writer pass over its pool;
@@ -508,6 +508,25 @@ TURN LIFECYCLE (progress events in Farsi, polled every 2s):
                    proposal names every row, the acceptance applies
                    exactly the named rows, and nothing is deleted
                    silently or without the operator's decision.
+        fog_probe ── the fog probe (T13, GitLab #14, کاوشگر): ONE
+                   bounded hybrid search over the OLDEST fog note still
+                   without a verdict — pre-paid from the turn's budget —
+                   so the map grows on evidence, not vibes. The
+                   specifiability vetoes are pure code and free: a note
+                   the operator's scope ledger ruled out, or one whose
+                   topic an open question already took (the graduation's
+                   own anchor rule), is NOT SPECIFIABLE — it never
+                   graduates and never spends a search. Fertile (pooled
+                   at least the kernel's starvation bar) graduates the
+                   note into a NAMED pending open question on that
+                   evidence, its passages joining the ledger; real but
+                   starved records the Diagnoser's EARLY Gap prediction
+                   (the map's تشخیص‌ها row) instead of letting a full
+                   gather discover the starvation later — the formal gap
+                   stays the full gather's honest outcome to declare.
+                   The verdict rides the note in the state; a probed
+                   note is never probed twice, and a fully probed fog
+                   offers no probe chip at all.
     • STATE CAPS (T12, GitLab #13): the working ledgers — evidence,
       claims, gaps, decisions — keep their NEWEST entries past hard
       caps (RESEARCH_MAX_EVIDENCE / RESEARCH_MAX_CLAIMS /

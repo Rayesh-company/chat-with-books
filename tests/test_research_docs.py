@@ -257,6 +257,9 @@ def test_context_records_the_approved_persian_display_names():
         # The map keeper (T12, GitLab #13): the survey that proposes the
         # map's cleanups as decisions.
         "map_keeper": "نقشه‌بان",
+        # The fog probe (T13, GitLab #14): the bounded search that makes
+        # a fog graduation earn itself.
+        "fog_probe": "کاوشگر",
     }
     assert {row["name"] for row in research.SKILL_TABLE} == set(expected)
     for row in research.SKILL_TABLE:
@@ -375,3 +378,35 @@ def test_context_names_the_state_caps_and_the_keeper_chip():
     assert "| map keeper | نقشه‌بان |" in text
     assert "نقشه را مرتب کن" in text
     assert "the map keeper's survey (T12)" in text
+
+
+def test_readme_and_architecture_lock_the_fog_probe():
+    # T13 (GitLab #14): the fog probe (کاوشگر) — one bounded search over
+    # the oldest unprobed fog note, graduation on evidence, the early
+    # Gap prediction, and the out-of-scope veto that never graduates.
+    readme = research_section()
+    assert "fog probe" in readme
+    assert "کاوشگر" in readme
+    assert "مه را کاوش کن" in readme
+    assert "Diagnoser's early Gap prediction" in readme
+    assert "out-of-scope items never graduate" in readme
+    section = ARCHITECTURE.read_text(encoding="utf-8").split(
+        "## 8. Research Mode", 1
+    )[1].split("\n## 9.", 1)[0]
+    assert "fog_probe" in section.split("intent ∈ {", 1)[1].split("}", 1)[0]
+    assert "fog_probe ──" in section
+    assert "NOT SPECIFIABLE" in section
+    assert "EARLY Gap prediction" in section
+
+
+def test_context_glossary_holds_the_fog_probe():
+    # T13 (GitLab #14): the vocabulary home extends the Fog entry with
+    # the probe and records the fixed chip beside the naming table's
+    # own row.
+    text = CONTEXT.read_text(encoding="utf-8")
+    assert "| fog probe | کاوشگر |" in text
+    assert "مه را کاوش کن" in text
+    assert "the fog probe (T13)" in text
+    assert (
+        "the fog probe (کاوشگر) makes that graduation earn itself" in text
+    )
