@@ -2657,10 +2657,13 @@ def run_research_turn(
         )
         if turn.cancel.is_set():
             return
-        if budget.reason is not None:
+        if budget.reason is not None or budget.expired():
             # The budget ran out mid-skill (a dive round was refused,
-            # the narrator unaffordable): the partial blocks stand and
-            # the honest stop note closes the reply.
+            # the narrator unaffordable) or the wall clock passed the
+            # deadline during the last bounded step: the partial blocks
+            # stand and the honest stop note closes the reply.
+            if budget.reason is None:
+                budget.reason = "deadline"
             _turn_write(turn, event=RESEARCH_EVENT_BUDGET)
             blocks = blocks + [
                 {"type": "note", "text": RESEARCH_BUDGET_STOP_DETAIL}
