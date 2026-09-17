@@ -104,8 +104,6 @@ try:
         RESEARCH_MAX_CONCURRENT,
         RESEARCH_MODEL,
         RESEARCH_NO_EVIDENCE_DETAIL,
-        RESEARCH_REGISTRY,
-        RESEARCH_REGISTRY_LOCK,
         RESEARCH_SESSION_CAP_DETAIL,
         RESEARCH_SESSION_CLOSED_DETAIL,
         RESEARCH_SESSION_NOT_FOUND_DETAIL,
@@ -123,6 +121,7 @@ try:
         compose_guarded_reply,
         decide_proposal,
         ensure_session,
+        find_turn,
         next_best_move,
         parse_classify_reply,
         plan_subquestions,
@@ -206,8 +205,6 @@ except ImportError:  # the container runs this file as a script beside the modul
         RESEARCH_MAX_CONCURRENT,
         RESEARCH_MODEL,
         RESEARCH_NO_EVIDENCE_DETAIL,
-        RESEARCH_REGISTRY,
-        RESEARCH_REGISTRY_LOCK,
         RESEARCH_SESSION_CAP_DETAIL,
         RESEARCH_SESSION_CLOSED_DETAIL,
         RESEARCH_SESSION_NOT_FOUND_DETAIL,
@@ -225,6 +222,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         compose_guarded_reply,
         decide_proposal,
         ensure_session,
+        find_turn,
         next_best_move,
         parse_classify_reply,
         plan_subquestions,
@@ -799,10 +797,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
         query = parse_qs(urlparse(self.path).query)
         turn_id = (query.get("turn") or [""])[0]
         payload = None
-        with RESEARCH_REGISTRY_LOCK:
-            turn = RESEARCH_REGISTRY.get(turn_id)
-            if turn is not None and turn.phone == phone:
-                payload = turn_status_payload(turn)
+        turn = find_turn(turn_id)
+        if turn is not None and turn.phone == phone:
+            payload = turn_status_payload(turn)
         if payload is None:
             self._json_error(404, RESEARCH_TURN_NOT_FOUND_DETAIL)
             return

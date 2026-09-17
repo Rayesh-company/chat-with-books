@@ -512,7 +512,12 @@ Why this shape:
 - **Turn registry, stdlib-only** (a dict + lock + threads — no broker, no new
   dependency). Caps: **1 in-flight turn per phone, 3 globally**; beyond that →
   429 with a friendly Farsi busy message, never queued. Soft session cap: at
-  40 turns every reply suggests writing the Brief — never a refusal.
+  40 turns every reply suggests writing the Brief — never a refusal. The
+  registry holds LIVE turns only (T11): a settled turn is reaped the moment
+  its worker exits, its outcome durable in the store and kept answerable for
+  the poll's delivery window by a bounded recent-settled ring. And the user's
+  message joins the persisted transcript only AFTER the session accepts the
+  turn — a busy 429 never leaves an orphaned, unanswered bubble.
 - **Every turn runs under a hard budget** (ADR-0012, T3): a wall-clock deadline
   (`RESEARCH_TURN_DEADLINE_SECONDS`, default 600s) plus an upstream-call cap
   (`RESEARCH_TURN_CALL_CAP`, 24 — above every legitimate single-operation turn,
@@ -534,7 +539,12 @@ Why this shape:
   container: the `session_quota` volume). A server restart empties only the
   in-flight-turn registry — a poll for a pre-restart turn answers 404 (the
   recorded failure surface) — while the session, state, and transcript reload
-  and the conversation continues.
+  and the conversation continues. Persistence writes serialize per session
+  (T11): state rows are versioned, the decide flow's whole
+  read-modify-write runs under the session's write lock, and a worker's
+  settle save written from an older snapshot is MERGED with the decisions
+  recorded mid-turn — a decision accepted while the engine works is never
+  clobbered, and a stale snapshot never un-closes an aborted session.
 - **A new ask aborts** that phone's in-flight turn (cooperative cancel at the
   next stage boundary) and closes its session; a later message to a closed
   session answers the Farsi closed detail.

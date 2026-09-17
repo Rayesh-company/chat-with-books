@@ -187,14 +187,20 @@ def wait_turn_done(turn_id, timeout=15):
 
     Every test that starts a turn must end here (or abort the turn)
     before stop_gate: a worker still running past the patch restore
-    would call the real urlopen."""
+    would call the real urlopen. The lookup goes through the engine's
+    own (find_turn) — a settled turn is reaped from the registry (T11)
+    but stays answerable through the recent-settled ring."""
     deadline = time.monotonic() + timeout
-    turn = research.RESEARCH_REGISTRY[turn_id]
     while time.monotonic() < deadline:
-        if turn.state in research.TURN_TERMINAL_STATES and turn.done.is_set():
+        turn = research.find_turn(turn_id)
+        if (
+            turn is not None
+            and turn.state in research.TURN_TERMINAL_STATES
+            and turn.done.is_set()
+        ):
             return turn
         time.sleep(0.02)
-    raise AssertionError(f"research turn {turn_id} never settled: state={turn.state}")
+    raise AssertionError(f"research turn {turn_id} never settled")
 
 
 class GateServer(ThreadingHTTPServer):

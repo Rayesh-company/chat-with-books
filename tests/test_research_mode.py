@@ -471,6 +471,10 @@ def test_the_store_round_trips_a_session_and_its_transcript(tmp_path):
     session, _ = research.ensure_session(
         PHONE, None, "پیام", "پرسش؟", []
     )
+    # The message is not persisted by ensure_session (T11): preparing a
+    # session admits nothing — the accepted turn appends the message to
+    # the transcript, the same append any admission rides.
+    research_store.append_message(session["id"], "user", "پیام")
     state = session["state"]
     state["evidence"] = [
         {"id": "e1", "reference": "r", "passage": SENTENCE, "found_for": "پرسش؟"}

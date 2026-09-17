@@ -23,8 +23,8 @@ The fakes live in tests/upstream_fakes.py — the harness's canonical
 home, outside every test module (tests/helpers.py's rule)."""
 
 import json
-
-import pytest
+import os
+import threading
 
 from tests.conftest import REPO_ROOT
 
@@ -278,33 +278,11 @@ def test_the_all_starved_stall_offers_the_escape():
 # --- the decide-vs-worker race (audit 3) -------------------------------------
 
 
-def test_a_worker_save_clobbers_a_concurrent_decision(tmp_path):
-    # [T11 #12: serialization] The worker saves its WHOLE in-memory
-    # state at turn end; a decide that landed mid-turn is overwritten
-    # by the stale snapshot — the accepted decision is lost and the
-    # proposal resurrected.
-    research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
-    session = make_session(tmp_path)
-    state = parked_proposal_state()
-    session["state"] = state
-    research_store.save_session(session["id"], state)
-    worker_snapshot = research_store.load_session(session["id"])["state"]
-    proposal_id = worker_snapshot["pending_proposals"][0]["id"]
-    result, error = research.decide_proposal(
-        PHONE, session["id"], proposal_id, True
-    )
-    assert error is None
-    research_store.save_session(session["id"], worker_snapshot)  # the end-of-turn save
-    loaded = research_store.load_session(session["id"])
-    # The decision is gone — the question reverted, the proposal back.
-    assert loaded["state"]["research_question"]["current"] == "پرسش پژوهش؟"
-    assert loaded["state"]["pending_proposals"]
-
-
-@pytest.mark.xfail(
-    reason="serialization arrives with ticket #12 (T11)", strict=True
-)
 def test_a_decision_survives_a_concurrent_worker_save(tmp_path):
+    # [T11 #12: fulfilled — the store's stale-write merge] The worker's
+    # settle save is version-checked: written from an older snapshot
+    # than the row, the decisions recorded since its base are folded
+    # back in — the accepted decision is kept, the proposal stays gone.
     research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
     session = make_session(tmp_path)
     state = parked_proposal_state()
@@ -322,24 +300,151 @@ def test_a_decision_survives_a_concurrent_worker_save(tmp_path):
     assert loaded["state"]["pending_proposals"] == []
 
 
+def test_a_stale_settle_save_keeps_the_turns_work_and_the_decision(tmp_path):
+    # [T11 #12: fulfilled — both sides of the race] The fold replays the
+    # decision ONTO the worker's snapshot, so the merge keeps the turn's
+    # own work (its pool, absent from every decide write) as well.
+    research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
+    session = make_session(tmp_path)
+    state = parked_proposal_state()
+    session["state"] = state
+    research_store.save_session(session["id"], state)
+    worker_snapshot = research_store.load_session(session["id"])["state"]
+    worker_snapshot["evidence"] = [
+        {"id": "e1", "reference": "r", "passage": SENTENCE}
+    ]
+    proposal_id = worker_snapshot["pending_proposals"][0]["id"]
+    result, error = research.decide_proposal(
+        PHONE, session["id"], proposal_id, True
+    )
+    assert error is None
+    research_store.save_session(session["id"], worker_snapshot)
+    loaded = research_store.load_session(session["id"])
+    assert [item["id"] for item in loaded["state"]["evidence"]] == ["e1"]
+    assert loaded["state"]["research_question"]["current"] == "پرسش دقیق‌تر؟"
+    assert loaded["state"]["pending_proposals"] == []
+
+
+def test_a_decision_after_the_settle_loads_the_turns_work(tmp_path):
+    # [T11 #12: the other order, serialized by the same write lock] The
+    # settle save lands first; the decide's read-modify-write then loads
+    # FRESH — the turn's work in hand — and applies on top. Nothing is
+    # lost either way.
+    research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
+    session = make_session(tmp_path)
+    state = parked_proposal_state()
+    session["state"] = state
+    research_store.save_session(session["id"], state)
+    worker_snapshot = research_store.load_session(session["id"])["state"]
+    worker_snapshot["evidence"] = [
+        {"id": "e1", "reference": "r", "passage": SENTENCE}
+    ]
+    research_store.save_session(session["id"], worker_snapshot)
+    proposal_id = worker_snapshot["pending_proposals"][0]["id"]
+    result, error = research.decide_proposal(
+        PHONE, session["id"], proposal_id, True
+    )
+    assert error is None
+    loaded = research_store.load_session(session["id"])
+    assert [item["id"] for item in loaded["state"]["evidence"]] == ["e1"]
+    assert loaded["state"]["research_question"]["current"] == "پرسش دقیق‌تر؟"
+    assert loaded["state"]["pending_proposals"] == []
+
+
+def test_a_decision_during_an_in_flight_turn_survives_the_settle(tmp_path):
+    # [T11 #12: the race, end to end] The gather blocks mid-search; the
+    # operator accepts the parked proposal while the turn runs; the
+    # settle save is stale and the store folds the decision into it —
+    # the pool AND the accepted question land in one record.
+    research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
+    state = parked_proposal_state()
+    session = make_session(tmp_path, state=state)
+    research_store.save_session(session["id"], state)
+    session = research_store.load_session(session["id"])
+    proposal_id = state["pending_proposals"][0]["id"]
+
+    searched = threading.Event()
+    release = threading.Event()
+
+    def gated_recall(payload):
+        searched.set()
+        assert release.wait(timeout=30)
+        return cognee_payload(
+            "پاسخ.\n\nEvidence:\n"
+            f"- chunk 1 of document tarhe-kolli (pages 10-12): \"{SENTENCE}\""
+        )
+
+    upstream = ResearchUpstream(
+        composer_replies=[
+            classify_reply("active_research", subquestions=["یکی؟"]),
+            composer_reply(""),
+        ],
+        recall_reply=gated_recall,
+    )
+    turn = research.ResearchTurn(PHONE, session["id"], research.COMMAND_GATHER)
+    research.RESEARCH_REGISTRY[turn.id] = turn
+
+    def run():
+        with_patched_upstream(upstream, tmp_path)(
+            lambda: research.run_research_turn(turn, session)
+        )
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    try:
+        assert searched.wait(timeout=30)
+        result, error = research.decide_proposal(
+            PHONE, session["id"], proposal_id, True
+        )
+        assert error is None
+        release.set()
+        worker.join(timeout=30)
+        assert not worker.is_alive()
+    finally:
+        release.set()
+        research.RESEARCH_REGISTRY.pop(turn.id, None)
+    assert turn.state == "done"
+    loaded = research_store.load_session(session["id"])
+    assert loaded["state"]["evidence"]
+    assert loaded["state"]["research_question"]["current"] == "پرسش دقیق‌تر؟"
+    assert loaded["state"]["pending_proposals"] == []
+    assert any(
+        "پرسش پژوهش به‌روز شد" in item["text"]
+        for item in loaded["state"]["decisions"]
+    )
+    messages, _ = research.research_session_messages(PHONE, session["id"])
+    roles = [message["role"] for message in messages["messages"]]
+    assert roles.count("assistant") >= 2  # the decision note and the reply
+
+
 # --- the registry's growth (audit 7) -----------------------------------------
 
 
-def test_a_settled_turn_stays_in_the_registry(tmp_path):
-    # [T11 #12: reaping — the recorded YAGNI limit] Terminal turns are
-    # never evicted; growth is bounded only by a server restart.
+def test_a_settled_turn_is_reaped_but_stays_answerable(tmp_path):
+    # [T11 #12: fulfilled — the YAGNI limit lifted] The registry holds
+    # live turns only: a settled turn is reaped the moment its worker
+    # exits. Its outcome stays answerable — the recent-settled ring
+    # serves the poll's delivery window, and the store holds the reply.
     upstream = ResearchUpstream(composer_replies=[classify_reply("evidence_audit")])
     session = make_session(tmp_path)
     turn = run_turn_sync(session, research.COMMAND_AUDIT, upstream, tmp_path)
     assert turn.state == "done"
-    try:
-        assert turn.id in research.RESEARCH_REGISTRY
-    finally:
-        research.RESEARCH_REGISTRY.pop(turn.id, None)
+    assert turn.id not in research.RESEARCH_REGISTRY
+    found = research.find_turn(turn.id)
+    assert found is turn
+    payload = research.turn_status_payload(found)
+    assert payload["state"] == "done"
+    assert payload["reply"]
+    stored, _ = research.research_session_messages(PHONE, session["id"])
+    assert any(
+        message["role"] == "assistant" for message in stored["messages"]
+    )
 
 
-@pytest.mark.xfail(reason="reaping arrives with ticket #12 (T11)", strict=True)
 def test_terminal_turns_are_reaped(tmp_path):
+    # [T11 #12: fulfilled] After the worker exits, no terminal turn
+    # remains in the registry — the live table and the ring are the
+    # whole story.
     upstream = ResearchUpstream(composer_replies=[classify_reply("evidence_audit")])
     session = make_session(tmp_path)
     turn = run_turn_sync(session, research.COMMAND_AUDIT, upstream, tmp_path)
@@ -352,11 +457,34 @@ def test_terminal_turns_are_reaped(tmp_path):
     assert terminal == []
 
 
+def test_a_turn_beyond_the_recent_ring_answers_unknown(tmp_path):
+    # [T11 #12: the bound] The ring caps how long a settled outcome
+    # stays answerable — a turn id beyond it is unknown, the recorded
+    # 404 surface, the store being the record. Growth is bounded by the
+    # ring, never by a restart cycle.
+    class StubTurn:
+        pass
+
+    try:
+        with research.RESEARCH_REGISTRY_LOCK:
+            research.RESEARCH_RECENT_SETTLED.clear()
+        for index in range(research.RESEARCH_RECENT_SETTLED_CAP + 1):
+            stub = StubTurn()
+            stub.id = f"t{index}"
+            with research.RESEARCH_REGISTRY_LOCK:
+                research.RESEARCH_RECENT_SETTLED.append(stub)
+        assert research.find_turn("t0") is None
+        assert research.find_turn("t1") is not None
+    finally:
+        with research.RESEARCH_REGISTRY_LOCK:
+            research.RESEARCH_RECENT_SETTLED.clear()
+
+
 # --- the orphaned user message (audit 8) -------------------------------------
 
 
 def orphaned_message_case(tmp_path):
-    """The busy path, arranged once for the pin and its xfail twin."""
+    """The busy path, arranged once for the pin."""
     research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
     session = make_session(tmp_path)
     blocker = research.ResearchTurn(PHONE, "another-session", "سایه")
@@ -378,19 +506,60 @@ def orphaned_message_case(tmp_path):
         research.RESEARCH_REGISTRY.pop(blocker.id, None)
 
 
-def test_a_busy_rejection_orphans_the_user_message(tmp_path):
-    # [T11 #12: admission before append] ensure_session appends the
-    # user's message to the transcript BEFORE start_research_turn can
-    # reject — a busy 429 leaves the message sitting there forever
-    # unanswered.
-    assert orphaned_message_case(tmp_path).count("پیام تازه") == 1
+def test_a_busy_rejection_admits_nothing_to_the_transcript(tmp_path):
+    # [T11 #12: fulfilled — admission after acceptance] The user's
+    # message joins the persisted transcript only when the session
+    # ACCEPTS the turn: the busy 429 admits nothing, so no orphaned,
+    # unanswered bubble can exist.
+    assert orphaned_message_case(tmp_path) == []
 
 
-@pytest.mark.xfail(
-    reason="admission-before-append arrives with ticket #12 (T11)", strict=True
-)
 def test_a_busy_rejection_leaves_the_transcript_clean(tmp_path):
     assert orphaned_message_case(tmp_path).count("پیام تازه") == 0
+
+
+def test_an_accepted_turn_admits_the_message_exactly_once(tmp_path):
+    # The other half of the move: a STARTED turn appends the message
+    # itself — the transcript carries it exactly once, and the settled
+    # turn is reaped (the registry keeps live turns only).
+    research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
+    upstream = ResearchUpstream(composer_replies=[classify_reply("evidence_audit")])
+    original_urlopen = research.urlopen
+    research.urlopen = upstream
+    os.environ["LLM_API_KEY"] = "test-key"
+    try:
+        session, error = research.ensure_session(
+            PHONE, None, "پیام تازه", "پرسش پژوهش؟", []
+        )
+        assert error is None
+        turn, detail = research.start_research_turn(PHONE, session, "پیام تازه")
+        assert turn is not None
+        assert detail is None
+        assert turn.done.wait(timeout=30)
+    finally:
+        research.urlopen = original_urlopen
+        os.environ.pop("LLM_API_KEY", None)
+    assert turn.state == "done"
+    assert turn.id not in research.RESEARCH_REGISTRY
+    messages, _ = research.research_session_messages(PHONE, session["id"])
+    user_texts = [
+        m["payload"] for m in messages["messages"] if m["role"] == "user"
+    ]
+    assert user_texts == ["پیام تازه"]
+
+
+def test_a_stale_settle_save_never_uncloses_a_session(tmp_path):
+    # [T11 #12: the abort's close outlives the snapshot] A new ask
+    # closes the session while a turn is in flight; the worker's stale
+    # settle save is refused, so it cannot write the session back open.
+    research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
+    session = make_session(tmp_path)
+    worker_snapshot = research_store.load_session(session["id"])["state"]
+    session["state"]["closed"] = True
+    research_store.save_session(session["id"], session["state"])
+    research_store.save_session(session["id"], worker_snapshot)
+    loaded = research_store.load_session(session["id"])
+    assert loaded["state"]["closed"] is True
 
 
 # --- the work-mode lock (audit 9, the DESIGNED behavior — survives) ----------

@@ -2,7 +2,16 @@
 one per transcript message — the load/save/append functions the
 wayfinder engine reads. The database path is the module attribute tests
 patch (the quotas.py pattern, its own file so a patched quota DB and a
-patched research DB never share a test)."""
+patched research DB never share a test).
+
+The store also owns the write serialization (T11): every session state
+row carries a version, every reader's snapshot is stamped with the
+version it was read at, and a save from an older base — the in-flight
+worker settling over a decision that landed mid-turn — is MERGED, not
+written blind: the decide's effect was recorded in an in-memory ledger
+exactly once, and the stale write folds it back in before saving. A
+restart empties the ledger with the registry (no stale worker write can
+follow a restart), so the ledger never needs to outlive the process."""
 
 from __future__ import annotations
 
@@ -10,6 +19,7 @@ import datetime
 import json
 import os
 import sqlite3
+import threading
 from pathlib import Path
 
 # Research Mode (ADR-0008): a research conversation spans far longer
@@ -24,6 +34,46 @@ RESEARCH_DB = Path(
     )
 )
 
+# The persistence stamp (T11): load_session and create_session mark the
+# state dict with the row version it was read at; save_session compares.
+# A write whose base is older than the row is stale — the writer's
+# snapshot predates another writer's save — and is merged through
+# ``on_stale_save``, never written blind. The key never reaches the
+# stored JSON (it is stripped on write and re-stamped on read).
+SAVE_BASE_VERSION = "_saved_from_version"
+
+# The decision ledger (T11): the opaque records a decide save parks (its
+# kind payload plus the row version it wrote), keyed by session, so a
+# LATER stale snapshot write can fold the decision in. The decide's own
+# write alone cannot survive the worker's snapshot save — the record is
+# what makes the merge possible. In-memory by design: a restart empties
+# the registry with it, and the next turn loads fresh from the store.
+_DECISION_RECORDS: dict[str, list[dict]] = {}
+
+# One write lock per session (T11): the decide's whole read-modify-write
+# and the worker's settle save serialize on it, so a decision never
+# straddles a settle save and a settle save never straddles a decision.
+# Reentrant — the decide holds it across its own save_session call.
+_SAVE_LOCKS: dict[str, threading.RLock] = {}
+_SAVE_LOCKS_GUARD = threading.Lock()
+
+# The domain's stale-write merge, installed by ui.research at import:
+# ``on_stale_save(session_id, state, records) -> merged state``. The
+# store stays domain-dumb — it detects the staleness and hands over the
+# recorded decisions; the engine knows how to re-apply them.
+on_stale_save = None
+
+
+def session_save_lock(session_id: str) -> threading.RLock:
+    """The session's write lock — the decide flow holds it across its
+    whole load-mutate-save cycle (T11), the worker's saves take it for
+    each write."""
+    with _SAVE_LOCKS_GUARD:
+        lock = _SAVE_LOCKS.get(session_id)
+        if lock is None:
+            lock = _SAVE_LOCKS[session_id] = threading.RLock()
+        return lock
+
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(RESEARCH_DB), timeout=5)
@@ -31,8 +81,18 @@ def _connect() -> sqlite3.Connection:
         "CREATE TABLE IF NOT EXISTS research_sessions ("
         "id TEXT PRIMARY KEY, phone TEXT NOT NULL, "
         "state_json TEXT NOT NULL, created_at TEXT NOT NULL, "
-        "updated_at TEXT NOT NULL)"
+        "updated_at TEXT NOT NULL, "
+        "version INTEGER NOT NULL DEFAULT 0)"
     )
+    # A store written before T11 has no version column — top it up in
+    # place; every existing row starts at 0.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(research_sessions)")}
+    if "version" not in columns:
+        conn.execute(
+            "ALTER TABLE research_sessions "
+            "ADD COLUMN version INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.commit()
     conn.execute(
         "CREATE TABLE IF NOT EXISTS research_messages ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, "
@@ -46,48 +106,118 @@ def _now() -> str:
     return datetime.datetime.now().isoformat(timespec="seconds")
 
 
+def _durable(state: dict) -> str:
+    """The state as it is stored — the persistence stamp is the
+    reader's bookkeeping, never part of the record."""
+    return json.dumps(
+        {k: v for k, v in state.items() if k != SAVE_BASE_VERSION},
+        ensure_ascii=False,
+    )
+
+
 def create_session(session_id: str, phone: str, state: dict) -> None:
     """Insert one new session row; the caller owns the id (the engine's
     registry minted it before the first write, so a created session is
-    always addressable by the id it already answered with)."""
+    always addressable by the id it already answered with). The state
+    is stamped with the row version it now corresponds to — the turn
+    that saves it later is checked for staleness like any other
+    writer."""
     conn = _connect()
     try:
         stamp = _now()
+        state[SAVE_BASE_VERSION] = 0
         conn.execute(
             "INSERT INTO research_sessions (id, phone, state_json, created_at,"
-            " updated_at) VALUES (?, ?, ?, ?, ?)",
-            (session_id, phone, json.dumps(state, ensure_ascii=False), stamp, stamp),
+            " updated_at, version) VALUES (?, ?, ?, ?, ?, 0)",
+            (session_id, phone, _durable(state), stamp, stamp),
         )
         conn.commit()
     finally:
         conn.close()
 
 
-def save_session(session_id: str, state: dict) -> None:
+def save_session(session_id: str, state: dict, decision_record: dict = None) -> str:
     """Snapshot one session's research state; '' (not found) when the
     session row does not exist, so a caller never resurrects a closed or
-    foreign session by blind write."""
-    conn = _connect()
-    try:
-        cursor = conn.execute(
-            "UPDATE research_sessions SET state_json = ?, updated_at = ? "
-            "WHERE id = ?",
-            (json.dumps(state, ensure_ascii=False), _now(), session_id),
-        )
-        conn.commit()
-        return "" if cursor.rowcount == 0 else session_id
-    finally:
-        conn.close()
+    foreign session by blind write.
+
+    The write is version-checked (T11): a snapshot stamped older than
+    the row is stale — its writer started before another writer saved —
+    and the decisions recorded since its base are folded back in through
+    ``on_stale_save`` before the write, so the in-flight worker's settle
+    save carries both its own work and the operator's decision, and a
+    stale snapshot never un-closes a session. ``decision_record`` (the
+    decide flow's payload) is parked in the ledger under the version
+    this write lands, exactly once, for a later stale write to fold."""
+    with session_save_lock(session_id):
+        conn = _connect()
+        try:
+            row = conn.execute(
+                "SELECT version, state_json FROM research_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return ""
+            stored_version, stored_json = int(row[0]), row[1]
+            base = state.get(SAVE_BASE_VERSION)
+            if base is None:
+                # No stamp: a state built in memory, never read from
+                # this row — the pre-T11 blind write, kept for it.
+                pass
+            elif base < stored_version:
+                # Stale: refuse to un-close (the abort's close outlives
+                # the in-flight turn's snapshot) and fold the decisions
+                # recorded since the snapshot's base back in. A folded
+                # record is consumed (it now lives in the written
+                # state); records the snapshot already carried are
+                # consumed too; records newer than this write's
+                # knowledge stay parked for an even older snapshot.
+                stored_state = json.loads(stored_json)
+                if (
+                    isinstance(stored_state, dict)
+                    and stored_state.get("closed")
+                    and not state.get("closed")
+                ):
+                    return ""
+                records = _DECISION_RECORDS.get(session_id, [])
+                replayable = [item for item in records if item["version"] > base]
+                if replayable and on_stale_save is not None:
+                    state = on_stale_save(session_id, state, replayable)
+                    _DECISION_RECORDS[session_id] = [
+                        item for item in records if item["version"] <= base
+                    ]
+            else:
+                # Fresh: the loaded state already carries every
+                # recorded decision — the ledger's work here is done.
+                _DECISION_RECORDS[session_id] = []
+            new_version = stored_version + 1
+            cursor = conn.execute(
+                "UPDATE research_sessions SET state_json = ?, updated_at = ?, "
+                "version = ? WHERE id = ?",
+                (_durable(state), _now(), new_version, session_id),
+            )
+            conn.commit()
+            if decision_record is not None:
+                _DECISION_RECORDS.setdefault(session_id, []).append(
+                    {**decision_record, "version": new_version}
+                )
+            state[SAVE_BASE_VERSION] = new_version
+            return "" if cursor.rowcount == 0 else session_id
+        finally:
+            conn.close()
 
 
 def load_session(session_id: str):
     """One session row as {"id", "phone", "state", "messages"}; None when
     unknown. The messages ride in creation order — the transcript the
-    engine's classify pass reads its recent tail from."""
+    engine's classify pass reads its recent tail from. The state is
+    stamped with the row version it was read at (T11) — the writer's
+    claim about how fresh its snapshot is."""
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT id, phone, state_json FROM research_sessions WHERE id = ?",
+            "SELECT id, phone, state_json, version FROM research_sessions "
+            "WHERE id = ?",
             (session_id,),
         ).fetchone()
         if row is None:
@@ -99,10 +229,13 @@ def load_session(session_id: str):
         ).fetchall()
     finally:
         conn.close()
+    state = json.loads(row[2])
+    if isinstance(state, dict):
+        state[SAVE_BASE_VERSION] = int(row[3])
     return {
         "id": row[0],
         "phone": row[1],
-        "state": json.loads(row[2]),
+        "state": state,
         "messages": [
             {"role": role, "payload": json.loads(payload)}
             for role, payload in messages
@@ -113,7 +246,8 @@ def load_session(session_id: str):
 def append_message(session_id: str, role: str, payload) -> None:
     """Append one transcript message (role "user" or "assistant"); the
     payload is stored as-is (a string for the user's text, the reply
-    blocks for the assistant)."""
+    blocks for the assistant). Append-only by contract — a decide note
+    or a settled reply is never rewritten by a later state save."""
     conn = _connect()
     try:
         conn.execute(

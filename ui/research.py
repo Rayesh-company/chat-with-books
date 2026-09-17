@@ -52,6 +52,7 @@ import re
 import threading
 import time
 import uuid
+from collections import deque
 from urllib.request import urlopen
 
 try:
@@ -2069,12 +2070,32 @@ def turn_status_payload(turn) -> dict:
 # the sheet polls, and multiple users get fair, independent turns. A
 # server restart empties the registry — an unknown turn id after a
 # restart IS the recorded failure surface — while the session itself
-# reloads from the store. Terminal turns are never reaped (the dive's
-# recorded YAGNI limit): growth is bounded by one restart cycle.
+# reloads from the store. The registry holds LIVE turns only (T11): a
+# terminal turn is reaped the moment its worker exits, its outcome
+# already durable in the store. The recent-settled ring keeps the last
+# few outcomes answerable for the poll's delivery window — a poll that
+# lands just after a settle still reads the reply — bounded, so growth
+# is capped by the ring, not by a restart cycle.
 TURN_TERMINAL_STATES = {"done", "failed", "aborted"}
 RESEARCH_MAX_CONCURRENT = 3
+RESEARCH_RECENT_SETTLED_CAP = 64
 RESEARCH_REGISTRY = {}
+RESEARCH_RECENT_SETTLED = deque(maxlen=RESEARCH_RECENT_SETTLED_CAP)
 RESEARCH_REGISTRY_LOCK = threading.Lock()
+
+
+def find_turn(turn_id: str):
+    """One turn by id — the registry's live table first, then the
+    recent-settled ring; None past both (an unknown id, a foreign
+    phone's, or one settled beyond the ring: the store is the record)."""
+    with RESEARCH_REGISTRY_LOCK:
+        turn = RESEARCH_REGISTRY.get(turn_id)
+        if turn is None:
+            turn = next(
+                (item for item in RESEARCH_RECENT_SETTLED if item.id == turn_id),
+                None,
+            )
+    return turn
 
 
 class ResearchTurn:
@@ -2134,13 +2155,18 @@ def abort_research_turn(turn: ResearchTurn) -> bool:
 def ensure_session(
     phone: str, session_id, text: str, question, sources, datasets=None
 ):
-    """Load or create the session a message belongs to, appending the
-    user's message to its transcript; (session, None) or (None, (status,
-    Farsi detail)) — unknown sessions 404, closed ones 409. The creating
-    call names the ask's question and its phase-1 Evidence pool — the
-    session's founding goal and evidence — and the ask's Book selection
-    (ADR-0010), which every later gather and recall of this session
-    searches (the server-resolved list, never the browser's raw)."""
+    """Load or create the session a message belongs to — WITHOUT
+    persisting the message (T11): the user's words join the persisted
+    transcript only when the session ACCEPTS the turn
+    (start_research_turn appends them), so a busy rejection never leaves
+    an orphaned, unanswered bubble. The in-memory tail still carries the
+    message for this request's own classify pass. (session, None) or
+    (None, (status, Farsi detail)) — unknown sessions 404, closed ones
+    409. The creating call names the ask's question and its phase-1
+    Evidence pool — the session's founding goal and evidence — and the
+    ask's Book selection (ADR-0010), which every later gather and recall
+    of this session searches (the server-resolved list, never the
+    browser's raw)."""
     if session_id:
         session = research_store.load_session(session_id)
         if session is None or session["phone"] != phone:
@@ -2148,7 +2174,6 @@ def ensure_session(
         if session["state"].get("closed"):
             return None, (409, RESEARCH_SESSION_CLOSED_DETAIL)
         ensure_state_shape(session["state"])
-        research_store.append_message(session_id, "user", text)
         session["messages"].append({"role": "user", "payload": text})
         return session, None
     goal = (question or "").strip() or text.strip()
@@ -2160,7 +2185,6 @@ def ensure_session(
         seed_evidence(state, sources, goal)
     session_id = uuid.uuid4().hex
     research_store.create_session(session_id, phone, state)
-    research_store.append_message(session_id, "user", text)
     return (
         {
             "id": session_id,
@@ -2202,6 +2226,71 @@ def research_session_messages(phone: str, session_id: str):
     return {"messages": session["messages"]}, None
 
 
+def _apply_decision(state: dict, proposal: dict, accept: bool, choice=None) -> str:
+    """One decided proposal's effect lands on the state and the decision
+    line returns — the SINGLE mutation a decision applies (T11): the
+    decide flow runs it live, and a stale settle save replays it through
+    the store's merge, so both paths apply exactly the same change. A
+    decided question or scope cools the map down (ADR-0011): the next
+    two turns park no NEW proposal of the same kind, so the journey
+    moves instead of looping rewrite→approve."""
+    cooldowns = state.setdefault(
+        "proposal_cooldowns", {"research_question": 0, "scope": 0}
+    )
+    cooldowns[proposal["kind"]] = PROPOSAL_COOLDOWN_TURNS
+    if not accept:
+        return f"پیشنهاد رد شد: «{proposal['text']}»"
+    if proposal["kind"] == "research_question":
+        state["research_question"]["versions"].append(
+            {
+                "text": proposal["text"],
+                "reason": proposal.get("reason", ""),
+                "turn": state["turns"],
+            }
+        )
+        state["research_question"]["current"] = proposal["text"]
+        return f"پرسش پژوهش به‌روز شد: «{proposal['text']}»"
+    if proposal["kind"] == "scope":
+        for item in proposal.get("scope_in", []):
+            if item not in state["scope"]["in"]:
+                state["scope"]["in"].append(item)
+        for item in proposal.get("scope_out", []):
+            if item not in state["scope"]["out"]:
+                state["scope"]["out"].append(item)
+        return f"دامنۀ پژوهش به‌روز شد: {proposal['text']}"
+    if proposal["kind"] == "brief_plan":
+        # The plan's acceptance is APPEND-ONLY (T7): each acceptance
+        # adds a version to the plan's ledger — v1 stays intact
+        # underneath — and the accepted plan becomes the current one,
+        # the gate the (required) Brief writes against. Acceptance also
+        # DERIVES the Section contracts (T8): one per planned section,
+        # snapped against the claim ledger and the scope as they stand
+        # now — the record each section is written against.
+        sections = proposal.get("sections", [])
+        plan = state.setdefault("brief_plan", {"current": None, "versions": []})
+        plan["versions"].append({"sections": sections, "turn": state["turns"]})
+        plan["current"] = {"sections": sections}
+        state["section_contracts"] = _section_contracts_from_plan(state, sections)
+        return f"برنامۀ خلاصۀ پژوهش پذیرفته شد: {proposal['text']}"
+    if proposal["kind"] == "closing_review":
+        # The verdict's acceptance (T9): the Brief is marked reviewed —
+        # the newest review run's status flips in place, the decision
+        # line joins the map's index. A rejection drops the checkpoint
+        # without marking anything: the revise chip, not the reject, is
+        # the fix path.
+        review = state.setdefault("closing_review", {"current": None, "versions": []})
+        current = review.get("current") or {}
+        current["status"] = "accepted"
+        review["current"] = current
+        return (
+            "خلاصۀ پژوهش بازبینی و پذیرفته شد؛ "
+            f"{REVIEW_VERDICT_LABELS.get(current.get('verdict', ''), '')}"
+        )
+    if proposal["kind"] == "adjustment":
+        return _apply_adjustment(state, proposal, choice)
+    return proposal["text"]
+
+
 def decide_proposal(
     phone: str,
     session_id: str,
@@ -2215,93 +2304,50 @@ def decide_proposal(
     (status, Farsi detail)). The adjustment checkpoint (T6) decides a
     CHOICE, not a yes/no: accepting requires one of the parked menu's
     own adjustments — narrow the question, change the Tool, declare a
-    Gap."""
-    session = research_store.load_session(session_id)
-    if session is None or session["phone"] != phone:
-        return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
-    state = ensure_state_shape(session["state"])
-    if state.get("closed"):
-        return None, (409, RESEARCH_SESSION_CLOSED_DETAIL)
-    proposal = next(
-        (
+    Gap.
+
+    The whole read-mutate-save runs under the session's write lock and
+    the save parks a decision record (T11): a decision accepted while a
+    turn is in flight lands immediately, and when the worker's OLDER
+    snapshot settles over it, the store folds the record back in — the
+    operator's choice is never clobbered by the turn's save."""
+    with research_store.session_save_lock(session_id):
+        session = research_store.load_session(session_id)
+        if session is None or session["phone"] != phone:
+            return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
+        state = ensure_state_shape(session["state"])
+        if state.get("closed"):
+            return None, (409, RESEARCH_SESSION_CLOSED_DETAIL)
+        proposal = next(
+            (
+                item
+                for item in state.get("pending_proposals", [])
+                if item.get("id") == proposal_id
+            ),
+            None,
+        )
+        if proposal is None:
+            return None, (404, RESEARCH_PROPOSAL_NOT_FOUND_DETAIL)
+        if proposal["kind"] == "adjustment" and accept:
+            keys = {item["key"] for item in proposal.get("choices", [])}
+            if choice not in keys:
+                return None, (400, RESEARCH_ADJUSTMENT_CHOICE_DETAIL)
+        state["pending_proposals"] = [
             item
-            for item in state.get("pending_proposals", [])
-            if item.get("id") == proposal_id
-        ),
-        None,
-    )
-    if proposal is None:
-        return None, (404, RESEARCH_PROPOSAL_NOT_FOUND_DETAIL)
-    if proposal["kind"] == "adjustment" and accept:
-        keys = {item["key"] for item in proposal.get("choices", [])}
-        if choice not in keys:
-            return None, (400, RESEARCH_ADJUSTMENT_CHOICE_DETAIL)
-    state["pending_proposals"] = [
-        item
-        for item in state["pending_proposals"]
-        if item.get("id") != proposal_id
-    ]
-    # A decided question or scope cools the map down (ADR-0011): the
-    # next two turns park no NEW proposal of the same kind, so the
-    # journey moves instead of looping rewrite→approve.
-    cooldowns = state.setdefault(
-        "proposal_cooldowns", {"research_question": 0, "scope": 0}
-    )
-    cooldowns[proposal["kind"]] = PROPOSAL_COOLDOWN_TURNS
-    if not accept:
-        decision = f"پیشنهاد رد شد: «{proposal['text']}»"
-    elif proposal["kind"] == "research_question":
-        state["research_question"]["versions"].append(
-            {
-                "text": proposal["text"],
-                "reason": proposal.get("reason", ""),
-                "turn": state["turns"],
-            }
+            for item in state["pending_proposals"]
+            if item.get("id") != proposal_id
+        ]
+        decision = _apply_decision(state, proposal, accept, choice)
+        state["decisions"].append({"text": decision, "turn": state["turns"]})
+        research_store.save_session(
+            session_id,
+            state,
+            decision_record={
+                "proposal": proposal,
+                "accept": accept,
+                "choice": choice,
+            },
         )
-        state["research_question"]["current"] = proposal["text"]
-        decision = f"پرسش پژوهش به‌روز شد: «{proposal['text']}»"
-    elif proposal["kind"] == "scope":
-        for item in proposal.get("scope_in", []):
-            if item not in state["scope"]["in"]:
-                state["scope"]["in"].append(item)
-        for item in proposal.get("scope_out", []):
-            if item not in state["scope"]["out"]:
-                state["scope"]["out"].append(item)
-        decision = f"دامنۀ پژوهش به‌روز شد: {proposal['text']}"
-    elif proposal["kind"] == "brief_plan":
-        # The plan's acceptance is APPEND-ONLY (T7): each acceptance
-        # adds a version to the plan's ledger — v1 stays intact
-        # underneath — and the accepted plan becomes the current one,
-        # the gate the (required) Brief writes against. Acceptance also
-        # DERIVES the Section contracts (T8): one per planned section,
-        # snapped against the claim ledger and the scope as they stand
-        # now — the record each section is written against.
-        sections = proposal.get("sections", [])
-        plan = state.setdefault("brief_plan", {"current": None, "versions": []})
-        plan["versions"].append({"sections": sections, "turn": state["turns"]})
-        plan["current"] = {"sections": sections}
-        state["section_contracts"] = _section_contracts_from_plan(state, sections)
-        decision = f"برنامۀ خلاصۀ پژوهش پذیرفته شد: {proposal['text']}"
-    elif proposal["kind"] == "closing_review":
-        # The verdict's acceptance (T9): the Brief is marked reviewed —
-        # the newest review run's status flips in place, the decision
-        # line joins the map's index. A rejection drops the checkpoint
-        # without marking anything: the revise chip, not the reject, is
-        # the fix path.
-        review = state.setdefault("closing_review", {"current": None, "versions": []})
-        current = review.get("current") or {}
-        current["status"] = "accepted"
-        review["current"] = current
-        decision = (
-            "خلاصۀ پژوهش بازبینی و پذیرفته شد؛ "
-            f"{REVIEW_VERDICT_LABELS.get(current.get('verdict', ''), '')}"
-        )
-    elif proposal["kind"] == "adjustment":
-        decision = _apply_adjustment(state, proposal, choice)
-    else:
-        decision = proposal["text"]
-    state["decisions"].append({"text": decision, "turn": state["turns"]})
-    research_store.save_session(session_id, state)
     blocks = [{"type": "note", "text": decision}]
     research_store.append_message(session_id, "assistant", blocks)
     return (
@@ -2374,6 +2420,32 @@ def _apply_adjustment(state: dict, proposal: dict, choice: str) -> str:
     return "شکاف پژوهش اعلام شد؛ ادامه با شواهد موجود."
 
 
+def _fold_decision_records(session_id: str, state: dict, records: list) -> dict:
+    """The store's stale-write merge (T11): an in-flight worker's
+    snapshot predates the decisions that landed mid-turn, so each
+    recorded decision is replayed onto it through the SAME mutation the
+    decide ran — the settle save then carries the turn's work AND the
+    operator's decision. The transcript is not touched here: the
+    decide's note message is already in it (append-only)."""
+    for record in records:
+        proposal = record.get("proposal") or {}
+        state["pending_proposals"] = [
+            item
+            for item in state.get("pending_proposals", [])
+            if item.get("id") != proposal.get("id")
+        ]
+        decision = _apply_decision(
+            state, proposal, bool(record.get("accept")), record.get("choice")
+        )
+        state["decisions"].append({"text": decision, "turn": state["turns"]})
+    return state
+
+
+# The store detects a stale snapshot write; the engine knows what a
+# decision means — the two meet here, once, at import.
+research_store.on_stale_save = _fold_decision_records
+
+
 def abort_phone_research(phone: str) -> None:
     """A new ask owns the sheet: the phone's in-flight research turns
     abort cooperatively and their sessions close — a later message to a
@@ -2398,7 +2470,12 @@ def start_research_turn(phone: str, session: dict, message: str):
     """Create the registry turn under the caps — at most one
     non-terminal turn per phone and RESEARCH_MAX_CONCURRENT globally —
     or return the Farsi busy detail. The check and the creation are
-    atomic under the lock; a rejected start is never queued."""
+    atomic under the lock; a rejected start is never queued — and never
+    ADMITTED (T11): the user's message joins the persisted transcript
+    only after the session accepts the turn, so a busy 429 leaves no
+    orphaned, unanswered bubble. A failed admission releases the turn it
+    already took, so the phone is never blocked by a turn that never
+    began."""
     with RESEARCH_REGISTRY_LOCK:
         non_terminal = [
             turn
@@ -2411,6 +2488,12 @@ def start_research_turn(phone: str, session: dict, message: str):
             return None, RESEARCH_BUSY_GLOBAL_DETAIL
         turn = ResearchTurn(phone, session["id"], message)
         RESEARCH_REGISTRY[turn.id] = turn
+    try:
+        research_store.append_message(session["id"], "user", message)
+    except Exception:
+        with RESEARCH_REGISTRY_LOCK:
+            RESEARCH_REGISTRY.pop(turn.id, None)
+        raise
     threading.Thread(
         target=run_research_turn, args=(turn, session), daemon=True
     ).start()
@@ -3856,6 +3939,12 @@ def run_research_turn(
             pass
     finally:
         turn.done.set()
+        # The reap (T11): the registry holds live turns only — a settled
+        # turn's outcome is durable in the store, and the recent-settled
+        # ring keeps it answerable for the poll's delivery window.
+        with RESEARCH_REGISTRY_LOCK:
+            if RESEARCH_REGISTRY.pop(turn.id, None) is not None:
+                RESEARCH_RECENT_SETTLED.append(turn)
 
 
 def _fold_grilling_answer(

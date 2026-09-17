@@ -2016,8 +2016,10 @@
             );
             if (res.status === 404) {
               // Unknown turn: the server restarted and took the registry
-              // with it — the recorded failure surface, not a hang. The
-              // session itself survives in the store.
+              // with it, or the turn settled and was reaped beyond the
+              // recent window — the recorded failure surface, not a hang.
+              // The session itself (and any settled reply) survives in
+              // the store.
               gone = true;
             } else if (res.ok) {
               payload = await res.json();
@@ -2092,7 +2094,10 @@
         researchSuggestEl.replaceChildren();
         setPhaseState(3, "running");
         setRunningPhase(3);
-        appendResearchMessage("user", researchText(text, "research-msg-text"));
+        const pendingBubble = appendResearchMessage(
+          "user",
+          researchText(text, "research-msg-text")
+        );
         showResearchStatus("برداشت گفتگو…");
         const body = { text };
         if (researchSessionId) {
@@ -2119,7 +2124,10 @@
           if (!res.ok || !payload.turn_id) {
             // A rejection — a busy 429 or a closed session among them —
             // shows the server's Farsi detail; the timer never started
-            // for a turn that did not begin.
+            // for a turn that did not begin, and the optimistic bubble
+            // goes with it: the message was never admitted (T11), so no
+            // unanswered bubble sits in the transcript.
+            pendingBubble.remove();
             appendResearchError(
               payload.detail || "پیام پژوهش فرستاده نشد؛ دوباره تلاش کنید."
             );
