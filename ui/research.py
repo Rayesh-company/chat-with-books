@@ -116,6 +116,12 @@ COMMAND_MOVES = {
 # classification luck.
 COMMAND_GATHER_ALL = "همهٔ پرسش‌های باز را جست‌وجو کن"
 GRILLING_SKIP = "فعلاً همین کافی است؛ ادامه بده"
+# The skip's landing as a decision (T10 #11): the map's decisions index
+# records the user declining the guided question — the same record in
+# every stage.
+GRILLING_SKIP_DECISION = (
+    "کاربر پاسخ دادن به پرسش راهنما را رد کرد؛ ادامه با وضع موجود."
+)
 COMMAND_GUIDE = "ادامهٔ سفر پژوهش"
 # A per-question gather chip: «شواهدِ «نام» را پیدا کن» targets exactly
 # that named open question — the deterministic frontier move.
@@ -176,7 +182,8 @@ RESEARCH_INTENTS = (
 # may search with, the state it reads and writes, and whether its
 # output passes the verbatim guard. Adding a skill touches this table
 # and nothing else: the router's prompt and its dispatch are generated
-# from it.
+# from it — and the skill's display name lands in CONTEXT.md's naming
+# table in the same change, the two homes moving together.
 SKILL_TABLE = (
     {
         "name": "casual_question",
@@ -767,7 +774,9 @@ def research_suggestions(state: dict) -> list:
         return suggestions[:6]
     stage = state.get("stage", "orientation")
     if stage == "mapping":
-        for concept in state.get("concepts", [])[:3]:
+        # The mapping skip rides the same reserved-slot rule (T10 #11):
+        # the facets trim before the stage's own exit ever could.
+        for concept in state.get("concepts", [])[:3][: max(0, 6 - len(suggestions) - 1)]:
             suggestions.append({"kind": "answer", "id": "facet", "text": concept})
         suggestions.append({"kind": "skip", "id": "skip", "text": GRILLING_SKIP})
         return suggestions[:6]
@@ -2405,7 +2414,7 @@ def _skip_reply(state: dict) -> list:
         "options": [],
     }
     state["decisions"].append(
-        {"text": "کاربر پاسخ دادن به پرسش راهنما را رد کرد؛ ادامه با وضع موجود.", "turn": state["turns"]}
+        {"text": GRILLING_SKIP_DECISION, "turn": state["turns"]}
     )
     if stage == "orientation":
         if not state["map"]["destination"]:

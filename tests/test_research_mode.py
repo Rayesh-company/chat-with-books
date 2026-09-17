@@ -1055,14 +1055,45 @@ def test_a_late_stage_skip_lands_a_decision_and_stands_still(tmp_path):
     state = session["state"]
     assert state["stage"] == "investigating"
     assert any(
-        d["text"] == "کاربر پاسخ دادن به پرسش راهنما را رد کرد؛ ادامه با وضع موجود."
-        for d in state["decisions"]
+        d["text"] == research.GRILLING_SKIP_DECISION for d in state["decisions"]
     )
     assert state["grilling"]["current_question"] == ""
     assert any(
         b["type"] == "note" and "ادامه می‌دهیم" in b["text"]
         for b in turn.result["reply"]
     )
+
+
+def test_the_skip_survives_the_cap_while_a_checkpoint_waits():
+    # T10 (GitLab #11), review finding: proposal chips lead the set, so
+    # a live question's options trim to the room left — the skip itself
+    # is never a truncation casualty, and the mapping stage's facet
+    # chips ride the same reserved-slot rule.
+    state = research.new_research_state("پرسش پژوهش؟")
+    state["pending_proposals"] = [
+        {"id": "p1", "kind": "research_question", "text": "پرسش دقیق‌تر؟"}
+    ]
+    state["grilling"] = {
+        "asked_in_stage": 1,
+        "current_question": "پرسش زندهٔ راهنما؟",
+        "options": ["الف", "ب", "ج", "د"],
+    }
+    chips = research.research_suggestions(state)
+    assert len(chips) <= 6
+    assert chips[-1]["kind"] == "skip"
+    assert chips[-1]["text"] == research.GRILLING_SKIP
+    assert sum(1 for chip in chips if chip["kind"] == "answer") == 3
+    mapping = research.new_research_state("پرسش پژوهش؟")
+    mapping["stage"] = "mapping"
+    mapping["pending_proposals"] = [
+        {"id": "p1", "kind": "research_question", "text": "پرسش دقیق‌تر؟"},
+        {"id": "p2", "kind": "scope", "text": "دامنه"},
+    ]
+    mapping["concepts"] = ["مفهوم الف", "مفهوم ب", "مفهوم ج"]
+    chips = research.research_suggestions(mapping)
+    assert len(chips) <= 6
+    assert chips[-1] == {"kind": "skip", "id": "skip", "text": research.GRILLING_SKIP}
+    assert sum(1 for chip in chips if chip.get("id") == "facet") == 1
 
 
 def test_the_skip_ends_the_orientation_questioning(tmp_path):
