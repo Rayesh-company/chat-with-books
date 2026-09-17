@@ -172,6 +172,27 @@ def build_continuation_prompt(
     )
 
 
+def _thinking_fields(thinking_type: str) -> dict:
+    """The payload fields toggling reasoning for one composer call.
+
+    The `thinking` toggle is the Z.AI coding endpoint's native shape and
+    the recorded payload everywhere. AvalAI (the chat endpoint since
+    2026-09-13) 400s on `{"type": "disabled"}` — recorded live — and
+    its omitted-field default is reasoning ON, which is fatal for the
+    writers: recorded 2026-09-13, a dive writer call burned the whole
+    16384-token ceiling on 43k chars of invisible reasoning and
+    returned EMPTY content (finish "length"). `reasoning_effort`
+    "none"/"minimal" are ignored there; "low" is honored — reasoning
+    shrinks and the document gets written. So on non-Z.AI endpoints a
+    disabled writer sends `reasoning_effort: "low"`; the reasoning
+    passes keep the `thinking` field, which AvalAI accepts for
+    "enabled".
+    """
+    if thinking_type == "enabled" or "api.z.ai" in COMPOSER_URL:
+        return {"thinking": {"type": thinking_type}}
+    return {"reasoning_effort": "low"}
+
+
 def _composer_reply(
     message: str,
     thinking_type: str,
@@ -187,7 +208,8 @@ def _composer_reply(
     calls run at the endpoint's default temperature (the writer's
     "temperature": 0 pin was dropped the same call: final synthesizing,
     not extraction). The Quoted answer runs glm-5.3-flash; the dive's
-    two calls run glm-5.3 (DIVE_MODEL, ADR-0002's next-tier model).
+    two calls run glm-5.3-flash too (both tiers moved to flash
+    2026-09-13, operator call — deep-dive latency was the pain).
     Interleaving AI text with verbatim quotes is light writing plus
     copy-matching, not reasoning; glm-5.3-flash's default thinking adds
     ~70s for identical output (measured 2026-09-10: 84.2s -> 16.5s on
@@ -199,16 +221,16 @@ def _composer_reply(
     upstream tests patch ONE urlopen per module: they run this same
     call shape through their own seam instead of this module's.
     """
+    thinking = _thinking_fields(thinking_type)
+    payload = {
+        "model": model,
+        "max_tokens": COMPOSER_MAX_TOKENS,
+        "messages": [{"role": "user", "content": message}],
+    }
+    payload.update(thinking)
     request = Request(
         COMPOSER_URL,
-        data=json.dumps(
-            {
-                "model": model,
-                "thinking": {"type": thinking_type},
-                "max_tokens": COMPOSER_MAX_TOKENS,
-                "messages": [{"role": "user", "content": message}],
-            }
-        ).encode("utf-8"),
+        data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {os.environ['LLM_API_KEY']}",
@@ -286,8 +308,26 @@ def compose_quoted_answer(question: str, answer: str, sources):
     ended unfinished at its final section — so the complete block prefix
     is salvaged and ONE continuation call writes the rest; truncated is
     True only when even the continuation came back cut.
+
+    One writer repair since 2026-09-15 (the intermittent «پاسخ استنادی
+    آماده نشد», live smoke): a timeout, an empty reasoning reply, or a
+    paraphrasing writer the guard strips below the swap threshold used
+    to land [] with no recourse. The guarded result now gets ONE full
+    writer retry — same plan, no planner re-run — and the better
+    attempt rides; both attempts failing keeps the honest fallback.
     """
     plan = plan_quoted_document(question, sources)
+    blocks, truncated = _write_quoted_once(question, answer, sources, plan)
+    if blocks:
+        return blocks, truncated
+    blocks, truncated = _write_quoted_once(question, answer, sources, plan)
+    return blocks, truncated
+
+
+def _write_quoted_once(question: str, answer: str, sources, plan: str):
+    """One writer attempt: call, parse, ONE length-cut continuation,
+    guard. ([], False) on call failure or a guard that keeps nothing —
+    the retry's unit."""
     try:
         reply = _composer_reply(
             build_quoted_prompt(question, answer, sources, plan), "disabled"

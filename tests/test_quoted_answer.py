@@ -185,6 +185,11 @@ def test_guard_blocks_keeps_embedded_quotes_and_drops_one_sentence():
 def test_guard_blocks_drops_a_paragraph_whose_only_quote_fails_the_guard():
     # With no surviving quote the paragraph would be pure AI text, which
     # the sheet never swaps in (PM call, 2026-09-10) — it drops whole.
+    # A heading whose section kept no paragraph drops with it (the
+    # empty-section fix, ADR-0010): the trailing «عنوان» here has no
+    # body after it, so it never renders — and with only one surviving
+    # paragraph and no heading left, the document falls below the swap
+    # threshold and lands [].
     good = {
         "type": "paragraph",
         "parts": [
@@ -203,15 +208,45 @@ def test_guard_blocks_drops_a_paragraph_whose_only_quote_fails_the_guard():
         good,
         {"type": "heading", "text": "عنوان"},
     ]
-    assert serve.guard_blocks(blocks, SOURCES) == [
+    assert serve.guard_blocks(blocks, SOURCES) == []
+
+
+def test_guard_blocks_prunes_a_dead_heading_but_keeps_a_fed_section():
+    # The section-prune (ADR-0010): a heading with a surviving paragraph
+    # after it stays; a heading whose paragraphs all dropped goes — and
+    # the swap threshold reads the PRUNED document (two paragraphs, no
+    # heading, still swaps).
+    good = {
+        "type": "paragraph",
+        "parts": [
+            {"text": "مقدمه‌ای کوتاه."},
+            {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740", "book_label": "طرح کلی اندیشۀ اسلامی در قرآن"},
+        ],
+    }
+    other = {
+        "type": "paragraph",
+        "parts": [
+            {"text": "گواه دوم:"},
+            {"quote": OTHER_PASSAGE, "source": 1, "pages_label": "", "first_page_label": "", "book_label": "طرح کلی اندیشۀ اسلامی در قرآن"},
+        ],
+    }
+    blocks = [
+        {"type": "heading", "text": "بخش زنده"},
+        good,
+        other,
+        {"type": "heading", "text": "بخش مرده"},
         {
             "type": "paragraph",
             "parts": [
-                {"text": "مقدمه‌ای کوتاه."},
-                {"quote": "سخن در این است؛", "source": 0, "pages_label": "صفحات 740 تا 745", "first_page_label": "صفحه 740", "book_label": "طرح کلی اندیشۀ اسلامی در قرآن"},
+                {"text": "بر پایهٔ این نگاه،"},
+                {"quote": "بازگویی وارونهٔ بی‌منبع", "source": 0},
             ],
         },
-        {"type": "heading", "text": "عنوان"},
+    ]
+    assert serve.guard_blocks(blocks, SOURCES) == [
+        {"type": "heading", "text": "بخش زنده"},
+        good,
+        other,
     ]
 
 
@@ -472,6 +507,51 @@ def test_compose_keeps_the_salvaged_prefix_when_the_continuation_fails():
     assert kept == WRITER_KEPT[:2]
 
 
+def junk_writer_reply():
+    return json.dumps({"choices": [{"message": {"content": "not json at all"}}]})
+
+
+def test_compose_retries_the_writer_once_when_the_first_keeps_nothing():
+    # The intermittent «پاسخ استنادی آماده نشد» (ADR-0010): a junk or
+    # paraphrasing writer attempt used to land [] with no recourse —
+    # the guarded result now earns ONE full writer retry (same plan,
+    # no planner re-run), and the retry's document lands.
+    kept, truncated, captured = run_compose_with_replies(
+        [planner_reply(PLAN_MARKER), junk_writer_reply(), writer_reply()]
+    )
+    assert len(captured["payloads"]) == 3
+    # The planner ran once; both writer attempts are thinking-disabled
+    # and the retry still carries the plan in its framing.
+    assert captured["payloads"][0]["thinking"] == {"type": "enabled"}
+    assert [p["thinking"] for p in captured["payloads"][1:]] == [
+        {"type": "disabled"},
+        {"type": "disabled"},
+    ]
+    assert PLAN_MARKER in captured["payloads"][2]["messages"][0]["content"]
+    assert truncated is False
+    assert kept == WRITER_KEPT
+
+
+def test_compose_retries_once_and_then_lands_the_honest_empty():
+    # Both writer attempts useless: [] after exactly two attempts —
+    # never a loop.
+    kept, truncated, captured = run_compose_with_replies(
+        [planner_reply(PLAN_MARKER), junk_writer_reply(), junk_writer_reply()]
+    )
+    assert len(captured["payloads"]) == 3
+    assert kept == []
+    assert truncated is False
+
+
+def test_compose_retries_after_a_failed_writer_call():
+    # A writer TIMEOUT (OSError) is the same repair: one retry.
+    kept, _, captured = run_compose_with_replies(
+        [planner_reply(PLAN_MARKER), OSError("writer timed out"), writer_reply()]
+    )
+    assert len(captured["payloads"]) == 3
+    assert kept == WRITER_KEPT
+
+
 def test_continuation_prompt_carries_the_salvaged_blocks_and_the_rules():
     prompt = serve.build_continuation_prompt(
         "پرسش؟", "پیش‌نویس پاسخ", SOURCES, PLAN_MARKER, WRITER_BLOCKS[:1]
@@ -651,34 +731,99 @@ def test_session_ui_shows_the_composer_phase_and_times_the_whole_pipeline():
     assert "stopPhaseTimer(3)" in html
 
 
-def test_session_ui_starts_the_deep_dive_from_the_phase_3_button():
-    # Phase 3 is the Deep dive (ADR 0006, issue #25): no ask auto-starts
-    # it — the operator's button does, starting the phase timer on press
-    # and POSTing the held /deep-dive request with only the query (every
-    # payload is pinned server-side). The recorded COT relay stays
-    # reachable server-side as the operator probe; the sheet never calls
-    # it, and the superseded startNextTier auto-start is gone.
+def test_session_ui_runs_research_mode_as_the_phase_3_chat():
+    # Phase 3 is Research Mode (ADR 0008): no ask auto-starts it — the
+    # operator's message does, starting the phase timer on send and
+    # POSTing /research/message with only the text (plus the ask and its
+    # pool on the creating call; every search payload stays pinned
+    # server-side). The recorded COT relay stays reachable server-side as
+    # the operator probe; the sheet never calls it.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
-    assert "/deep-dive" in html
+    assert "/research/message" in html
+    assert "/research/turn" in html
+    assert "/research/decide" in html
     assert "/next-tier-recall" not in html
-    assert 'id="dive-start"' in html
-    assert "شروع مطالعۀ عمیق" in html
-    assert "مطالعۀ عمیق" in html  # the tab's own name
-    assert "startNextTier" not in html
+    assert "/deep-dive" not in html
+    assert 'id="research-form"' in html
+    assert 'id="research-input"' in html
+    assert "حالت پژوهش" in html  # the tab's own name
+    assert "مطالعۀ عمیق" not in html  # the superseded dive name is gone
     assert "startPhaseTimer(3)" in html
-    assert "diveAbort" in html
-    assert "AbortController" in html  # a new ask aborts an in-flight dive
-    assert "run !== citationRun" in html  # a stale study never lands
-    # Friendly Farsi failure in the panel; the study renders like phase
+    assert "AbortController" in html  # a new ask aborts in-flight phases
+    # Friendly Farsi failure in the panel; the replies render like phase
     # 2's document, plus the closing server-built references list.
-    assert "مطالعۀ عمیق آماده نشد" in html
+    assert "پیام پژوهش فرستاده نشد" in html
     assert 'block.type === "references"' in html
     assert "منابع" in html
+    # The checkpoint chips resolve through the decide endpoint; the
+    # session identity survives a refresh via sessionStorage.
+    assert "می‌پذیرم" in html
+    assert "رد می‌کنم" in html
+    assert "sessionResearch" in html
 
 
 def test_session_ui_keeps_the_llm_key_off_the_sheet():
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
     assert "LLM_API_KEY" not in html
+
+
+def test_the_sheet_carries_the_round_two_contract():
+    # ADR-0010: the widen chip, the Book-selection toggles, and the
+    # citation-landing machinery all live on the sheet.
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert "/recall-more" in html
+    assert "جست‌وجوی بیشتر" in html
+    assert "book-toggle" in html
+    assert "selectedDatasets" in html
+    assert "locatorPassages" in html
+
+
+def test_the_sheet_carries_the_round_three_contract():
+    # ADR-0011: the single-pick Book gate (radio, persisted, ask
+    # disabled until picked), the phase-1 evidence fallback, and the
+    # transcript re-fetch.
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert 'role="radiogroup"' in html
+    assert 'localStorage.setItem("selectedBook"' in html
+    assert "اول یک کتاب انتخاب کنید" in html
+    assert "/evidence-fallback" in html
+    assert "استنادی از کتاب‌ها پیدا نشد" in html
+    assert "/research/messages" in html
+
+
+def test_the_round_two_adr_records_the_decisions():
+    text = (REPO_ROOT / "docs" / "adr" / "0010-round-two-reliability-widen-selection.md").read_text(
+        encoding="utf-8"
+    )
+    assert "One writer repair" in text
+    assert "prune_empty_sections" in text
+    assert "/recall-more" in text
+    assert "HYBRID_COMPLETION" in text
+    assert "BOOK_DATASETS" in text
+    assert "Considered options" in text
+    assert "Consequences" in text
+
+
+def test_the_round_three_adr_records_the_decisions():
+    text = (REPO_ROOT / "docs" / "adr" / "0011-work-over-chart-editing.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Chart mode vs work mode" in text
+    assert "PROPOSAL_COOLDOWN_TURNS" in text
+    assert "/evidence-fallback" in text
+    assert "PAGE_RESOLVER" in text
+    assert "localStorage.selectedBook" in text
+    assert "/research/messages" in text
+    assert "Considered options" in text
+    assert "Consequences" in text
+
+    # The engine carries the recorded constants and the sheet the
+    # recorded surfaces.
+    research_text = (REPO_ROOT / "ui" / "research.py").read_text(encoding="utf-8")
+    assert "PROPOSAL_COOLDOWN_TURNS = 2" in research_text
+    assert 'may_propose = classified.get("intent") == "research_exploration"' in research_text
+    resolver_text = (REPO_ROOT / "ui" / "page_resolver.py").read_text(encoding="utf-8")
+    assert "resolve_first_page" in resolver_text
 
 
 def test_readme_records_the_quoted_answer_contract():

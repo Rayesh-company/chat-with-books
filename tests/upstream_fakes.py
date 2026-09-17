@@ -160,15 +160,63 @@ def with_patched_upstream(upstream, tmp_path):
     return run
 
 
-def run_turn_sync(session, message, upstream, tmp_path):
+def run_turn_sync(
+    session,
+    message,
+    upstream,
+    tmp_path,
+    clock=None,
+    budget_seconds=None,
+    call_cap=None,
+):
     """One turn's worker, synchronously over a registry turn — the
-    orchestration seam without the HTTP layer or the thread."""
+    orchestration seam without the HTTP layer or the thread. The budget
+    configuration rides the same highest point the worker exposes
+    (clock, deadline seconds, call cap); None leaves the defaults."""
     turn = research.ResearchTurn(session["phone"], session["id"], message)
     research.RESEARCH_REGISTRY[turn.id] = turn
-    with_patched_upstream(upstream, tmp_path)(
-        lambda: research.run_research_turn(turn, session)
-    )
+
+    def run():
+        research.run_research_turn(
+            turn,
+            session,
+            budget_seconds=budget_seconds,
+            call_cap=call_cap,
+            clock=clock,
+        )
+
+    with_patched_upstream(upstream, tmp_path)(run)
     return turn
+
+
+class FakeClock:
+    """The injected clock's test double: a monotonic-shaped callable the
+    test moves by hand — a budget is exhausted deterministically, no
+    waiting on real time."""
+
+    def __init__(self, start=0.0):
+        self.now = start
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+class SlowUpstream:
+    """Wraps an upstream so every call first advances a FakeClock — a
+    slow upstream, simulated without sleeping. What a real slow call
+    burns of the turn's wall clock, this burns of the fake's."""
+
+    def __init__(self, upstream, clock, seconds):
+        self.upstream = upstream
+        self.clock = clock
+        self.seconds = seconds
+
+    def __call__(self, request, timeout=None):
+        self.clock.advance(self.seconds)
+        return self.upstream(request, timeout)
 
 
 def make_session(tmp_path, state=None):

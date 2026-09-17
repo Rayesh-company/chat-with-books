@@ -5,12 +5,18 @@
 __pycache__/
 .pytest_cache/
 *.pyc
-tarhe-kolli.pdf
 ui/usage.sqlite3
-70143-336.pdf
+# The customer PDFs stay out of git; provision books/ from the
+# cognee storage export (see ADR-0007). The text indexes ship.
+books/*.pdf
 ~$*
 .agents/
 .claude/
 .zcode/
 .playwright-mcp/
 .scratch/
+*.dump
+*.tar
+*.tar.gz
+*.zip
+

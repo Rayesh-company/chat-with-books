@@ -42,7 +42,10 @@ services:
       ENABLE_BACKEND_ACCESS_CONTROL: "false"
       LLM_PROVIDER: custom
       LLM_MODEL: openai/glm-5.3-flash
-      LLM_ENDPOINT: https://api.z.ai/api/coding/paas/v4
+      # Chat routes through AvalAI since 2026-09-13 — the Z.AI coding-plan
+      # weekly quota was exhausted (error 1310, reset 2026-09-15 17:06).
+      # AvalAI carries the GLM family; the key rides .env as LLM_API_KEY.
+      LLM_ENDPOINT: https://api.avalai.ir/v1
       EMBEDDING_PROVIDER: openai_compatible
       # The embedder is frozen into the ingested pgvector tables — a
       # stack whose data predates ADR 0004 pins small/1536 in .env
@@ -74,7 +77,7 @@ services:
       - ./docker/enable_farsi_evidence.py:/enable_farsi_evidence.py:ro
     entrypoint: ["python", "/enable_farsi_evidence.py"]
     ports:
-      - "8000:8000"
+      - "18000:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -109,8 +112,9 @@ services:
       CACHE_BACKEND: postgres
       ENABLE_BACKEND_ACCESS_CONTROL: "false"
       LLM_PROVIDER: custom
-      LLM_MODEL: openai/glm-5.3
-      LLM_ENDPOINT: https://api.z.ai/api/coding/paas/v4
+      LLM_MODEL: openai/glm-5.3-flash
+      # Same AvalAI routing as cognee (2026-09-13, quota exhaustion).
+      LLM_ENDPOINT: https://api.avalai.ir/v1
       EMBEDDING_PROVIDER: openai_compatible
       # The embedder is frozen into the ingested pgvector tables — a
       # stack whose data predates ADR 0004 pins small/1536 in .env
@@ -159,6 +163,12 @@ services:
         condition: service_healthy
     environment:
       LLM_API_KEY: ${LLM_API_KEY}
+      # The composer (picker, phase-2 writer, dive calls) builds its URL
+      # from LLM_ENDPOINT — routed to AvalAI with the services above
+      # (2026-09-13, Z.AI quota exhaustion). Its default fallback in
+      # composer.py stays the Z.AI coding endpoint.
+      LLM_ENDPOINT: https://api.avalai.ir/v1
+      LLM_MODEL: ${LLM_MODEL:-openai/glm-5.3-flash}
       COGNEE_URL: http://cognee:8000
       # The next-tier service listens on its CONTAINER port 8000 — 8001 is
       # only the host publish.
@@ -169,8 +179,16 @@ services:
       SESSION_UI_HOST: 0.0.0.0
       SESSION_UI_PORT: "8765"
       SESSION_UI_QUOTA_DB: /data/usage.sqlite3
+      # Research Mode's sessions persist beside the quota counts on the
+      # same volume (ADR-0008) — a container rebuild must not throw an
+      # in-progress investigation away.
+      SESSION_RESEARCH_DB: /data/research.sqlite3
     volumes:
       - session_quota:/data
+      # The Book set's PDFs + page indexes (ADR-0007), served by
+      # serve.py's /books routes. Default BOOKS_DIR resolves to /books —
+      # ui/serve.py's parent — so the mount point matches the dev layout.
+      - ./books:/books:ro
     ports:
       - "8765:8765"
     healthcheck:

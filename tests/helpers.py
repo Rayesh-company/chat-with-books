@@ -17,7 +17,16 @@ from tests.conftest import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from ui import composer, dive, picker, quotas, serve  # noqa: E402
+from ui import (  # noqa: E402
+    composer,
+    dive,
+    picker,
+    quotas,
+    recall_more,
+    research,
+    research_store,
+    serve,
+)
 
 
 def post(base, path, payload, phone=None):
@@ -173,19 +182,19 @@ class FakeComposer:
         return Response(item)
 
 
-def wait_job_done(job_id, timeout=15):
-    """Wait for a dive job to settle and its worker thread to exit.
+def wait_turn_done(turn_id, timeout=15):
+    """Wait for a research turn to settle and its worker thread to exit.
 
-    Every test that starts a dive must end here (or abort the job) before
-    stop_gate: a worker still running past the patch restore would call
-    the real urlopen."""
+    Every test that starts a turn must end here (or abort the turn)
+    before stop_gate: a worker still running past the patch restore
+    would call the real urlopen."""
     deadline = time.monotonic() + timeout
-    job = serve.DIVE_REGISTRY[job_id]
+    turn = research.RESEARCH_REGISTRY[turn_id]
     while time.monotonic() < deadline:
-        if job.state in serve.DIVE_TERMINAL_STATES and job.done.is_set():
-            return job
+        if turn.state in research.TURN_TERMINAL_STATES and turn.done.is_set():
+            return turn
         time.sleep(0.02)
-    raise AssertionError(f"dive job {job_id} never settled: state={job.state}")
+    raise AssertionError(f"research turn {turn_id} never settled: state={turn.state}")
 
 
 class GateServer(ThreadingHTTPServer):
@@ -198,19 +207,22 @@ class GateServer(ThreadingHTTPServer):
 
 
 def with_gate(tmp_path, upstream):
-    """Run a real sheet server against a patched quota DB and upstream;
-    return (base URL, server, original urlopen). The tests' finally blocks
-    must shut the server down and restore both patches. The quota DB is
-    patched at its owning module (ui.quotas reads it per connection), the
-    fake stands at every owning module's urlopen seam — the facade's own
-    relay/proxy, the composer's, the picker's, and the dive's (one
-    upstream told apart by URL, as before). The dive registry starts
-    empty — a server restart is what empties it in production."""
+    """Run a real sheet server against a patched quota DB, research DB,
+    and upstream; return (base URL, server, original urlopen). The
+    tests' finally blocks must shut the server down and restore all
+    three patches. The quota DB is patched at its owning module
+    (ui.quotas reads it per connection), the research store's DB at
+    ui.research_store, and the fake stands at every owning module's
+    urlopen seam — the facade's own relay/proxy, the composer's, the
+    picker's, the dive kernel's, and the research engine's (one upstream
+    told apart by URL). The turn registry starts empty — a server
+    restart is what empties it in production."""
     quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
-    serve.DIVE_REGISTRY.clear()
+    research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
+    research.RESEARCH_REGISTRY.clear()
     originals = [
         (module, module.urlopen)
-        for module in (serve, composer, picker, dive)
+        for module in (serve, composer, picker, dive, research, recall_more)
     ]
     for module, _ in originals:
         module.urlopen = upstream

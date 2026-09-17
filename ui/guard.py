@@ -129,40 +129,98 @@ def guard_blocks(blocks, sources):
                     {
                         "quote": quote.strip(),
                         "source": index,
-                        **_citation_labels(sources[index]["reference"]),
+                        **_citation_labels(
+                            sources[index]["reference"], sources[index]["passage"]
+                        ),
                     }
                 )
                 has_quote = True
             if has_quote and has_text:
                 kept.append({"type": "paragraph", "parts": kept_parts})
+    kept = prune_empty_sections(kept)
     paragraphs = sum(1 for block in kept if block["type"] == "paragraph")
     headings = sum(1 for block in kept if block["type"] == "heading")
     return kept if paragraphs and (paragraphs >= 2 or headings) else []
 
 
-def pages_label(reference: str) -> str:
+def prune_empty_sections(blocks: list) -> list:
+    """Drop a heading whose section kept no paragraph. The guard keeps
+    headings unconditionally but paragraphs only with a surviving quote
+    — a section whose quotes all failed would render as a bare heading
+    (the recorded live complaint: empty sections in the Quoted answer).
+    A heading survives only when a kept paragraph follows it before the
+    next heading or the end. Pure code, order-preserving; the document
+    tail (references) is not a heading, so it rides untouched."""
+    kept = []
+    pending_headings = []
+    for block in blocks:
+        if block.get("type") == "heading":
+            pending_headings.append(block)
+            continue
+        kept.extend(pending_headings)
+        pending_headings = []
+        kept.append(block)
+    return kept
+
+
+# The true-page resolver seam (ADR-0011): None by default — labels come
+# from the locator's estimate. serve.py installs
+# ui.page_resolver.resolve_first_page at startup so every kept quote's
+# labels name the passage's ACTUAL page (the recorded drift: every
+# sampled passage sat at label-1). A resolver that returns None leaves
+# the estimate — never an invented page.
+PAGE_RESOLVER = None
+
+
+def _resolved_first_page(reference: str, passage: str) -> int:
+    """The passage's actual first page via the installed resolver; 0
+    when none installed, none found, or the shape is unusable."""
+    if PAGE_RESOLVER is None or not passage:
+        return 0
+    try:
+        page = PAGE_RESOLVER(reference, passage)
+    except Exception:
+        # A labeling lookup must never fail a reply: the estimate
+        # stands.
+        return 0
+    return page if isinstance(page, int) and page > 0 else 0
+
+
+def pages_label(reference: str, passage: str = "") -> str:
     """Farsi chunk-range label for an Evidence locator; '' with no pages.
 
     The paragraph-end Citation carries the whole range — "تا" between the
-    numbers, not a dash: digits are LTR-weak in Farsi text. A passage
-    without page markers cites the Book alone on the sheet — never an
+    numbers, not a dash: digits are LTR-weak in Farsi text. With a
+    resolver installed, the range's FIRST page is the passage's actual
+    page (the locator's estimate rides on when resolution fails). A
+    passage without page markers cites the Book alone on the sheet — never an
     invented page.
     """
     pages = _PAGES_IN_REFERENCE.search(reference)
+    single = _PAGE_IN_REFERENCE.search(reference)
+    resolved = _resolved_first_page(reference, passage)
     if pages:
-        return f"صفحات {pages.group(1)} تا {pages.group(2)}"
-    page = _PAGE_IN_REFERENCE.search(reference)
-    if page:
-        return f"صفحه {page.group(1)}"
-    return ""
+        first, last = int(pages.group(1)), int(pages.group(2))
+        if resolved:
+            return (
+                f"صفحات {resolved} تا {last}" if resolved < last else f"صفحه {resolved}"
+            )
+        return f"صفحات {first} تا {last}"
+    if single:
+        return f"صفحه {resolved or int(single.group(1))}"
+    return f"صفحه {resolved}" if resolved else ""
 
 
-def first_page_label(reference: str) -> str:
+def first_page_label(reference: str, passage: str = "") -> str:
     """Farsi label for the page a passage STARTS on; '' with no pages.
 
     The per-sentence tooltip stays on this first page (PM call,
-    2026-09-10) while the paragraph end carries the full range.
+    2026-09-10) while the paragraph end carries the full range — the
+    true page when the resolver knows it, the estimate otherwise.
     """
+    resolved = _resolved_first_page(reference, passage)
+    if resolved:
+        return f"صفحه {resolved}"
     pages = _PAGES_IN_REFERENCE.search(reference)
     if pages:
         return f"صفحه {pages.group(1)}"
@@ -184,12 +242,14 @@ def book_label(reference: str) -> str:
     return _BOOK_TITLES.get(document.group(1), document.group(1))
 
 
-def _citation_labels(reference: str) -> dict:
+def _citation_labels(reference: str, passage: str = "") -> dict:
     """The three Farsi labels a kept quote carries for exactly the
-    passage it claims — the chunk range, first page, and Book."""
+    passage it claims — the chunk range, first page, and Book. The
+    first page and the range's opening are the passage's TRUE page when
+    the resolver is installed (ADR-0011)."""
     return {
-        "pages_label": pages_label(reference),
-        "first_page_label": first_page_label(reference),
+        "pages_label": pages_label(reference, passage),
+        "first_page_label": first_page_label(reference, passage),
         "book_label": book_label(reference),
     }
 

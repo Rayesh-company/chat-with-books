@@ -322,7 +322,7 @@ def test_next_best_move_orders_the_wayfinder():
     assert research.next_best_move(state) == "checkpoint"
 
 
-def test_suggestions_pair_proposal_chips_and_cap_the_set():
+def test_suggestions_lead_with_proposal_chips_then_the_moves():
     state = research.new_research_state("پرسش؟")
     state["pending_proposals"] = [
         {"id": "p1", "kind": "research_question", "text": "پرسش دقیق‌تر؟"}

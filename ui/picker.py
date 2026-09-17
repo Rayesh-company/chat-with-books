@@ -112,7 +112,7 @@ def pick_quote_selection(question: str, sources):
         {
             "text": item["text"],
             "reference": item["reference"],
-            **_citation_labels(item["reference"]),
+            **_citation_labels(item["reference"], item["text"]),
         }
         for item in kept
     ]

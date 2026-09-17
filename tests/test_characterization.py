@@ -46,6 +46,7 @@ from tests.upstream_fakes import (  # noqa: E402
     parked_proposal_state,
     recall_call_count,
     run_turn_sync,
+    with_patched_upstream,
 )
 from ui import research, research_store  # noqa: E402
 
@@ -408,16 +409,21 @@ def test_free_text_reshows_the_checkpoint_but_a_command_executes(tmp_path):
     assert session["state"]["pending_proposals"]  # parked, untouched
 
 
-# --- the desired-but-unbuilt turn budget (audit 1's fix) ---------------------
+# --- the turn budget (audit 1's fix) -----------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="the injected turn budget arrives with ticket #4 (T3)", strict=True
-)
 def test_a_turn_respects_an_injected_budget(tmp_path):
+    # Fulfilled by T3 #4: the worker takes the budget at its highest
+    # point; a deadline of 0 is exhausted before the first bounded step,
+    # so the turn settles done with the honest stop note — and makes no
+    # upstream call at all.
     session = make_session(tmp_path)
     turn = research.ResearchTurn(PHONE, session["id"], "پیام")
-    with_patched_upstream(ResearchUpstream(), tmp_path)(
-        lambda: research.run_research_turn(turn, session, budget_seconds=0.01)
+    upstream = ResearchUpstream(composer_replies=[classify_reply()])
+    with_patched_upstream(upstream, tmp_path)(
+        lambda: research.run_research_turn(turn, session, budget_seconds=0)
     )
     assert turn.state == "done"
+    assert upstream.calls == []
+    texts = [block.get("text", "") for block in turn.result["reply"]]
+    assert texts == [research.RESEARCH_BUDGET_STOP_DETAIL]

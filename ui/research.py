@@ -471,9 +471,10 @@ def ensure_state_shape(state: dict) -> dict:
     state["grilling"].setdefault("options", [])
     state.setdefault("datasets", list(BOOK_DATASETS))
     state.setdefault("diagnoses", [])
-    # The plan ledger exists from the first session shape on (T7); the
-    # cooldown dict is NOT seeded with the plan's key — a kind's entry
-    # appears when that kind is decided, and every read defaults to 0.
+    # The plan ledger exists from the first session shape on (T7). A
+    # fresh state seeds all three cooldown keys; this upgrade only tops
+    # up the V0.1 pair — a kind's entry appears here when that kind is
+    # first decided, and every read defaults to 0 either way.
     state.setdefault("brief_plan", {"current": None, "versions": []})
     cooldowns = state.setdefault("proposal_cooldowns", {})
     for kind in ("research_question", "scope"):
@@ -758,7 +759,9 @@ def research_suggestions(state: dict) -> list:
             )
     grilling = state.get("grilling", {})
     if grilling.get("current_question"):
-        for option in grilling.get("options", [])[:4]:
+        # The skip is never cut by the cap (the universal-skip rule):
+        # the options take only the room left under it.
+        for option in grilling.get("options", [])[: 6 - len(suggestions) - 1]:
             suggestions.append({"kind": "answer", "id": "answer", "text": option})
         suggestions.append({"kind": "skip", "id": "skip", "text": GRILLING_SKIP})
         return suggestions[:6]

@@ -44,9 +44,10 @@ def test_session_ui_splits_answers_into_three_switchable_sections():
         assert f'id="{panel}"' in html
     assert "پاسخ اول" in html
     assert "پاسخ استنادی" in html
-    # Phase 3 is the Deep dive now (CONTEXT.md: a second study) — the
-    # superseded «جست‌وجوی سطح بعدی» name is gone with the auto-start.
-    assert "مطالعۀ عمیق" in html
+    # Phase 3 is Research Mode now (ADR-0008): the guided research
+    # conversation — the superseded dive and auto-start names are gone.
+    assert "حالت پژوهش" in html
+    assert "مطالعۀ عمیق" not in html
     assert "جست‌وجوی سطح بعدی" not in html
     assert "selectPhase(" in html
     assert 'id="phase-now"' in html
@@ -133,6 +134,10 @@ def test_session_ui_never_serves_from_stale_cache():
     # A browser that heuristically cached the page kept rendering the
     # pre-tab sheet after the container switchover (2026-09-11): every
     # response must carry Cache-Control: no-cache so loads revalidate.
+    # Only the page rasters override it, with an explicit per-response
+    # policy (_cache_policy — an immutable cache key of dataset, page,
+    # and width bucket); the default stays no-cache.
     text = SERVE.read_text(encoding="utf-8")
     assert "Cache-Control" in text
-    assert 'send_header("Cache-Control", "no-cache")' in text
+    assert 'getattr(self, "_cache_policy", None) or "no-cache"' in text
+    assert '"max-age=604800, immutable"' in text

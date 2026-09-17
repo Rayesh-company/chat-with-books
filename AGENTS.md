@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Issues live in GitHub Issues for `aubed9/chat-with-books` and are operated with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in GitLab Issues for `mohamadreza/chatbot-v1` on `gitlab.rayesh-team.ir` (the tracker repo — not this clone's origin) and are operated with the `glab` CLI, always passing `--hostname gitlab.rayesh-team.ir` and `--repo mohamadreza/chatbot-v1`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

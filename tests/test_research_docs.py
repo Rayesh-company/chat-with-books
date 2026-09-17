@@ -227,7 +227,8 @@ def test_the_sheet_stage_labels_carry_the_plain_persian_table():
 def test_context_records_the_approved_persian_display_names():
     # T10 (GitLab #11): the naming table lives in CONTEXT.md (ADR-0012 —
     # the vocabulary home), the PM approved the roster there, and the
-    # skill table's rows carry exactly those display names.
+    # skill table's rows carry exactly those display names — the
+    # skill-to-name mapping pinned, not just present.
     text = CONTEXT.read_text(encoding="utf-8")
     for name in (
         "راهنما",
@@ -242,8 +243,18 @@ def test_context_records_the_approved_persian_display_names():
         "تشخیص‌گر",
     ):
         assert name in text
+    expected = {
+        "casual_question": "میزبان",
+        "concept_learning": "میزبان",
+        "source_lookup": "میزبان",
+        "research_exploration": "راهنما",
+        "active_research": "جست‌وجوگر",
+        "drafting": "نویسنده",
+        "evidence_audit": "بازبین",
+    }
+    assert {row["name"] for row in research.SKILL_TABLE} == set(expected)
     for row in research.SKILL_TABLE:
-        assert row["display_name"]
+        assert row["display_name"] == expected[row["name"]]
 
 
 def test_the_adr_records_the_sheet_and_skip_decisions():

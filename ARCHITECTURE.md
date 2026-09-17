@@ -478,9 +478,10 @@ Why this shape:
   (`RESEARCH_TURN_CALL_CAP`, 24 — above every legitimate single-operation turn,
   below a runaway chain), both read through an injected clock so tests exhaust
   either instantly, no waiting on real time. Every bounded step — the classify
-  call, the planner, one searcher round, one writer call, the narrator — is
-  pre-paid from the budget before it starts, so the cap can never be exceeded
-  mid-call; the deadline is checked at every chain boundary (cooperative, the
+  call, the planner, one searcher round, one writer call — is pre-paid from
+  the budget before it starts (the narrator, decoration, is charged only when
+  it actually speaks), so the cap can never be exceeded mid-call; the deadline
+  is checked at every chain boundary (cooperative, the
   cancel flag's shape: an in-flight call is never interrupted, so a turn
   overshoots by at most the one call already in flight). An over-budget turn
   stops at that boundary and says so: the honest Farsi note

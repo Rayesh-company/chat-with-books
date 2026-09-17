@@ -495,13 +495,13 @@ def test_readme_records_the_phone_gate():
     assert "five chats a day" in section
     assert "no SMS verification" in section
     # The header rides on every chat-owned call — the picker and the
-    # dive's status poll included, not only the ask and phase 2
-    # (full-spec review, 2026-09-12).
+    # research turns' polls included, not only the ask and phase 2
+    # (full-spec review, 2026-09-12; ADR-0008).
     assert "/quote-selection" in section
-    assert "/deep-dive/status" in section
+    assert "/research/turn" in section
     # The retired swap vocabulary stays retired (round-2 review,
     # 2026-09-12): the tabbed sheet lands the document in phase 2's tab
-    # or not at all, so the fifth chat's own Quoted answer and dive must
-    # pass — no swap noun.
-    assert "the fifth chat's own Quoted answer and dive must pass" in section
+    # or not at all, so the fifth chat's own Quoted answer and research
+    # conversation must pass — no swap noun.
+    assert "the fifth chat's own Quoted answer and research conversation must pass" in section
     assert "swap" not in section
