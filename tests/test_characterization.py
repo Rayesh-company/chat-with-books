@@ -19,207 +19,35 @@ The discipline of this file:
 Ticket numbers are GitLab issues on gitlab.rayesh-team.ir
 (mohamadreza/chatbot-v1): T1=#2 … T13=#14, under spec #1.
 
-The fakes below are this file's own copies of the contract-lock
-harness (tests/helpers.py is the fakes' canonical home; consolidating
-these into it is the T2 router ticket's harness refactor, kept out of
-this ticket to leave the sibling module untouched)."""
+The fakes live in tests/upstream_fakes.py — the harness's canonical
+home, outside every test module (tests/helpers.py's rule)."""
 
 import json
-import sys
-import threading
 
 import pytest
 
 from tests.conftest import REPO_ROOT
 
+import sys  # noqa: E402
+
 sys.path.insert(0, str(REPO_ROOT))
 
-from ui import dive, research, research_store  # noqa: E402
-
-PHONE = "09120000000"
-SENTENCE = "سخن در این است؛"
-OTHER_SENTENCE = "این جمله از قطعهٔ دیگری است."
-
-FED_RECALL_TEXT = (
-    "پاسخ.\n\nEvidence:\n"
-    f"- chunk 1 of document tarhe-kolli (pages 10-12): \"{SENTENCE}\"\n"
-    f"- chunk 29 of document tarhe-kolli: \"{OTHER_SENTENCE}\""
+from tests.upstream_fakes import (  # noqa: E402
+    PHONE,
+    SENTENCE,
+    ResearchUpstream,
+    classify_reply,
+    cognee_payload,
+    composer_bodies,
+    composer_reply,
+    conversational_writer_reply,
+    guarded_blocks,
+    make_session,
+    parked_proposal_state,
+    recall_call_count,
+    run_turn_sync,
 )
-
-
-def cognee_payload(text):
-    return json.dumps([{"text": text}]).encode("utf-8")
-
-
-def composer_reply(content):
-    return json.dumps({"choices": [{"message": {"content": content}}]}).encode(
-        "utf-8"
-    )
-
-
-def classify_reply(intent="casual_question", **fields):
-    payload = {
-        "intent": intent,
-        "rq_proposal": "",
-        "reason": "",
-        "concepts": [],
-        "subquestions": [],
-        "scope_in": [],
-        "scope_out": [],
-    }
-    payload.update(fields)
-    return composer_reply(json.dumps(payload, ensure_ascii=False))
-
-
-def guarded_blocks(sources):
-    """One quoting paragraph per source — the shape the verbatim guard
-    keeps. Each paragraph's text differs, so each records as its own
-    claim."""
-    blocks = [{"type": "heading", "text": "بخش نخست"}]
-    for index, source in enumerate(sources):
-        blocks.append(
-            {
-                "type": "paragraph",
-                "parts": [
-                    {"text": f"ادعای {index + 1}: "},
-                    {"quote": source["passage"], "source": index},
-                ],
-            }
-        )
-    return {"blocks": blocks}
-
-
-class ResearchUpstream:
-    """The scripted composer + second-tier Cognee, told apart by URL;
-    an entry that is an Exception instance is raised instead of
-    answered. Thread-safe — the gather's searchers call in parallel."""
-
-    def __init__(self, composer_replies=(), recall_reply=None):
-        self.lock = threading.Lock()
-        self.calls = []
-        self.bodies = []
-        self.composer_replies = [
-            reply.encode("utf-8") if isinstance(reply, str) else reply
-            for reply in composer_replies
-        ]
-        self.recall_reply = recall_reply or (
-            lambda payload: cognee_payload(FED_RECALL_TEXT)
-        )
-
-    def __call__(self, request, timeout=None):
-        url = request.full_url
-        body = request.data.decode("utf-8") if request.data else ""
-        if "chat/completions" in url:
-            with self.lock:
-                self.calls.append(url)
-                self.bodies.append(body)
-                reply = self.composer_replies.pop(0)
-        else:
-            reply = self.recall_reply(json.loads(body))
-            with self.lock:
-                self.calls.append(url)
-                self.bodies.append(body)
-        if isinstance(reply, Exception):
-            raise reply
-
-        class Response:
-            status = 200
-            headers = {"Content-Type": "application/json"}
-
-            def __init__(self, body):
-                self._body = body
-
-            def read(self):
-                return self._body
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-        return Response(reply)
-
-
-def composer_bodies(upstream):
-    return [
-        json.loads(body)
-        for url, body in zip(upstream.calls, upstream.bodies)
-        if "chat/completions" in url
-    ]
-
-
-def recall_call_count(upstream):
-    return len(upstream.calls) - len(composer_bodies(upstream))
-
-
-def with_patched_upstream(upstream, tmp_path):
-    """Patch the engine's and the kernel's urlopens plus the store's DB
-    for one direct call; restore after."""
-
-    def run(fn):
-        research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
-        originals = [(module, module.urlopen) for module in (research, dive)]
-        for module, _ in originals:
-            module.urlopen = upstream
-        import os
-
-        os.environ["LLM_API_KEY"] = "test-key"
-        try:
-            return fn()
-        finally:
-            for module, original in originals:
-                module.urlopen = original
-            del os.environ["LLM_API_KEY"]
-
-    return run
-
-
-def run_turn_sync(session, message, upstream, tmp_path):
-    """One turn's worker, synchronously over a registry turn — the
-    orchestration seam without the HTTP layer or the thread."""
-    turn = research.ResearchTurn(session["phone"], session["id"], message)
-    research.RESEARCH_REGISTRY[turn.id] = turn
-    with_patched_upstream(upstream, tmp_path)(
-        lambda: research.run_research_turn(turn, session)
-    )
-    return turn
-
-
-def make_session(tmp_path, state=None):
-    research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
-    session, error = research.ensure_session(
-        PHONE, None, "پیام آغازین", "پرسش پژوهش؟", []
-    )
-    assert session is not None, error
-    if state:
-        session["state"] = state
-    return session
-
-
-def conversational_writer_reply():
-    return composer_reply(
-        json.dumps(
-            guarded_blocks([{"passage": SENTENCE}]), ensure_ascii=False
-        )
-    )
-
-
-def parked_proposal_state():
-    state = research.new_research_state("پرسش پژوهش؟")
-    research._apply_classify_updates(
-        state,
-        {
-            "intent": "research_exploration",
-            "rq_proposal": "پرسش دقیق‌تر؟",
-            "reason": "چون",
-            "concepts": [],
-            "subquestions": [],
-            "scope_in": [],
-            "scope_out": [],
-        },
-    )
-    return state
+from ui import research, research_store  # noqa: E402
 
 
 # --- the conversation layer's silent degrade (audit 4) -----------------------
@@ -228,11 +56,11 @@ def parked_proposal_state():
 def test_a_classify_upstream_failure_falls_back_conversational_and_silently(
     tmp_path,
 ):
-    # [T2 #3 adds the recorded diagnosis event — this pin's event list
-    # is what that ticket rewrites] The classify call dying degrades the
-    # turn to the conversational path — one searcher, one guarded
-    # writer, no crash, no research formalism moved — and today nothing
-    # records WHY.
+    # Fulfilled by T2 #3: the fallback stays conversational — one
+    # searcher, one guarded writer, no crash, no research formalism
+    # moved — and the failure is now RECORDED as a router diagnosis
+    # (the router contract owns the deeper assertions; see
+    # test_skill_router.py). This pin keeps the fallback itself honest.
     upstream = ResearchUpstream(
         composer_replies=[
             OSError("classify downstream dead"),
@@ -248,8 +76,9 @@ def test_a_classify_upstream_failure_falls_back_conversational_and_silently(
     assert state["subquestions"] == []
     assert state["pending_proposals"] == []
     assert state["decisions"] == []
-    # The silent part: the event timeline carries only the lifecycle's
-    # own marks — no diagnosis, no anomaly.
+    assert [d["kind"] for d in state["diagnoses"]] == ["router"]
+    # The event timeline carries only the lifecycle's own marks — the
+    # diagnosis lives in the state, not the turn's event list.
     assert turn.events == [
         research.RESEARCH_EVENT_CLASSIFYING,
         research.RESEARCH_EVENT_SEARCHING,
