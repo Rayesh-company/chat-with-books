@@ -886,6 +886,24 @@
         line-height: 1.9;
       }
 
+      /* The Host's commentary (T5): reasoning the Books cannot support
+         — visibly apart from the quoted answer, never mistaken for a
+         claim. Dashed rule, muted ink, the «برداشت» tag in front. */
+      .research-commentary {
+        margin: 0 0 0.55rem;
+        padding: 0.35rem 0.6rem;
+        border-right: 3px dashed var(--mute);
+        color: var(--mute);
+        font-style: italic;
+        line-height: 1.8;
+      }
+
+      .research-commentary .commentary-tag {
+        font-style: normal;
+        font-weight: 600;
+        margin-left: 0.3rem;
+      }
+
       /* The map's own rows: the frontier emphasized, the fog muted. */
       .research-state-row.frontier {
         color: var(--ink);
@@ -1808,6 +1826,16 @@
             }
           } else if (block.type === "note") {
             doc.append(researchText(block.text));
+          } else if (block.type === "commentary") {
+            // The Host's reasoning channel (T5): always tagged, always
+            // apart — the reader sees it is not the Books speaking.
+            const wrap = document.createElement("p");
+            wrap.className = "research-commentary";
+            const tag = document.createElement("span");
+            tag.className = "commentary-tag";
+            tag.textContent = "برداشت";
+            wrap.append(tag, document.createTextNode(block.text));
+            doc.append(wrap);
           } else if (block.type === "question") {
             doc.append(researchText(block.text, "research-question"));
           }

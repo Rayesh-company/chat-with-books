@@ -192,7 +192,9 @@ def test_a_deadline_passing_during_the_last_call_is_still_reported(tmp_path):
     # crosses the deadline DURING the final bounded call — every afford
     # check passed beforehand, nothing refuses afterwards. The turn
     # still says so: the stop note closes the reply and the poll reads
-    # deadline.
+    # deadline. (T5, GitLab #6: the Host's chain runs classify, the
+    # fresh search, and one graph hop probe before the writer, so the
+    # slow seconds now land the crossing inside the writer itself.)
     clock = FakeClock(0)
     slow = SlowUpstream(
         ResearchUpstream(
@@ -206,10 +208,10 @@ def test_a_deadline_passing_during_the_last_call_is_still_reported(tmp_path):
     )
     session = make_session(tmp_path)
     turn = run_turn_sync(
-        session, "پیام ساده", slow, tmp_path, budget_seconds=1500, clock=clock
+        session, "پیام ساده", slow, tmp_path, budget_seconds=2000, clock=clock
     )
     assert turn.state == "done"
-    assert clock.now >= 1500  # the deadline passed mid-call
+    assert clock.now >= 2000  # the deadline passed mid-call
     reply = turn.result["reply"]
     assert {
         "type": "note",

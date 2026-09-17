@@ -386,9 +386,19 @@ TURN LIFECYCLE (progress events in Farsi, polled every 2s):
   drafting, closing_review, evidence_audit, map_keeper, fog_probe}. A
   malformed reply degrades to the conversational path — never crashes.
 
-  CONVERSATION LAYER (casual/learning/lookup):
-    ONE searcher over the message + ONE guarded writer pass over its pool;
-    references cite exactly that pool. No research state change.
+  CONVERSATION LAYER — the Host (casual/learning/lookup, ADR-0012 T5):
+    bounded cited reasoning with the ledger open: the gathered evidence
+    most relevant to the message leads the pool (pure-code token
+    overlap, capped 4), ONE fresh hybrid search follows, then at most
+    TWO chained graph hops (dive.graph_hop: one GRAPH_COMPLETION
+    steering at most two citable hybrid searches; a hop that feeds the
+    pool ends the chain, a starved one re-seeds from its own top label
+    — never the message again); the pool caps at 12, deduplicated on
+    the guard's normalized letter stream. ONE guarded writer pass with
+    the commentary channel open: reasoning the pool cannot support
+    lands as a distinct «برداشت» block — visible, no quotes, never a
+    claim — and every citation stays true-paged. References cite
+    exactly the quoted pool. No research state change.
 
   JOURNEY LAYER (ADR-0009, exploration/active turns inside the research
   side — the spine the operations hang on):

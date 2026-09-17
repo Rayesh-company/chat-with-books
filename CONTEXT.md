@@ -53,7 +53,7 @@ The final check of a written Research Brief on two axes: traceability (every sec
 _Avoid_: audit (the audit inspects the claim ledger, not the Brief), proofread, QA pass
 
 **Host (میزبان)**:
-The conversational Research skill: a side answer built by bounded cited reasoning over the Book set — retrieval and graph Tools, at most two hops, every quote through the guard, every citation on a real page — with the evidence ledger open to it. Reasoning the Books cannot support renders as commentary, never as a claim.
+The conversational Research skill: a side answer built by bounded cited reasoning over the Book set — retrieval and graph Tools, at most two hops, every quote through the guard, every citation on a real page — with the evidence ledger open to it. Reasoning the Books cannot support renders as commentary («برداشت», its own visibly distinct block), never as a claim.
 _Avoid_: chat mode, free chat, chit-chat
 
 **Diagnoser (تشخیص‌گر)**:

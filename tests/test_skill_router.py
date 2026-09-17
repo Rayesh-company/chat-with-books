@@ -125,7 +125,10 @@ def test_an_unparseable_router_reply_is_recorded_too(tmp_path):
     session = make_session(tmp_path)
     turn = run_turn_sync(session, "یک پرسش ساده", upstream, tmp_path)
     assert turn.state == "done"
-    assert recall_call_count(upstream) == 1
+    # T5 (GitLab #6): the Host's side answer no longer stops at one
+    # search — the fresh recall rides one graph hop; the default reply's
+    # label-less shape ends the chain here, so exactly two recall calls.
+    assert recall_call_count(upstream) == 2
     diagnoses = session["state"]["diagnoses"]
     assert len(diagnoses) == 1
     entry = diagnoses[0]

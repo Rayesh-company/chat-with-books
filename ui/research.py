@@ -223,8 +223,8 @@ SKILL_TABLE = (
         "kind": "chat",
         "runner": "chat",
         "allowed_stages": None,
-        "caps": "one searcher, one guarded writer",
-        "tools": ("hybrid",),
+        "caps": "one searcher, ≤2 graph hops, one guarded writer",
+        "tools": ("hybrid", "graph"),
         "state_reads": ("datasets",),
         "state_writes": ("diagnoses",),
         "guarded": True,
@@ -236,8 +236,8 @@ SKILL_TABLE = (
         "kind": "chat",
         "runner": "chat",
         "allowed_stages": None,
-        "caps": "one searcher, one guarded writer",
-        "tools": ("hybrid",),
+        "caps": "one searcher, ≤2 graph hops, one guarded writer",
+        "tools": ("hybrid", "graph"),
         "state_reads": ("datasets",),
         "state_writes": ("diagnoses",),
         "guarded": True,
@@ -249,8 +249,8 @@ SKILL_TABLE = (
         "kind": "chat",
         "runner": "chat",
         "allowed_stages": None,
-        "caps": "one searcher, one guarded writer",
-        "tools": ("hybrid",),
+        "caps": "one searcher, ≤2 graph hops, one guarded writer",
+        "tools": ("hybrid", "graph"),
         "state_reads": ("datasets",),
         "state_writes": ("diagnoses",),
         "guarded": True,
@@ -501,6 +501,17 @@ RESEARCH_MAX_DECISIONS = 40
 # ledgers; only the map row retires, and only by the operator's
 # accepted decision.
 MAP_KEEPER_DONE_QUESTIONS = 4
+# The Host's side-answer chain (ADR-0012, T5): at most two hops — one
+# hop is dive.graph_hop's shape, a graph completion steering at most two
+# citable hybrid searches — and the second runs only when the first
+# starved, seeded by the first hop's own top label (chained deeper into
+# the Book graph, never a repeat of the message). The pool stays
+# bounded too: the ledger's most relevant passages lead it, the fresh
+# recall and the hops' passages follow, deduplicated on the guard's
+# normalized letter stream.
+HOST_HOP_CAP = 2
+HOST_LEDGER_POOL_CAP = 4
+HOST_POOL_CAP = 12
 # The claim ledger's statuses (Wayfinder §11, minus External Knowledge:
 # this platform answers from the Books only, so out-of-corpus content is
 # labeled commentary in notes and may never enter a claim). The first
@@ -1794,7 +1805,9 @@ def build_conversational_prompt(message: str, sources) -> str:
     passages = _numbered_passages(sources)
     return (
         "You are answering a Farsi message inside a research conversation "
-        "over a fixed set of Books.\n\n"
+        "over a fixed set of Books. This conversation is itself an "
+        "investigation: the passages include what has already been "
+        "gathered for it, so use them and stay connected to it.\n\n"
         f"Message: {message}\n\n"
         "Passages (numbered, retrieved from the Books' Evidence; "
         "text-layer noise like \\b backspaces may appear between words):\n"
@@ -1808,12 +1821,19 @@ def build_conversational_prompt(message: str, sources) -> str:
         "paraphrase, do not merge, do not shorten. Never state a Book "
         "claim the passages do not support; never write a paragraph "
         "without at least one quoted sentence; never invent a quote.\n"
+        "Reasoning that goes BEYOND what the passages say — your own "
+        "inference, a connection to the investigation — belongs in ONE "
+        'optional commentary block, {"type": "commentary", "text": '
+        '"..."}: plain Farsi, no quotes inside, placed after the '
+        "paragraphs it follows. The sheet renders commentary visibly "
+        "apart from the quoted answer; the reader must never mistake it "
+        "for what the Books say.\n"
         "Do NOT write a references list — the sheet appends the "
         "references itself.\n\n"
         "Reply with ONLY a JSON object, no prose, no code fence:\n"
         '{"blocks": [{"type": "paragraph", "parts": [{"text": "..."}, '
         '{"quote": "<verbatim sentence>", "source": <passage index>}, '
-        '{"text": "..."}]}]}'
+        '{"text": "..."}]}, {"type": "commentary", "text": "..."}]}'
     )
 
 
@@ -1982,11 +2002,14 @@ def _continue_once(prompt: str, blocks: list, budget=None):
     return blocks + extra, reply["choices"][0].get("finish_reason") == "length"
 
 
-def _write_once(prompt: str, sources, budget=None):
+def _write_once(prompt: str, sources, budget=None, commentary=False):
     """One writer attempt over a pool: (guarded blocks, truncated) — the
     dive's _write_dive_once shape: call, parse, ONE length-cut
     continuation, guard. The writer call is pre-paid from the turn's
-    budget first; a refusal propagates to the worker's honest stop."""
+    budget first; a refusal propagates to the worker's honest stop.
+    `commentary` turns the guard's Host channel on (ADR-0012, T5):
+    reasoning the pool cannot support lands as commentary, not a
+    drop."""
     if budget is not None:
         budget.require(1)
     try:
@@ -1996,19 +2019,19 @@ def _write_once(prompt: str, sources, budget=None):
         return [], False
     blocks = parse_quoted_reply(content)
     if reply["choices"][0].get("finish_reason") != "length":
-        return guard_blocks(blocks, sources), False
+        return guard_blocks(blocks, sources, commentary=commentary), False
     blocks, truncated = _continue_once(prompt, blocks, budget)
-    return guard_blocks(blocks, sources), truncated
+    return guard_blocks(blocks, sources, commentary=commentary), truncated
 
 
-def compose_guarded_reply(prompt: str, sources, budget=None):
+def compose_guarded_reply(prompt: str, sources, budget=None, commentary=False):
     """One guarded writer pass with the dive's bounded repair: a reply "
     whose guard keeps NOTHING gets ONE writer retry over the same pool —
     never a loop. The turn's budget pre-pays every writer call."""
-    blocks, truncated = _write_once(prompt, sources, budget)
+    blocks, truncated = _write_once(prompt, sources, budget, commentary=commentary)
     if blocks:
         return blocks, truncated
-    return _write_once(prompt, sources, budget)
+    return _write_once(prompt, sources, budget, commentary=commentary)
 
 
 def _write_section_once(prompt: str, sources, title: str, budget=None):
@@ -3993,19 +4016,90 @@ def _audit(state: dict) -> list:
     return blocks
 
 
+def _host_tokens(text: str) -> list:
+    """Word tokens over the guard's normalized letter stream: each
+    whitespace word reduced the way the dedupe reduces a passage, short
+    function words dropped — overlap measured word by word, never on
+    the whole-stream substring the guard compares."""
+    tokens = []
+    for word in text.split():
+        token = normalize_for_match(word)
+        if len(token) > 2:
+            tokens.append(token)
+    return tokens
+
+
+def _ledger_pool(state: dict, message: str) -> list:
+    """The Host reads the ledger (ADR-0012, T5): the gathered evidence
+    most relevant to the side question, selected in pure code — shared
+    word tokens between the message and each passage, most first — so a
+    side answer stands on the investigation's own memory before any
+    fresh search. Nothing relevant, nothing selected: a question about
+    something else never drags random passages along."""
+    message_tokens = set(_host_tokens(message))
+    if not message_tokens:
+        return []
+    scored = []
+    for item in state.get("evidence", []):
+        passage = item.get("passage") if isinstance(item, dict) else None
+        if not isinstance(passage, str) or not passage.strip():
+            continue
+        score = len(message_tokens & set(_host_tokens(passage)))
+        if score:
+            scored.append((score, item))
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [item for _, item in scored[:HOST_LEDGER_POOL_CAP]]
+
+
 def _conversational(turn: ResearchTurn, state: dict, message: str):
-    """The conversation layer's answer: one searcher over the message
-    and one guarded writer pass over its pool; (blocks, pool) — the pool
-    rides back so the references cite exactly the passages that reply
-    quoted, not the whole ledger. No pool — or a guard that keeps
-    nothing after its one retry — lands the honest no-evidence note."""
+    """The Host's side answer (ADR-0012, T5): bounded cited reasoning —
+    the ledger opens first (its most relevant passages), one fresh
+    hybrid search follows, then at most HOST_HOP_CAP graph hops chained:
+    a hop that feeds the pool ends the chain, a starved one re-seeds
+    from its own top label — deeper into the Book graph, never the
+    message again. Every passage lands in one bounded, deduplicated
+    pool; one guarded writer pass quotes from it, every citation
+    true-paged by the existing locator contract, and reasoning the pool
+    cannot support renders as the commentary it is — never as a claim.
+    (blocks, pool) — the pool rides back so the references cite exactly
+    the passages the reply quoted. Nothing at all — no ledger match, a
+    starving search, a guard that keeps nothing after its one retry —
+    lands the honest no-evidence note."""
     _turn_write(turn, "searching", RESEARCH_EVENT_SEARCHING)
+    pool = _ledger_pool(state, message)
+    seen = {normalize_for_match(item["passage"]) for item in pool}
     if turn.cancel.is_set():
         return [], []
-    turn.budget.require(1)  # the searcher call
-    pool = dive_recall(message, state.get("datasets"))
+    turn.budget.require(1)  # the fresh searcher call
     if turn.cancel.is_set():
         return [], []
+    for source in dive_recall(message, state.get("datasets")):
+        key = normalize_for_match(source.get("passage", ""))
+        if key and key not in seen:
+            seen.add(key)
+            pool.append(source)
+    hops = 0
+    seed = message
+    while (
+        hops < HOST_HOP_CAP
+        and len(pool) < HOST_POOL_CAP
+        and not turn.cancel.is_set()
+    ):
+        hop_passages, hop_labels = graph_hop(
+            seed, state.get("datasets"), cancel=turn.cancel, budget=turn.budget
+        )
+        hops += 1
+        fed = 0
+        for source in hop_passages:
+            key = normalize_for_match(source.get("passage", ""))
+            if key and key not in seen:
+                seen.add(key)
+                pool.append(source)
+                fed += 1
+        if fed or not hop_labels:
+            break  # the hop fed the pool — or the graph is a dead end here
+        seed = hop_labels[0]  # starved with labels — chain one deeper
+    pool = pool[:HOST_POOL_CAP]
     if not pool:
         record_failure(
             state, "starved_corpus", "recall returned no quotable passage"
@@ -4013,7 +4107,10 @@ def _conversational(turn: ResearchTurn, state: dict, message: str):
         return [{"type": "note", "text": RESEARCH_NO_EVIDENCE_DETAIL}], []
     _turn_write(turn, "writing", RESEARCH_EVENT_WRITING)
     blocks, _ = compose_guarded_reply(
-        build_conversational_prompt(message, pool), pool, budget=turn.budget
+        build_conversational_prompt(message, pool),
+        pool,
+        budget=turn.budget,
+        commentary=True,
     )
     if not blocks:
         record_failure(
@@ -4172,8 +4269,9 @@ def _narration_facts(state: dict, move: str, searched: list, starved: list) -> d
 
 
 def _run_chat_skill(turn, state, classified, message, resolved, intent):
-    """The conversational skills (casual, concept, lookup): one searcher
-    over the message and one guarded writer over its pool."""
+    """The conversational skills (casual, concept, lookup) — the Host:
+    the ledger, one fresh search, at most two chained graph hops, one
+    guarded writer with the commentary channel open."""
     blocks, pool = _conversational(turn, state, message)
     return blocks, pool, ""
 

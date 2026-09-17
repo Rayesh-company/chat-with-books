@@ -67,7 +67,7 @@ def guard_sentences(selections, sources):
     return kept
 
 
-def guard_blocks(blocks, sources):
+def guard_blocks(blocks, sources, commentary=False):
     """Turn composer blocks into renderable Quoted answer blocks.
 
     Every paragraph is one unit — AI text with embedded verbatim quotes,
@@ -80,6 +80,15 @@ def guard_blocks(blocks, sources):
     the swap threshold —
     at least two quoting paragraphs, or one plus a heading — so the sheet
     swaps the streamed answer only for a real Quoted answer (ADR-0003).
+
+    With `commentary` on (the Host's side answers, ADR-0012 T5) the
+    guard gains a visibly distinct channel and nothing else changes: a
+    paragraph whose quotes all die keeps its own AI text as a
+    `commentary` block — reasoning the Books cannot support, rendered as
+    the inference it is, never as a claim — and an explicit model
+    `commentary` block is normalized to text alone (a commentary block
+    carries no quote, by definition). The threshold still counts
+    quoting paragraphs only: commentary never props up a Quoted answer.
     """
     kept = []
     for block in blocks:
@@ -97,6 +106,11 @@ def guard_blocks(blocks, sources):
             text = block.get("text")
             if isinstance(text, str) and text.strip():
                 kept.append({"type": "heading", "text": text.strip()})
+        elif kind == "commentary":
+            if commentary:
+                text = block.get("text")
+                if isinstance(text, str) and text.strip():
+                    kept.append({"type": "commentary", "text": text.strip()})
         elif kind == "paragraph":
             parts = block.get("parts")
             if not isinstance(parts, list):
@@ -137,6 +151,18 @@ def guard_blocks(blocks, sources):
                 has_quote = True
             if has_quote and has_text:
                 kept.append({"type": "paragraph", "parts": kept_parts})
+            elif commentary and has_text:
+                # The Host's reasoning channel: the paragraph's quotes
+                # all died under the guard, so its own text lands as the
+                # commentary it is — visible, distinct, never a claim.
+                kept.append(
+                    {
+                        "type": "commentary",
+                        "text": " ".join(
+                            part["text"] for part in kept_parts if "text" in part
+                        ),
+                    }
+                )
     kept = prune_empty_sections(kept)
     paragraphs = sum(1 for block in kept if block["type"] == "paragraph")
     headings = sum(1 for block in kept if block["type"] == "heading")

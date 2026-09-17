@@ -62,6 +62,9 @@ def test_a_classify_upstream_failure_falls_back_conversational_and_silently(
     # moved — and the failure is now RECORDED as a router diagnosis
     # (the router contract owns the deeper assertions; see
     # test_skill_router.py). This pin keeps the fallback itself honest.
+    # Amended by T5 #6: the conversational answer is the Host's chain
+    # now — the fresh search plus one graph hop probe (the default
+    # reply's label-less shape ends the chain there).
     upstream = ResearchUpstream(
         composer_replies=[
             OSError("classify downstream dead"),
@@ -72,7 +75,7 @@ def test_a_classify_upstream_failure_falls_back_conversational_and_silently(
     turn = run_turn_sync(session, "یک پرسش ساده", upstream, tmp_path)
     assert turn.state == "done"
     assert len(composer_bodies(upstream)) == 2
-    assert recall_call_count(upstream) == 1
+    assert recall_call_count(upstream) == 2
     state = session["state"]
     assert state["subquestions"] == []
     assert state["pending_proposals"] == []
