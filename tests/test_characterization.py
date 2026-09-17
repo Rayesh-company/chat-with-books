@@ -239,11 +239,13 @@ def test_the_brief_prompt_carries_the_whole_ledger(tmp_path):
 # --- the all-starved stall (audit 5) -----------------------------------------
 
 
-def test_an_all_starved_session_is_offered_only_gather():
-    # [T6 #7: the stall escape] Every question starved, evidence below
-    # the floor: the ladder offers gather and nothing else — synthesize
-    # and the Brief are unreachable however many turns the operator
-    # spends.
+def test_the_all_starved_stall_offers_the_escape():
+    # [T6 #7: flipped — the escape landed] Every question starved,
+    # evidence below the floor: the ladder used to offer gather and
+    # nothing else, the Brief unreachable however many turns the
+    # operator spent. The stall escape now joins synthesize-with-what-
+    # exists and the honest stop to the gather, and the wayfinder
+    # itself moves to the synthesis of what exists.
     state = research.new_research_state("پرسش پژوهش؟")
     state["stage"] = "investigating"
     state["subquestions"] = [
@@ -252,9 +254,11 @@ def test_an_all_starved_session_is_offered_only_gather():
     state["evidence"] = [
         {"id": "e1", "reference": "r", "passage": SENTENCE}
     ]
-    assert research.next_best_move(state) == "gather"
+    assert research.next_best_move(state) == "synthesize"
     assert [chip["id"] for chip in research.research_suggestions(state)] == [
-        "gather"
+        "gather",
+        "synthesize",
+        "stop",
     ]
 
 

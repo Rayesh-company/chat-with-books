@@ -1894,6 +1894,12 @@
         if (Array.isArray(state.decisions) && state.decisions.length) {
           row("تصمیم‌ها", state.decisions.join(" | "));
         }
+        if (Array.isArray(state.diagnoses) && state.diagnoses.length) {
+          row(
+            "تشخیص‌ها",
+            state.diagnoses.map((d) => d.cause_label || d.cause).join("؛ ")
+          );
+        }
         if (Array.isArray(state.fog) && state.fog.length) {
           row("هنوز نامشخص", state.fog.join("؛ "), "fog");
         }
@@ -1933,7 +1939,7 @@
             if (!item.accept) chip.classList.add("reject");
             chip.addEventListener("click", () => {
               if (researchInputEl.disabled) return;
-              decideResearch(item.id, item.accept);
+              decideResearch(item.id, item.accept, item.choice);
             });
           } else {
             continue;
@@ -1963,7 +1969,7 @@
         armResearchInput();
       }
 
-      async function decideResearch(proposalId, accept) {
+      async function decideResearch(proposalId, accept, choice) {
         if (!researchSessionId || !researchQuery) return;
         researchInputEl.disabled = true;
         researchSendEl.disabled = true;
@@ -1978,6 +1984,7 @@
               session_id: researchSessionId,
               proposal_id: proposalId,
               accept,
+              ...(choice ? { choice } : {}),
             }),
           });
           const payload = await res.json().catch(() => ({}));

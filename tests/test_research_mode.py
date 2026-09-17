@@ -601,7 +601,9 @@ def test_a_starved_gather_records_honest_gaps(tmp_path):
     assert len(session["state"]["gaps"]) == 1
     assert "نمی‌توان" in session["state"]["gaps"][0]["text"]
     notes = [b["text"] for b in turn.result["reply"] if b["type"] == "note"]
-    assert any("نقل‌قول تازه‌ای پیدا نشد" in text for text in notes)
+    # The starved gather names its cause (T6): the diagnosis note
+    # replaces the old bare no-evidence line.
+    assert any("تشخیص:" in text for text in notes)
     assert turn.result["research_state"]["gaps"]
 
 

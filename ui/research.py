@@ -127,6 +127,10 @@ GRILLING_SKIP_DECISION = (
     "کاربر پاسخ دادن به پرسش راهنما را رد کرد؛ ادامه با وضع موجود."
 )
 COMMAND_GUIDE = "ادامهٔ سفر پژوهش"
+# The stall escape's stop (T6, ADR-0012): the operator ends a starved
+# session on their own word — the map and the ledgers stay, no Brief is
+# fabricated to close with.
+COMMAND_STOP = "توقف پژوهش"
 # A per-question gather chip: «شواهدِ «نام» را پیدا کن» targets exactly
 # that named open question — the deterministic frontier move.
 TARGETED_GATHER_RE = re.compile(r"^شواهدِ «(.+)» را پیدا کن$")
@@ -315,6 +319,32 @@ SKILL_TABLE = (
 SKILL_TABLE_BY_NAME = {row["name"]: row for row in SKILL_TABLE}
 
 
+# The Diagnoser's fixed failure taxonomy (ADR-0012, T6): every named
+# cause an answer can fail with, the labels the map and the replies
+# show. starved_corpus and question_fit are the gather's, guard_drop
+# the writers'; wrong_tool is the registry's — a Tool refusing the
+# gather (the graph hop's ToolError, T4) is the one observable
+# wrong-tool signal.
+RESEARCH_FAILURE_CAUSES = {
+    "starved_corpus": "کتاب‌ها برای این پرسش شواهد کافی ندارند",
+    "wrong_tool": "روش جست‌وجو با این پرسش سازگار نبود",
+    "guard_drop": "پاسخ نوشته‌شده از پالایۀ نقل‌قول گذر نکرد",
+    "question_fit": "قالب کنونی پرسش از کتاب‌ها تغذیه نمی‌شود",
+}
+# The diagnosed failure's adjustment menu (T6): the three real
+# corrections the operator holds after a diagnosis — narrow the
+# question, change the Tool, or declare the Gap — each landing as a
+# recorded decision through the existing decide flow.
+ADJUSTMENT_NARROW = "پرسش را محدودتر کن"
+ADJUSTMENT_RETOOL = "با روش دیگری جست‌وجو کن"
+ADJUSTMENT_DECLARE_GAP = "همین را شکاف اعلام کن"
+ADJUSTMENT_CHOICES = (
+    {"key": "narrow", "label": ADJUSTMENT_NARROW},
+    {"key": "tool", "label": ADJUSTMENT_RETOOL},
+    {"key": "gap", "label": ADJUSTMENT_DECLARE_GAP},
+)
+
+
 def validate_skill_pick(row: dict, state: dict):
     """The code-side validation of a model-picked skill (ADR-0012): the
     row's allowed stages against the state's stage — the seam where
@@ -326,17 +356,33 @@ def validate_skill_pick(row: dict, state: dict):
     return True, ""
 
 
-def record_diagnosis(state: dict, detail: str, fallback: str) -> None:
-    """One diagnosable router event (ADR-0012): what broke and where
-    the turn fell back — the record that retires the silent degrade."""
-    state.setdefault("diagnoses", []).append(
-        {
-            "kind": "router",
-            "detail": detail,
-            "fallback": fallback,
-            "turn": state.get("turns", 0),
-        }
-    )
+def record_diagnosis(
+    state: dict, detail: str, fallback: str, cause: str = ""
+) -> None:
+    """One diagnosable event (ADR-0012): what broke and where the turn
+    fell back — the record that retires the silent degrade. A router
+    anomaly records kind router; an answer failure (T6) names its cause
+    from the fixed taxonomy. Capped, newest kept."""
+    entry = {
+        "kind": "failure" if cause else "router",
+        "detail": detail,
+        "fallback": fallback,
+        "turn": state.get("turns", 0),
+    }
+    if cause:
+        entry["cause"] = cause
+        entry["cause_label"] = RESEARCH_FAILURE_CAUSES.get(cause, cause)
+    diagnoses = state.setdefault("diagnoses", [])
+    diagnoses.append(entry)
+    state["diagnoses"] = diagnoses[-RESEARCH_MAX_DIAGNOSES:]
+
+
+def record_failure(state: dict, cause: str, detail: str) -> str:
+    """The Diagnoser's record of one answer failure (T6): the cause
+    named from the fixed taxonomy and kept in the state; the
+    plain-Persian label returned for the reply's note."""
+    record_diagnosis(state, detail, "", cause=cause)
+    return RESEARCH_FAILURE_CAUSES.get(cause, cause)
 CONVERSATIONAL_INTENTS = {"casual_question", "concept_learning", "source_lookup"}
 # A gather pools under this many passages and keeps offering more — six
 # searchers usually pool far past it in one round (the dive's sections
@@ -346,6 +392,9 @@ RESEARCH_EVIDENCE_FLOOR = 6
 # here, newest kept, the classify call itself capped at six per turn.
 RESEARCH_MAX_SUBQUESTIONS = 12
 RESEARCH_MAX_CONCEPTS = 18
+# The Diagnoser's ledger stays bounded like every working list (T6):
+# newest kept.
+RESEARCH_MAX_DIAGNOSES = 12
 # The session's soft cost bound: at this many turns every reply suggests
 # finalizing the Brief — a suggestion, never a refusal.
 RESEARCH_SESSION_TURN_CAP = 40
@@ -413,6 +462,19 @@ RESEARCH_EVENT_BUDGET = "بودجۀ این پیام پژوهش تمام شد؛ �
 RESEARCH_BUDGET_STOP_DETAIL = (
     "بودجۀ این پیام پژوهش تمام شد و کار در همین مرز متوقف شد؛ "
     "برای ادامه، دوباره بپرسید."
+)
+# The stop's honest landing (T6): the decision the map's index keeps
+# and the note the transcript holds — the session closes with its map
+# and ledgers intact, never a fabricated Brief.
+RESEARCH_STOP_DECISION = "کاربر پژوهش را در همین نقطه متوقف کرد."
+RESEARCH_STOP_DETAIL = (
+    "پژوهش متوقف شد؛ نقشه و شواهد ثبت‌شده همین‌جا می‌مانند و خلاصه‌ای "
+    "نوشته نمی‌شود. برای ادامه، گفتگوی پژوهش تازه‌ای بسازید."
+)
+# An adjustment decision without one of the parked menu's choices is
+# not a decision (T6): the endpoint says what is missing.
+RESEARCH_ADJUSTMENT_CHOICE_DETAIL = (
+    "برای پذیرش این پیشنهاد، یکی از انتخاب‌های اصلاح را بفرستید."
 )
 
 _FARSI_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
@@ -694,6 +756,19 @@ def research_state_summary(state: dict) -> dict:
         "decisions": [
             item.get("text", "") for item in state.get("decisions", [])[-4:]
         ],
+        # The Diagnoser's ledger (T6), the map's diagnoses row: the
+        # named causes of the failed turns, newest last — a failure is
+        # visible on the map, never silent. Router anomalies stay in
+        # the state's ledger, not the operator's map.
+        "diagnoses": [
+            {
+                "cause": item.get("cause", ""),
+                "cause_label": item.get("cause_label", ""),
+                "turn": item.get("turn", 0),
+            }
+            for item in state.get("diagnoses", [])
+            if item.get("cause")
+        ][-4:],
         "fog": [
             item.get("text", "") for item in state.get("map", {}).get("fog", [])[:6]
         ],
@@ -731,7 +806,10 @@ def next_best_move(state: dict) -> str:
     """The deterministic wayfinder: which single operation most reduces
     the uncertainty in the current research question. Checkpoints come
     first (a pending decision blocks everything else), then evidence
-    until the floor, then the first synthesis, then the Brief."""
+    while the frontier still holds — and once the frontier is drained
+    below the evidence floor, the stall escape (T6) moves on honestly:
+    the synthesis of what exists, then the Brief. The floor never
+    again loops the gather on a starved session."""
     if state.get("pending_proposals"):
         return "checkpoint"
     if not state["evidence"]:
@@ -741,8 +819,17 @@ def next_best_move(state: dict) -> str:
         for item in state.get("subquestions", [])
         if item.get("status") == "pending"
     ]
-    if pending or len(state["evidence"]) < RESEARCH_EVIDENCE_FLOOR:
+    if pending:
         return "gather"
+    if len(state["evidence"]) < RESEARCH_EVIDENCE_FLOOR:
+        # Below the floor the ladder gathers — unless the frontier is
+        # drained (every open question searched or gap): that is the
+        # all-starved stall, and the escape moves to the synthesis of
+        # what exists, then the Brief. A never-decomposed question
+        # keeps gathering.
+        if not state["subquestions"]:
+            return "gather"
+        return "synthesize" if not state.get("claims") else "brief"
     if not state.get("claims"):
         return "synthesize"
     return "brief"
@@ -761,24 +848,49 @@ def research_suggestions(state: dict) -> list:
     suggestions = []
     if state.get("pending_proposals"):
         for proposal in state["pending_proposals"]:
-            suggestions.append(
-                {
-                    "kind": "proposal",
-                    "id": proposal["id"],
-                    "label": "می‌پذیرم",
-                    "text": proposal["text"],
-                    "accept": True,
-                }
-            )
-            suggestions.append(
-                {
-                    "kind": "proposal",
-                    "id": proposal["id"],
-                    "label": "رد می‌کنم",
-                    "text": proposal["text"],
-                    "accept": False,
-                }
-            )
+            if proposal["kind"] == "adjustment":
+                # The diagnosis's three-way menu (T6): one chip per
+                # real adjustment, the choice riding the decide call —
+                # plus the standing reject.
+                for choice in proposal.get("choices", []):
+                    suggestions.append(
+                        {
+                            "kind": "proposal",
+                            "id": proposal["id"],
+                            "label": choice["label"],
+                            "text": proposal["text"],
+                            "accept": True,
+                            "choice": choice["key"],
+                        }
+                    )
+                suggestions.append(
+                    {
+                        "kind": "proposal",
+                        "id": proposal["id"],
+                        "label": "رد می‌کنم",
+                        "text": proposal["text"],
+                        "accept": False,
+                    }
+                )
+            else:
+                suggestions.append(
+                    {
+                        "kind": "proposal",
+                        "id": proposal["id"],
+                        "label": "می‌پذیرم",
+                        "text": proposal["text"],
+                        "accept": True,
+                    }
+                )
+                suggestions.append(
+                    {
+                        "kind": "proposal",
+                        "id": proposal["id"],
+                        "label": "رد می‌کنم",
+                        "text": proposal["text"],
+                        "accept": False,
+                    }
+                )
     grilling = state.get("grilling", {})
     if grilling.get("current_question"):
         # The skip is never cut by the cap (the universal-skip rule):
@@ -803,7 +915,20 @@ def research_suggestions(state: dict) -> list:
         return suggestions[:6]
     if stage in ("investigating", "synthesizing", "drafting"):
         pending = _pending_questions(state)
-        eligible_synthesis = not pending and len(state["evidence"]) >= RESEARCH_EVIDENCE_FLOOR
+        # The stall escape (T6, the flipped characterization pin): a
+        # frontier drained below the evidence floor is no longer a
+        # dead end — synthesize-with-what-exists and the honest stop
+        # join the gather, so the Brief stays reachable on a starved
+        # session.
+        stalled = (
+            bool(state["subquestions"])
+            and not pending
+            and bool(state["evidence"])
+            and len(state["evidence"]) < RESEARCH_EVIDENCE_FLOOR
+        )
+        eligible_synthesis = (
+            not pending and len(state["evidence"]) >= RESEARCH_EVIDENCE_FLOOR
+        )
         if pending or len(state["evidence"]) < RESEARCH_EVIDENCE_FLOOR:
             suggestions.append({"kind": "move", "id": "gather", "text": COMMAND_GATHER})
             for question in pending[:3]:
@@ -814,13 +939,15 @@ def research_suggestions(state: dict) -> list:
                         "text": f"شواهدِ «{question['name']}» را پیدا کن",
                     }
                 )
-        if eligible_synthesis and not state.get("claims"):
+        if (eligible_synthesis or stalled) and not state.get("claims"):
             suggestions.append(
                 {"kind": "move", "id": "synthesize", "text": COMMAND_SYNTHESIZE}
             )
         if state.get("claims"):
             suggestions.append({"kind": "move", "id": "audit", "text": COMMAND_AUDIT})
             suggestions.append({"kind": "move", "id": "brief", "text": COMMAND_BRIEF})
+        if stalled:
+            suggestions.append({"kind": "move", "id": "stop", "text": COMMAND_STOP})
     if state.get("turns", 0) >= RESEARCH_SESSION_TURN_CAP and not any(
         chip["id"] == "brief" for chip in suggestions
     ):
@@ -842,6 +969,8 @@ def resolve_command(message: str):
         return "skip", None
     if stripped == COMMAND_GUIDE:
         return "guide", None
+    if stripped == COMMAND_STOP:
+        return "stop", None
     match = TARGETED_GATHER_RE.match(stripped)
     if match:
         return "gather", match.group(1).strip()
@@ -1816,11 +1945,20 @@ def research_session_messages(phone: str, session_id: str):
     return {"messages": session["messages"]}, None
 
 
-def decide_proposal(phone: str, session_id: str, proposal_id: str, accept: bool):
+def decide_proposal(
+    phone: str,
+    session_id: str,
+    proposal_id: str,
+    accept: bool,
+    choice: str = None,
+):
     """Resolve one pending checkpoint — the ONLY path by which a
     research question or scope change lands (a classify proposal never
     applies itself). Synchronous, no LLM; (result, None) or (None,
-    (status, Farsi detail))."""
+    (status, Farsi detail)). The adjustment checkpoint (T6) decides a
+    CHOICE, not a yes/no: accepting requires one of the parked menu's
+    own adjustments — narrow the question, change the Tool, declare a
+    Gap."""
     session = research_store.load_session(session_id)
     if session is None or session["phone"] != phone:
         return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
@@ -1837,6 +1975,10 @@ def decide_proposal(phone: str, session_id: str, proposal_id: str, accept: bool)
     )
     if proposal is None:
         return None, (404, RESEARCH_PROPOSAL_NOT_FOUND_DETAIL)
+    if proposal["kind"] == "adjustment" and accept:
+        keys = {item["key"] for item in proposal.get("choices", [])}
+        if choice not in keys:
+            return None, (400, RESEARCH_ADJUSTMENT_CHOICE_DETAIL)
     state["pending_proposals"] = [
         item
         for item in state["pending_proposals"]
@@ -1879,6 +2021,8 @@ def decide_proposal(phone: str, session_id: str, proposal_id: str, accept: bool)
         plan["versions"].append({"sections": sections, "turn": state["turns"]})
         plan["current"] = {"sections": sections}
         decision = f"برنامۀ خلاصۀ پژوهش پذیرفته شد: {proposal['text']}"
+    elif proposal["kind"] == "adjustment":
+        decision = _apply_adjustment(state, proposal, choice)
     else:
         decision = proposal["text"]
     state["decisions"].append({"text": decision, "turn": state["turns"]})
@@ -1893,6 +2037,66 @@ def decide_proposal(phone: str, session_id: str, proposal_id: str, accept: bool)
         },
         None,
     )
+
+
+def _apply_adjustment(state: dict, proposal: dict, choice: str) -> str:
+    """The chosen adjustment lands (T6) and its decision line returns —
+    the line the map's decisions index keeps. Narrow re-versions the
+    research question APPEND-ONLY onto the strongest aspect the Books
+    did feed (the newest searched, else the newest gap — a real focus
+    either way); the Tool choice re-arms the starved questions for a
+    re-search, the hook where the Tool registry's next Tool rotates in
+    (T4); the Gap choice declares the starved aspects the honest Gap,
+    clearing the frontier so the synthesis and the Brief are reachable.
+    """
+    starved_names = list(proposal.get("subquestions", []))
+    if choice == "narrow":
+        target = None
+        for status in ("searched", "gap"):
+            target = next(
+                (
+                    item
+                    for item in reversed(state["subquestions"])
+                    if item.get("status") == status
+                ),
+                None,
+            )
+            if target is not None:
+                break
+        new_text = (
+            target.get("text", "")
+            if target
+            else state["research_question"]["current"]
+        )
+        state["research_question"]["versions"].append(
+            {
+                "text": new_text,
+                "reason": f"محدودسازی پس از تشخیص: {proposal['text']}",
+                "turn": state["turns"],
+            }
+        )
+        state["research_question"]["current"] = new_text
+        return f"پرسش پژوهش محدود شد: «{new_text}»"
+    if choice == "tool":
+        rearmed = 0
+        for item in state["subquestions"]:
+            if (
+                item.get("name", item.get("text", "")) in starved_names
+                and item.get("status") == "gap"
+            ):
+                item["status"] = "pending"
+                rearmed += 1
+        return (
+            f"جست‌وجوی دوباره با روش دیگر برای "
+            f"{_farsi_digits(rearmed)} پرسش برنامه‌ریزی شد."
+        )
+    for item in state["subquestions"]:
+        if (
+            item.get("name", item.get("text", "")) in starved_names
+            and item.get("status") != "gap"
+        ):
+            item["status"] = "gap"
+    return "شکاف پژوهش اعلام شد؛ ادامه با شواهد موجود."
 
 
 def abort_phone_research(phone: str) -> None:
@@ -2135,6 +2339,20 @@ def _checkpoint_reply(state: dict) -> list:
             blocks.append(
                 {"type": "note", "text": f"دامنۀ پژوهش: {proposal['text']}"}
             )
+        elif proposal["kind"] == "adjustment":
+            # The diagnosis replays as its named cause with the three
+            # adjustments listed — the chips above carry the choice
+            # (T6).
+            blocks.append(
+                {"type": "note", "text": f"تشخیص: {proposal['text']}"}
+            )
+            labels = "، ".join(
+                choice["label"] for choice in proposal.get("choices", [])
+            )
+            if labels:
+                blocks.append(
+                    {"type": "note", "text": f"انتخاب‌ها: {labels}."}
+                )
         elif proposal["kind"] == "brief_plan":
             # The plan reads section by section: each note ties a
             # section to its named open question and the claims that
@@ -2161,6 +2379,45 @@ def _gap_event(starved: int) -> str:
     digits = _farsi_digits(starved)
     verb = "می‌شود" if starved == 1 else "می‌شوند"
     return f"{digits} زیرپرسشِ کم‌شواهد دوباره جست‌وجو {verb}…"
+
+
+def _park_adjustment(
+    state: dict, cause: str, starved_names: list
+) -> None:
+    """Park the diagnosed failure's adjustment proposal (T6) — the
+    three-way checkpoint (narrow, change the Tool, declare a Gap)
+    riding the existing decide flow. The chart gates apply as they do
+    for every parked proposal: one adjustment at a time, the
+    adjustment cooldown damps repeats, and a diagnosis whose text
+    restates a past decision never re-parks."""
+    pending_kinds = {item["kind"] for item in state["pending_proposals"]}
+    if "adjustment" in pending_kinds:
+        return
+    cooldowns = state.setdefault("proposal_cooldowns", {})
+    if cooldowns.get("adjustment", 0) > 0:
+        return
+    question = state["research_question"]["current"]
+    text = (
+        f"کتاب‌ها برای «{question}» شواهد کافی ندارند"
+        if cause == "starved_corpus"
+        else f"کتاب‌ها برای قالب کنونی «{question}» شواهد کافی ندارند"
+    )
+    key = normalize_for_match(text)
+    if any(
+        key and key in normalize_for_match(item.get("text", ""))
+        for item in state["decisions"]
+    ):
+        return
+    state["pending_proposals"].append(
+        {
+            "id": f"p{len(state['pending_proposals']) + 1}",
+            "kind": "adjustment",
+            "text": text,
+            "cause": cause,
+            "subquestions": list(starved_names),
+            "choices": [dict(choice) for choice in ADJUSTMENT_CHOICES],
+        }
+    )
 
 
 def _gather(state: dict, turn: ResearchTurn, target: str = None) -> list:
@@ -2215,9 +2472,9 @@ def _gather(state: dict, turn: ResearchTurn, target: str = None) -> list:
     # frontier-wide gathers only: a targeted chip asked for exactly one
     # question, and the pin is that exactly that question is searched. A
     # bonus angle, never the gather's spine: a registry refusal records
-    # the wrong-tool diagnosis and the gather stands on its hybrid pool;
-    # an unaffordable budget leaves before the hop starts and the
-    # worker's honest stop reports it.
+    # the wrong-tool diagnosis (the Diagnoser's named cause) and the
+    # gather stands on its hybrid pool; an unaffordable budget leaves
+    # before the hop starts and the worker's honest stop reports it.
     before_hop = added
     hop_sources, hop_labels = [], []
     if not target:
@@ -2230,9 +2487,7 @@ def _gather(state: dict, turn: ResearchTurn, target: str = None) -> list:
                 budget=turn.budget,
             )
         except ToolError as error:
-            record_diagnosis(
-                state, f"tool: graph hop refused: {error}", "the hybrid pool"
-            )
+            record_failure(state, "wrong_tool", f"graph hop refused: {error}")
         if turn.cancel.is_set():
             return []
         if hop_sources:
@@ -2287,12 +2542,30 @@ def _gather(state: dict, turn: ResearchTurn, target: str = None) -> list:
             if item["text"] == sub:
                 item["status"] = "gap"
     if not added:
+        # The Diagnoser (T6): an empty gather names its cause — a
+        # ledger that already holds passages means the Books feed the
+        # topic but not this framing (question fit); an empty ledger
+        # means the corpus itself starved. The diagnosis is recorded
+        # and the adjustment menu parks as the user's checkpoint.
+        cause = "question_fit" if state["evidence"] else "starved_corpus"
+        cause_label = record_failure(
+            state,
+            cause,
+            f"gather added 0 of {len(pending)} searched sub-questions",
+        )
+        starved_names = [
+            item.get("name", item.get("text", ""))
+            for item in state["subquestions"]
+            if item["text"] in starved
+        ]
+        _park_adjustment(state, cause, starved_names)
         blocks.append(
             {
                 "type": "note",
                 "text": (
-                    "نقل‌قول تازه‌ای پیدا نشد. می‌توانید پرسش پژوهش را محدودتر "
-                    "کنید یا همین را به‌عنوان شکاف پژوهش بپذیرید."
+                    f"تشخیص: {cause_label}؛ می‌توانید پرسش را محدودتر "
+                    "کنید، با روش دیگری جست‌وجو کنید، یا همین را شکاف "
+                    "اعلام کنید."
                 ),
             }
         )
@@ -2326,6 +2599,7 @@ def _synthesize(turn: ResearchTurn, state: dict) -> list:
         build_synthesis_prompt(state, sources), sources, budget=turn.budget
     )
     if not blocks:
+        record_failure(state, "guard_drop", "the synthesis writer kept nothing")
         return [{"type": "note", "text": RESEARCH_EMPTY_REPLY_DETAIL}]
     record_claims(state, blocks, ids)
     return blocks
@@ -2356,6 +2630,7 @@ def _brief(turn: ResearchTurn, state: dict) -> list:
         build_brief_prompt(state, sources), sources, budget=turn.budget
     )
     if not blocks:
+        record_failure(state, "guard_drop", "the brief writer kept nothing")
         return [{"type": "note", "text": RESEARCH_EMPTY_REPLY_DETAIL}]
     state["phase"] = "drafting"
     return blocks
@@ -2397,12 +2672,18 @@ def _conversational(turn: ResearchTurn, state: dict, message: str):
     if turn.cancel.is_set():
         return [], []
     if not pool:
+        record_failure(
+            state, "starved_corpus", "recall returned no quotable passage"
+        )
         return [{"type": "note", "text": RESEARCH_NO_EVIDENCE_DETAIL}], []
     _turn_write(turn, "writing", RESEARCH_EVENT_WRITING)
     blocks, _ = compose_guarded_reply(
         build_conversational_prompt(message, pool), pool, budget=turn.budget
     )
     if not blocks:
+        record_failure(
+            state, "guard_drop", "the conversational writer kept nothing"
+        )
         return [{"type": "note", "text": RESEARCH_NO_EVIDENCE_DETAIL}], []
     return blocks, pool
 
@@ -2443,6 +2724,9 @@ def _mapping_turn(turn: ResearchTurn, state: dict):
     if turn.cancel.is_set():
         return [], []
     if not pool:
+        record_failure(
+            state, "starved_corpus", "the landscape survey starved"
+        )
         advance_stage(state, "investigating")
         return [
             {
@@ -2458,8 +2742,21 @@ def _mapping_turn(turn: ResearchTurn, state: dict):
         build_mapping_prompt(question, pool), pool, budget=turn.budget
     )
     if not blocks:
+        record_failure(state, "guard_drop", "the landscape writer kept nothing")
         return [{"type": "note", "text": RESEARCH_EMPTY_REPLY_DETAIL}], []
     return blocks, pool
+
+
+def _stop_reply(state: dict) -> list:
+    """The stop's deterministic landing (T6's stall escape): the
+    operator ends the session on their own word — the session closes,
+    the map and the ledgers stay exactly as they are, and the decision
+    joins the map's index. No Brief is fabricated to close with."""
+    state["closed"] = True
+    state["decisions"].append(
+        {"text": RESEARCH_STOP_DECISION, "turn": state["turns"]}
+    )
+    return [{"type": "note", "text": RESEARCH_STOP_DETAIL}]
 
 
 def _skip_reply(state: dict) -> list:
@@ -2591,6 +2888,12 @@ def _run_research_skill(turn, state, classified, message, resolved, intent):
     if state.get("stage") == "orientation" and state["map"].get("destination"):
         advance_stage(state, "mapping")
     skip = bool(resolved and resolved[0] == "skip")
+    # The stop (T6's stall escape): an explicit command, so it executes
+    # even while a proposal waits (ADR-0011) — the session closes on
+    # the operator's own word, the map and the ledgers staying as they
+    # are.
+    if resolved and resolved[0] == "stop":
+        return _stop_reply(state), None, ""
     # The work-mode rule (ADR-0011, the recorded planning
     # loop): a pending checkpoint shows on a FREE turn — an
     # explicit command (or the skip) is the user steering, and
@@ -2697,6 +3000,7 @@ def run_research_turn(
                 "audit": "evidence_audit",
                 "skip": "research_exploration",
                 "guide": "research_exploration",
+                "stop": "research_exploration",
             }[resolved[0]]
         # The code disposes (ADR-0012): the picked row is validated
         # against the state — a rejected pick is a recorded diagnosis

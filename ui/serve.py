@@ -905,16 +905,27 @@ class SessionHandler(SimpleHTTPRequestHandler):
             session_id = payload["session_id"]
             proposal_id = payload["proposal_id"]
             accept = payload["accept"]
+            # The adjustment checkpoint (T6) decides a choice, not a
+            # yes/no — the chosen adjustment rides along when present.
+            choice = payload.get("choice")
             if not isinstance(session_id, str) or not session_id.strip():
                 raise ValueError("session_id is required")
             if not isinstance(proposal_id, str) or not proposal_id.strip():
                 raise ValueError("proposal_id is required")
             if not isinstance(accept, bool):
                 raise ValueError("accept must be a boolean")
+            if choice is not None and not isinstance(choice, str):
+                raise ValueError("choice must be a string")
         except (ValueError, KeyError, TypeError):
             self._send_json(400, {"detail": "تصمیم پیشنهاد را بفرستید."})
             return
-        result, error = decide_proposal(phone, session_id.strip(), proposal_id.strip(), accept)
+        result, error = decide_proposal(
+            phone,
+            session_id.strip(),
+            proposal_id.strip(),
+            accept,
+            choice=(choice or None),
+        )
         if result is None:
             self._send_json(error[0], {"detail": error[1]})
             return
