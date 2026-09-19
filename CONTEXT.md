@@ -194,4 +194,4 @@ The approved plain-Persian naming table (ADR-0012): the single source every Rese
 
 **Question statuses**: در انتظار، جست‌وجو شد، شکاف. **Claim statuses**: پشتوانهٔ مستقیم، ترکیب شواهد، شواهد ناکافی.
 
-**Platform names (DRAFT — pending PM approval, 2026-09-19, spec2.md)**: Account «حساب» · Login «ورود» · Balance «اعتبار» · Tariff «تعرفه» · Admin «مدیر» · Admin console «میز مدیریت» · Session report «گزارش نشست» · the report chip «دریافت گزارش نشست». The sheet renders none of these until the PM approves them; then the approved rows join the tables above.
+**Platform names (DRAFT — pending PM approval, 2026-09-19, spec2.md)**: Account «حساب» · Login «ورود» · Balance «اعتبار» · Tariff «تعرفه» · Admin «مدیر» · Admin console «میز مدیریت» · Session report «گزارش نشست» · the report chip «دریافت گزارش نشست». One deliberate exception (T19): the report chip already rides the sheet, draft-marked, its text pinned to one server constant (`ui/research.py`'s `RESEARCH_REPORT_CHIP`) so the PM's approval renames it in one line. None of the other rows render until the PM approves them; then the approved rows join the tables above.

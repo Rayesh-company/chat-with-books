@@ -151,6 +151,15 @@ COMMAND_KEEP_MAP = "نقشه را مرتب کن"
 # not vibes. Resolved server-side like every fixed command, no
 # classification luck.
 COMMAND_PROBE_FOG = "مه را کاوش کن"
+# The Session report's chip (T19, GitLab #22): the sheet's door to the
+# walk-away artifact (گزارش نشست) once a Brief section stands. NOT a
+# turn command — it is a DOWNLOAD (the sheet fetches the report read
+# directly), so it never enters COMMAND_MOVES or resolve_command: a
+# tap sends no message and spends no turn. DRAFT display name: the
+# platform-names roster in CONTEXT.md holds «گزارش نشست» and this chip
+# as pending PM approval (2026-09-19, spec2.md) — a rename is THIS ONE
+# constant, nowhere else.
+RESEARCH_REPORT_CHIP = "دریافت گزارش نشست"
 # A per-question gather chip: «شواهدِ «نام» را پیدا کن» targets exactly
 # that named open question — the deterministic frontier move.
 TARGETED_GATHER_RE = re.compile(r"^شواهدِ «(.+)» را پیدا کن$")
@@ -1174,6 +1183,24 @@ def next_best_move(state: dict) -> str:
     return "brief"
 
 
+def _standing_section_count(state: dict) -> int:
+    """How many Brief sections stand — the report chip's condition
+    (T19): the walk-away artifact exists only once a first section
+    does, so the chip is absent at zero. The same count the state
+    summary carries as `brief_sections`."""
+    document = state.get("brief_document") or {}
+    return sum(
+        1 for item in document.get("sections", []) if isinstance(item, dict)
+    )
+
+
+def _report_chip() -> dict:
+    """The report chip's one shape: kind `report`, the DRAFT label from
+    the single constant. The sheet renders it as a DOWNLOAD button that
+    fetches the report read directly — never a message, never a turn."""
+    return {"kind": "report", "id": "report", "label": RESEARCH_REPORT_CHIP}
+
+
 def research_suggestions(state: dict) -> list:
     """The chip set the sheet renders under the latest reply — the
     journey's own moves, not a fixed row: checkpoint decisions first
@@ -1183,7 +1210,9 @@ def research_suggestions(state: dict) -> list:
     note above, never inside the chip. The moves are NEVER hidden
     behind a waiting proposal (T7 #8, user story 19): deciding must not
     block working — an explicit command executes even while a proposal
-    waits (ADR-0011), so its chip stays reachable."""
+    waits (ADR-0011), so its chip stays reachable. The report chip
+    (T19) rides when a Brief section stands: a DOWNLOAD action the
+    sheet fetches directly, never a turn command."""
     suggestions = []
     if state.get("pending_proposals"):
         for proposal in state["pending_proposals"]:
@@ -1233,6 +1262,14 @@ def research_suggestions(state: dict) -> list:
                             "text": COMMAND_REVISE,
                         }
                     )
+                # The report chip rides BESIDE the review's accept chips
+                # (T19): the verdict reply is the walk-away moment, and
+                # a standing Brief means the artifact exists — the chip
+                # sits here even when the row's cap would crowd it out
+                # further down, because this is where the operator
+                # reaches for it.
+                if _standing_section_count(state) >= 1:
+                    suggestions.append(_report_chip())
             else:
                 suggestions.append(
                     {
@@ -1338,6 +1375,17 @@ def research_suggestions(state: dict) -> list:
         chip["id"] == "brief" for chip in suggestions
     ):
         suggestions.append({"kind": "move", "id": "brief", "text": COMMAND_BRIEF})
+    # The report chip's general ride (T19): whenever a Brief section
+    # stands, the walk-away artifact is one download away — the last
+    # chip of the row (the working moves keep their ground ahead of it),
+    # and never doubled when the closing review's verdict already
+    # carried it beside the accept chips. A guided question's turn is
+    # the one exemption: that row keeps its ONE sharp question with its
+    # options and skip, and the chip returns on the next normal reply.
+    if _standing_section_count(state) >= 1 and not any(
+        chip["id"] == "report" for chip in suggestions
+    ):
+        suggestions.append(_report_chip())
     return suggestions[:6]
 
 

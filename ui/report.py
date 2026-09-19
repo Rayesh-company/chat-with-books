@@ -11,7 +11,15 @@ Farsi-shaping dependencies. Renders from the state's `brief_document`
 with ≥1 section — a starved Session still finishes with its partial
 report. The quote parts' `source` indexes resolve against the live
 evidence ledger: the state cap's front-trim re-anchors the standing
-document in the same mutation (T12), so the pages stay true here."""
+document in the same mutation (T12), so the pages stay true here.
+
+Beside the HTML document lives the Markdown twin (T19, GitLab #22):
+`report_markdown` serves the Brief's BODY alone for text reuse —
+section headings, the paragraphs' own words, the verbatim quotes as
+blockquotes with their true references, the honest-gap notes, and the
+same first-use «منابع» — with no map, no question preamble, and no
+transcript. One artifact, two renders, one source-index resolution:
+a citation cannot disagree between them."""
 
 from __future__ import annotations
 
@@ -46,6 +54,28 @@ def _esc(text: str) -> str:
 
 def _status_label(status: str) -> str:
     return _QUESTION_STATUS_LABELS.get(status, status)
+
+
+def _evidence_reference(state: dict, part: dict) -> str:
+    """A quote part's `source` index resolved against the live evidence
+    ledger — the ONE resolution the HTML report's tooltip and the
+    Markdown twin's reference lines both read, so a citation can never
+    drift between the twins. Same rule as `report_references`: a part
+    pointing outside the standing ledger resolves to no reference at
+    all (the cap's front-trim re-anchors positions in the same
+    mutation, T12), never a guessed one."""
+    index = part.get("source")
+    evidence = state.get("evidence") or []
+    if isinstance(index, int) and 0 <= index < len(evidence):
+        return evidence[index].get("reference", "")
+    return ""
+
+
+def _gap_note(title: str) -> str:
+    """The honest-gap section's diagnosed Farsi note (T8's writer
+    fallback, the report's own rendering of it): a Gap, never a
+    fabrication — the same sentence in both twins."""
+    return f"بخش «{title}»: کتاب‌ها شواهد کافی ندارند — شکاف، نه ساختگی."
 
 
 def _brief_sections(state: dict) -> list[dict]:
@@ -158,19 +188,14 @@ def report_html(state: dict) -> str | None:
     for entry in sections:
         title = entry.get("title", "")
         if entry.get("gap"):
-            body = (
-                f'<p class="gap-note">بخش «{_esc(title)}»: کتاب‌ها شواهد '
-                "کافی ندارند — شکاف، نه ساختگی.</p>"
-            )
+            body = f'<p class="gap-note">{_esc(_gap_note(title))}</p>'
         else:
             paragraphs_html = []
             for paragraph in entry.get("paragraphs", []):
                 parts_html = []
                 for part in paragraph.get("parts", []):
                     if "quote" in part:
-                        index = part.get("source")
-                        evidence = (state.get("evidence") or [])[index] if isinstance(index, int) and 0 <= index < len(state.get("evidence") or []) else {}
-                        tooltip = _esc(evidence.get("reference", ""))
+                        tooltip = _esc(_evidence_reference(state, part))
                         parts_html.append(
                             f'<span class="q" title="{tooltip}">{_esc(part.get("quote", ""))}</span>'
                         )
@@ -229,17 +254,78 @@ def report_html(state: dict) -> str | None:
 </html>"""
 
 
-def research_session_report(phone: str, session_id: str):
+def report_markdown(state: dict) -> str | None:
+    """The Session report's Markdown twin (T19, GitLab #22): the Brief's
+    BODY only, for text reuse — the section titles as `##` headings in
+    the plan's order, each paragraph's own text as plain lines with its
+    verbatim quotes standing apart as `> «quote» — reference` lines
+    (the reference from the evidence ledger through the same
+    source-index resolution as the HTML report, so the twins can never
+    disagree about a citation), an honest-gap section as its diagnosed
+    Farsi note, and a closing «منابع» list of the unique references in
+    first-use order (`report_references`, the server-built list —
+    never model-invented). Deliberately nothing else: no destination,
+    no map rows, no question preamble, and never the transcript — the
+    twin exists so the Brief's words can be lifted into other
+    documents, not so the Session's process travels with them."""
+    sections = _brief_sections(state)
+    if not sections:
+        return None
+
+    lines: list[str] = []
+    for entry in sections:
+        title = entry.get("title", "")
+        lines.append(f"## {title}")
+        lines.append("")
+        if entry.get("gap"):
+            lines.append(_gap_note(title))
+            lines.append("")
+            continue
+        for paragraph in entry.get("paragraphs", []):
+            text_parts = []
+            quote_lines = []
+            for part in paragraph.get("parts", []):
+                if "quote" in part:
+                    quote = part.get("quote", "")
+                    quote_lines.append(
+                        f"> «{quote}» — {_evidence_reference(state, part)}"
+                    )
+                else:
+                    text_parts.append(str(part.get("text", "")))
+            text = "".join(text_parts)
+            if text.strip():
+                lines.append(text)
+                lines.append("")
+            lines.extend(quote_lines)
+            if quote_lines:
+                lines.append("")
+    references = report_references(state, sections)
+    lines.append("## منابع")
+    lines.append("")
+    if references:
+        for position, reference in enumerate(references, start=1):
+            lines.append(f"{position}. {reference}")
+    else:
+        lines.append("—")
+    return "\n".join(lines).strip() + "\n"
+
+
+def research_session_report(phone: str, session_id: str, fmt: str = "html"):
     """The report read (T18, GitLab #19): phone-matched like every other
     session read — and, unlike the state panel, a CLOSED session still
     answers, because a finished Session's report is the deliverable.
-    (html, None) or (None, (status, Farsi detail))."""
+    (document, None) or (None, (status, Farsi detail)). `fmt` picks the
+    twin (T19): "html" — the default — is the self-contained RTL
+    document; "md" is the Markdown twin of the Brief's body. Both twins
+    answer only once a section stands (the Farsi refusal otherwise);
+    anything but "md" reads as the default html, the caller never
+    needs a third branch."""
     session = research_store.load_session(session_id)
     if session is None or session["phone"] != phone:
         return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
     state = session["state"]
     ensure_state_shape(state)
-    document = report_html(state)
+    document = report_markdown(state) if fmt == "md" else report_html(state)
     if document is None:
         return None, (409, RESEARCH_REPORT_EMPTY_DETAIL)
     return document, None

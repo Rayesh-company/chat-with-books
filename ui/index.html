@@ -1114,7 +1114,16 @@
               <div id="research-chat" class="research-chat" aria-live="polite">
                 <p class="empty">پس از پاسخ اول، گفتگوی پژوهش را اینجا آغاز کنید.</p>
               </div>
-              <div id="research-suggest" class="research-suggest"></div>
+              <div id="research-suggest" class="research-suggest">
+                <!-- DRAFT label: the report chip «دریافت گزارش نشست»
+                     (the Session report's download, T19) is the draft
+                     platform name pending PM approval — CONTEXT.md's
+                     draft roster, 2026-09-19. The text lives in ONE
+                     server constant, ui/research.py's
+                     RESEARCH_REPORT_CHIP, and rides to the sheet in
+                     the suggestions payload, so a rename never
+                     touches this file. -->
+              </div>
               <form id="research-form" class="research-form">
                 <textarea
                   id="research-input"
@@ -1943,11 +1952,47 @@
         researchStateBodyEl.replaceChildren(body);
       }
 
+      // The Session report chip (T19): a DOWNLOAD action, never a turn
+      // command — the report read is fetched straight from the server
+      // and saved as a blob, no message sent, no turn spent. The label
+      // rides in from the server's ONE constant (ui/research.py's
+      // RESEARCH_REPORT_CHIP) and is DRAFT, pending PM approval — the
+      // sheet renames nothing (see the draft marker on #research-suggest).
+      async function downloadResearchReport() {
+        if (!researchSessionId) return;
+        try {
+          const res = await fetch(
+            `/research/report?session=${encodeURIComponent(researchSessionId)}`,
+            { headers: phoneHeader(), cache: "no-store" }
+          );
+          if (!res.ok) {
+            const payload = await res.json().catch(() => ({}));
+            appendResearchError(
+              payload.detail || "گزارش نشست دریافت نشد؛ دوباره تلاش کنید."
+            );
+            return;
+          }
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.download = `gonzarsh-seshat-${researchSessionId}.html`;
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+          URL.revokeObjectURL(url);
+        } catch {
+          appendResearchError("ارتباط با سرویس پژوهش قطع شد.");
+        }
+      }
+
       // The chips: the journey's own moves. Move and answer chips send
       // their text as the user's message (the deterministic commands);
       // proposal chips resolve the checkpoint through /research/decide —
       // SHORT labels, the proposal text in the tooltip, never in the
-      // chip.
+      // chip. The report chip (kind "report", T19) is the exception: it
+      // downloads the Session report instead of sending anything, and
+      // rides the same row beside the closing review's accept chips.
       function renderResearchSuggestions(suggestions) {
         researchSuggestEl.replaceChildren();
         for (const item of Array.isArray(suggestions) ? suggestions : []) {
@@ -1961,6 +2006,9 @@
               researchInputEl.value = item.text;
               researchFormEl.requestSubmit();
             });
+          } else if (item.kind === "report") {
+            chip.textContent = item.label || "";
+            chip.addEventListener("click", downloadResearchReport);
           } else if (item.kind === "proposal") {
             chip.textContent = item.label || (item.accept ? "می‌پذیرم" : "رد می‌کنم");
             if (item.text) chip.title = item.text;

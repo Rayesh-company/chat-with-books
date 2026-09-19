@@ -852,20 +852,40 @@ class SessionHandler(SimpleHTTPRequestHandler):
         «منابع», as one self-contained RTL HTML document. Phone matched;
         a CLOSED session still answers (a finished Session's report is
         the deliverable); no Brief sections yet is the Farsi refusal.
-        The chat transcript never enters it."""
+        The chat transcript never enters it.
+
+        `format=md` (T19, GitLab #22) serves the Markdown twin of the
+        Brief's body instead: `text/markdown; charset=utf-8` as a
+        DOWNLOAD attachment named for the artifact — text reuse wants a
+        file, not a page — while the default html stays inline for the
+        sheet's chip and the print-to-PDF path. Anything but "md" reads
+        as the default html."""
         phone = normalize_phone(self.headers.get("X-Session-Phone", ""))
         if not phone:
             self._json_error(400, "شمارهٔ تلفن همراه را وارد کنید.")
             return
         query = parse_qs(urlparse(self.path).query)
         session_id = (query.get("session") or [""])[0]
-        document, error = research_session_report(phone, session_id)
+        fmt = (query.get("format") or ["html"])[0]
+        document, error = research_session_report(phone, session_id, fmt=fmt)
         if document is None:
             self._send_json(error[0], {"detail": error[1]})
             return
+        if fmt == "md":
+            content_type = "text/markdown; charset=utf-8"
+            # The attachment name carries the session's own id; only the
+            # id's safe characters ride, so the header can never be
+            # shaped by the query string.
+            safe_session = re.sub(r"[^A-Za-z0-9._-]", "", session_id)
+            disposition = f'attachment; filename="gonzarsh-seshat-{safe_session}.md"'
+        else:
+            content_type = "text/html; charset=utf-8"
+            disposition = None
         body = document.encode("utf-8")
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", content_type)
+        if disposition:
+            self.send_header("Content-Disposition", disposition)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
