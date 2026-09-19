@@ -169,7 +169,7 @@ One timestamped archive holds everything git does not — **the memory layer's `
   ```
   schtasks /Create /TN "chat-with-books backup pull" /SC DAILY /ST 04:00 /TR "powershell -ExecutionPolicy Bypass -File <repo>\scripts\pull_backup.ps1"
   ```
-- **Restore** — T15 (#21) ships `scripts/restore.sh` and one rehearsed drill; until then the steps are HANDOFF.md's: bring Postgres up, `docker cp` the dump in, `pg_restore -U cognee -d cognee_db --clean --if-exists` (prefix `MSYS_NO_PATHCONV=1` on Git Bash), unpack the stores and books into the tree.
+- **Restore** — T15 (#21) ships `scripts/restore.sh` and the drill is rehearsed: the newest archive is restored into a throwaway Postgres on port `5433` (never the live stack) and verified — the rehearsal transcript and the ritual live in `docs/restore-drill.md`. The raw path stays HANDOFF.md's: `pg_restore -U cognee -d cognee_db --clean --if-exists` (prefix `MSYS_NO_PATHCONV=1` on Git Bash), unpack the stores and books into the tree.
 
 ## Tests
 
