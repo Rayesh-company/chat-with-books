@@ -440,6 +440,59 @@
         margin: 0;
       }
 
+      /* ===== The profile (T24, GitLab #27) =====
+         The Account's own view: the Balance, today's spend, and the
+         Sessions' spend history. Self-contained: it opens below the
+         sheet, refetches /profile/data every time it opens, and its
+         honesty badges are styled apart — dashed and muted for an
+         estimate, so an estimate never looks measured. DRAFT labels,
+         pending PM approval (see the section's comment). */
+      #profile {
+        border: 1px solid var(--rule);
+        padding: 1rem 1.25rem;
+        margin-top: 1rem;
+      }
+
+      #profile h2 {
+        margin: 0 0 0.5rem;
+        font-size: 1rem;
+      }
+
+      .profile-numbers {
+        margin: 0 0 0.75rem;
+        font-weight: 500;
+      }
+
+      .profile-session {
+        border-top: 1px solid var(--rule);
+        padding: 0.5rem 0 0.35rem;
+      }
+
+      .profile-session-head {
+        margin: 0 0 0.3rem;
+        font-size: 0.85rem;
+        color: var(--mute);
+      }
+
+      .profile-entry {
+        margin: 0.2rem 0;
+        font-size: 0.85rem;
+      }
+
+      .profile-badge {
+        display: inline-block;
+        font-size: 0.72rem;
+        padding: 0 0.4rem;
+        margin-inline-start: 0.35rem;
+        border: 1px solid var(--ink);
+      }
+
+      .profile-badge[data-state="estimated"] {
+        border-style: dashed;
+        color: var(--mute);
+        border-color: var(--mute);
+      }
+
       .browse-btn {
         font-size: 0.8rem;
         font-weight: 500;
@@ -1112,6 +1165,12 @@
           <p class="status" id="status" data-state="unknown">در حال بررسی سرویس…</p>
           <!-- The live session price (T22, GitLab #24): the tariff is config's business; this chip only reads the ledger. -->
           <p class="status" id="usage-live" data-state="idle" title="هزینۀ این نشست از آغاز آخرین پرسش">هزینۀ نشست: —</p>
+          <!-- The profile toggle (T24, GitLab #27): «پروفایل» is the
+               Account's own view of its Balance and its Sessions' spend
+               (the Account glossary row names it so). DRAFT label,
+               pending PM approval — CONTEXT.md's draft roster,
+               2026-09-19. -->
+          <button type="button" id="profile-toggle" class="browse-btn" aria-expanded="false" aria-controls="profile">پروفایل</button>
           <button type="button" id="reader-browse" class="browse-btn">کتاب‌ها</button>
         </div>
       </header>
@@ -1280,6 +1339,24 @@
             </aside>
           </div>
         </div>
+      </section>
+
+      <!-- The profile (T24, GitLab #27): the Account's own view — the
+           Balance (اعتبار), today's spend, and the Sessions' spend
+           history, newest Session first. The section never computes
+           Toman itself: /profile/data carries the numbers and each
+           entry's honesty badge. DRAFT display vocabulary, pending PM
+           approval (2026-09-19, CONTEXT.md's draft roster discipline) —
+           the two badges «اندازه‌گیری‌شده» (metered) and «تخمینی»
+           (estimated) live in ONE server constant pair, ui/serve.py's
+           PROFILE_METERED_BADGE / PROFILE_ESTIMATED_BADGE, and ride the
+           payload, so the PM's approval renames them in one line and
+           this file's render stays name-blind (the source-lock test
+           pins the strings together on both sides). -->
+      <section id="profile" hidden aria-label="پروفایل">
+        <h2>پروفایل</h2>
+        <p class="profile-numbers" id="profile-numbers">…</p>
+        <div id="profile-sessions"></div>
       </section>
     </main>
 
@@ -3808,6 +3885,113 @@
       }
 
       ping();
+    </script>
+    <script>
+      // The profile (T24, GitLab #27): one self-contained block. The
+      // toggle refetches /profile/data every time the section opens —
+      // the Balance and the open Session move while the sheet sits
+      // open — and the render computes no Toman of its own: the
+      // numbers, the Session grouping, and each entry's honesty badge
+      // (اندازه‌گیری‌شده / تخمینی, the DRAFT server constants) all
+      // ride the payload, so the sheet can never dress an estimate up
+      // as a measurement. The kind labels below are the ledger's
+      // recorded kinds in plain Farsi — DRAFT, pending PM approval
+      // (CONTEXT.md's naming discipline, 2026-09-19).
+      (function () {
+        const toggleBtn = document.getElementById("profile-toggle");
+        const section = document.getElementById("profile");
+        const numbersEl = document.getElementById("profile-numbers");
+        const sessionsEl = document.getElementById("profile-sessions");
+        if (!toggleBtn || !section || !numbersEl || !sessionsEl) return;
+
+        const KIND_LABELS = {
+          ask: "پرسش",
+          picker: "گزینش",
+          writer: "پاسخ استنادی",
+          composer: "جست‌وجوی بیشتر",
+          turn: "نوبت پژوهش",
+        };
+        const toman = (n) => (n || 0).toLocaleString("fa-IR");
+        const faTs = (ts) =>
+          String(ts || "").replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[d]);
+
+        function renderProfile(data) {
+          numbersEl.textContent =
+            "اعتبار: " +
+            toman(data.balance_toman) +
+            " تومان · هزینۀ امروز: " +
+            toman(data.today_toman) +
+            " تومان";
+          const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+          if (!sessions.length) {
+            const empty = document.createElement("p");
+            empty.className = "empty";
+            empty.textContent = "هنوز نشستی ثبت نشده است.";
+            sessionsEl.replaceChildren(empty);
+            return;
+          }
+          const frag = document.createDocumentFragment();
+          for (const session of sessions) {
+            const box = document.createElement("div");
+            box.className = "profile-session";
+            const head = document.createElement("p");
+            head.className = "profile-session-head";
+            head.textContent =
+              "آغاز: " +
+              faTs(session.started) +
+              " · جمع: " +
+              toman(session.cost_toman) +
+              " تومان";
+            box.appendChild(head);
+            for (const entry of Array.isArray(session.entries) ? session.entries : []) {
+              const line = document.createElement("p");
+              line.className = "profile-entry";
+              const badge = document.createElement("span");
+              badge.className = "profile-badge";
+              badge.dataset.state = entry.metered ? "metered" : "estimated";
+              badge.textContent = entry.badge || "";
+              line.appendChild(badge);
+              line.appendChild(
+                document.createTextNode(
+                  " " +
+                    (KIND_LABELS[entry.kind] || entry.kind) +
+                    ": " +
+                    toman(entry.input_tokens) +
+                    " + " +
+                    toman(entry.output_tokens) +
+                    " توکن · " +
+                    toman(entry.cost_toman) +
+                    " تومان"
+                )
+              );
+              box.appendChild(line);
+            }
+            frag.appendChild(box);
+          }
+          sessionsEl.replaceChildren(frag);
+        }
+
+        async function refreshProfile() {
+          try {
+            const res = await fetch("/profile/data", { cache: "no-store" });
+            if (!res.ok) {
+              numbersEl.textContent = "پروفایل بارگیری نشد.";
+              sessionsEl.replaceChildren();
+              return;
+            }
+            renderProfile(await res.json());
+          } catch (_) {
+            numbersEl.textContent = "ارتباط با سرویس قطع شد.";
+          }
+        }
+
+        toggleBtn.addEventListener("click", function () {
+          const open = section.hidden;
+          section.hidden = !open;
+          toggleBtn.setAttribute("aria-expanded", String(open));
+          if (open) refreshProfile();
+        });
+      })();
     </script>
   </body>
 </html>

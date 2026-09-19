@@ -203,6 +203,63 @@ def session_total(phone: str) -> int:
             con.close()
 
 
+# The profile's read cap (T24, GitLab #27): the history shows the last
+# 20 Sessions, the open (newest) one first — a history that renders the
+# Account's every sitting since day one is an unbounded query wearing a
+# list; the cap keeps the profile a read, not a scan.
+SESSION_HISTORY_CAP = 20
+
+
+def session_history(phone: str) -> list[dict]:
+    """The Account's spend grouped into Sessions (T24, GitLab #27): the
+    same anchor discipline as `session_total`, walked for the profile's
+    history. The entries are read oldest→newest and each `ask` entry
+    opens a new Session group that runs to the next ask (the group's
+    own ask entry is its first row — `session_total` sums from the
+    anchor inclusive, so the history counts the same way). The newest
+    group leads — the open Session first — capped at the last
+    SESSION_HISTORY_CAP groups.
+
+    One group is {started, entries, cost_toman}: `started` is the ask
+    entry's own ts (the sitting's opening), `entries` the group's rows
+    oldest→newest with ts and the metered flag riding along, and
+    `cost_toman` the group's summed spend. Entries before the first
+    ask belong to no Session (a Session opens with an ask — the same
+    reason `session_total` is 0 without one) and stay out of the
+    history; the day's spend still counts them, which is
+    `today_total`'s business. Read-only: the meter never lets a read
+    rearrange what it recorded, and the profile needs no more than
+    this — every field the sheet renders rides in these groups."""
+    with _LOCK:
+        con = _connect()
+        try:
+            rows = con.execute(
+                "SELECT ts, kind, metered, input_tokens, output_tokens,"
+                " cost_toman FROM usage_entries WHERE phone = ? ORDER BY id",
+                (phone,),
+            ).fetchall()
+        finally:
+            con.close()
+    groups: list[dict] = []
+    for ts, kind, metered, input_tokens, output_tokens, cost in rows:
+        if kind == "ask":
+            groups.append({"started": ts, "entries": [], "cost_toman": 0})
+        if not groups:
+            continue  # a spend with no ask behind it belongs to no Session
+        groups[-1]["entries"].append(
+            {
+                "kind": kind,
+                "metered": bool(metered),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cost_toman": cost,
+                "ts": ts,
+            }
+        )
+        groups[-1]["cost_toman"] += cost
+    return list(reversed(groups[-SESSION_HISTORY_CAP:]))
+
+
 def today_total(phone: str) -> int:
     """The server-local day's spend for the Account — the number the
     profile (T24) and the console (T25) will read."""
