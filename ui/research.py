@@ -56,7 +56,8 @@ from collections import deque
 from urllib.request import urlopen
 
 try:
-    from ui.composer import _composer_content, _composer_reply
+    from ui.composer import _composer_content, _composer_reply, set_meter
+    from ui.ledger import record_composer_call
     from ui.dive import (
         BOOK_DATASETS,
         DIVE_MAX_SUB_QUESTIONS,
@@ -78,7 +79,8 @@ try:
     )
     from ui import research_store
 except ImportError:  # the container runs serve.py as a script beside the modules
-    from composer import _composer_content, _composer_reply
+    from composer import _composer_content, _composer_reply, set_meter
+    from ledger import record_composer_call
     from dive import (
         BOOK_DATASETS,
         DIVE_MAX_SUB_QUESTIONS,
@@ -4531,6 +4533,17 @@ def run_research_turn(
         call_cap=call_cap,
     )
     turn.budget = budget
+    # The turn's usage tap (T23, GitLab #25): every composer call this
+    # worker makes lands its own ledger entry on the Account — metered
+    # or estimated, like every entry — and each cost leaves the Balance
+    # through the ledger's single deduction path. The clear rides the
+    # worker's own finally: tests drive this function on their thread,
+    # so the tap never outlives the turn.
+    set_meter(
+        lambda prompt, reply: record_composer_call(
+            turn.phone, "turn", prompt, reply
+        )
+    )
     try:
         state["turns"] = state.get("turns", 0) + 1
         message = turn.message
@@ -4666,6 +4679,7 @@ def run_research_turn(
         except Exception:
             pass
     finally:
+        set_meter(None)
         turn.done.set()
         # The reap (T11): the registry holds live turns only — a settled
         # turn's outcome is durable in the store, and the recent-settled

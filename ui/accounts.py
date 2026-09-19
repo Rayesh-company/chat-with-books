@@ -58,8 +58,17 @@ def _connect() -> sqlite3.Connection:
         "password_hash TEXT NOT NULL, "
         "phone TEXT, "
         "role TEXT NOT NULL, "
-        "created_at TEXT NOT NULL)"
+        "created_at TEXT NOT NULL, "
+        "balance_toman INTEGER NOT NULL DEFAULT 0)"
     )
+    # The Balance (T23, GitLab #25) landed after the first Accounts did —
+    # an existing store migrates in place, idempotently, on first touch.
+    try:
+        conn.execute(
+            "ALTER TABLE accounts ADD COLUMN balance_toman INTEGER NOT NULL DEFAULT 0"
+        )
+    except sqlite3.OperationalError:
+        pass  # the column is already there
     return conn
 
 
@@ -190,6 +199,47 @@ def attach_phone(email, phone) -> bool:
         return cursor.rowcount > 0
     finally:
         conn.close()
+
+
+def get_balance(phone: str) -> int:
+    """The Balance (اعتبار) of the Account attached to this phone — the
+    prepaid Toman the metered events deduct from."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(balance_toman), 0) FROM accounts WHERE phone = ?",
+            (phone,),
+        ).fetchone()
+        return int(row[0])
+    finally:
+        conn.close()
+
+
+def adjust_balance(phone: str, delta: int) -> int:
+    """One Balance change (the Admin's top-up is #28's write path; the
+    deduction below is the meter's) — returns the new balance."""
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE accounts SET balance_toman = balance_toman + ? WHERE phone = ?",
+            (delta, phone),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT COALESCE(SUM(balance_toman), 0) FROM accounts WHERE phone = ?",
+            (phone,),
+        ).fetchone()
+        return int(row[0])
+    finally:
+        conn.close()
+
+
+def deduct_balance(phone: str, amount: int) -> int:
+    """The meter's deduction: the cost of one recorded entry off the
+    Balance. May land slightly negative — the event that emptied the
+    Balance already ran (a running turn finishes, ADR-0013); the gate
+    stops the NEXT spend, never the one in flight."""
+    return adjust_balance(phone, -amount)
 
 
 def admins_exist() -> bool:

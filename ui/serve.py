@@ -58,6 +58,8 @@ try:
     from ui.accounts import (
         account_by_email,
         create_account,
+        deduct_balance,
+        get_balance,
         verify_login,
     )
     from ui.composer import (
@@ -75,6 +77,7 @@ try:
         session_total,
         today_total,
     )
+    from ui import ledger
     from ui.picker import (
         build_picker_prompt,
         parse_picker_reply,
@@ -172,6 +175,8 @@ except ImportError:  # the container runs this file as a script beside the modul
     from accounts import (
         account_by_email,
         create_account,
+        deduct_balance,
+        get_balance,
         verify_login,
     )
     from report import research_session_report
@@ -190,6 +195,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         session_total,
         today_total,
     )
+    import ledger
     from picker import (
         build_picker_prompt,
         parse_picker_reply,
@@ -296,6 +302,11 @@ PROXY_TIMEOUT = 600
 # once gave up on a search the second service had already finished.
 # Phase 3 waits on its own leash; "unreachable: timed out" only after it.
 NEXT_TIER_TIMEOUT = int(os.environ.get("NEXT_TIER_TIMEOUT", "1200"))
+# The prepaid wiring (T23, GitLab #25): every ledger entry's cost leaves
+# the paying Account's Balance through this one path — the capture sites
+# never deduct by hand, so none can forget.
+ledger.set_deductor(deduct_balance)
+
 ALLOWED_PROXY = {"/health", "/api/v1/recall"}
 NEXT_TIER_SEARCH_TYPE = "GRAPH_COMPLETION_COT"
 
@@ -781,6 +792,21 @@ class SessionHandler(SimpleHTTPRequestHandler):
         f"{AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
     )
 
+    def _balance_gate(self, phone: str) -> bool:
+        """The prepaid stop (T23, GitLab #25): an Account whose Balance
+        (اعتبار) is spent answers 402 with the Farsi fix — the ask and
+        the phases each pay for themselves before they run, and a turn
+        that cannot be paid for never starts. A turn or phase already
+        running finishes; only the NEXT spend is stopped. The daily
+        quota still applies on top of the Balance, never instead."""
+        if get_balance(phone) <= 0:
+            self._json_error(
+                402,
+                "اعتبار این حساب تمام شده است؛ از مدیر بخواهید اعتبار را شارژ کند.",
+            )
+            return False
+        return True
+
     def _gate_phone(self):
         """The ask gate (ADR-0013): the Account's attached phone —
         resolved from the login cookie, never from a client header —
@@ -790,6 +816,8 @@ class SessionHandler(SimpleHTTPRequestHandler):
         which is exactly the store key the quota DB has always had."""
         phone = resolve_identity(self)
         if phone is None:
+            return None
+        if not self._balance_gate(phone):
             return None
         if chats_today(phone) >= DAILY_CHAT_LIMIT:
             self._json_error(
@@ -805,6 +833,8 @@ class SessionHandler(SimpleHTTPRequestHandler):
         already started)."""
         phone = resolve_identity(self)
         if phone is None:
+            return None
+        if not self._balance_gate(phone):
             return None
         if chats_today(phone) < 1:
             self._json_error(

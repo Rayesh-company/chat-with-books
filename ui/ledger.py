@@ -35,6 +35,17 @@ TARIFF_OUTPUT_TOMAN_PER_MTOK = int(
     os.environ.get("TARIFF_OUTPUT_TOMAN_PER_MTOK", "8000")
 )
 
+# The deduction wire (T23, GitLab #25): serve sets this once at import —
+# every recorded entry's cost leaves the paying Account's Balance through
+# exactly one path, so no capture site can forget it.
+_DEDUCTOR = None
+
+
+def set_deductor(fn) -> None:
+    global _DEDUCTOR
+    _DEDUCTOR = fn
+
+
 LEDGER_DB = os.environ.get(
     "LEDGER_DB", str(Path(__file__).resolve().parent / "usage_ledger.sqlite3")
 )
@@ -114,6 +125,11 @@ def record(
             con.commit()
         finally:
             con.close()
+    if _DEDUCTOR is not None and cost:
+        try:
+            _DEDUCTOR(phone, cost)
+        except Exception:
+            pass  # the meter watches the work; it never breaks it
     return {
         "kind": kind,
         "metered": metered,
