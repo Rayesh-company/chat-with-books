@@ -192,6 +192,13 @@ services:
       # same volume (ADR-0008) — a container rebuild must not throw an
       # in-progress investigation away.
       SESSION_RESEARCH_DB: /data/research.sqlite3
+      # The usage ledger (T22, GitLab #24): the Account's spend entries on
+      # the same persisted volume, and the tariff dials — Toman per million
+      # tokens, config-held so a price change is an .env edit + restart,
+      # never a code deploy. The defaults are the PM's starting numbers.
+      LEDGER_DB: /data/usage_ledger.sqlite3
+      TARIFF_INPUT_TOMAN_PER_MTOK: ${TARIFF_INPUT_TOMAN_PER_MTOK:-2000}
+      TARIFF_OUTPUT_TOMAN_PER_MTOK: ${TARIFF_OUTPUT_TOMAN_PER_MTOK:-8000}
     volumes:
       - session_quota:/data
       # The Book set's PDFs + page indexes (ADR-0007), served by

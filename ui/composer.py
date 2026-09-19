@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from urllib.request import Request, urlopen
 
 try:
@@ -193,6 +194,21 @@ def _thinking_fields(thinking_type: str) -> dict:
     return {"reasoning_effort": "low"}
 
 
+# The usage tap (T22, GitLab #24): the ask-path handlers park a listener
+# on their OWN thread; every _composer_reply fires it with the raw reply
+# so the ledger records metered-or-estimated exactly once per upstream
+# call. Thread-local on purpose: ThreadingHTTPServer serves requests
+# concurrently, and a research turn worker's thread must never inherit
+# another request's listener.
+_METER = threading.local()
+
+
+def set_meter(listener) -> None:
+    """Park this thread's usage listener (None clears it — the handler's
+    finally always clears, so one request can never bill another)."""
+    _METER.listener = listener
+
+
 def _composer_reply(
     message: str,
     thinking_type: str,
@@ -240,7 +256,17 @@ def _composer_reply(
     with (urlopen_fn if urlopen_fn is not None else urlopen)(
         request, timeout=COMPOSER_TIMEOUT
     ) as response:
-        return json.load(response)
+        reply = json.load(response)
+    # The tap fires after the with-block: the socket is closed, the reply
+    # is complete, and a listener crash can never take the answer down —
+    # metering watches the work, it never gates it.
+    listener = getattr(_METER, "listener", None)
+    if listener is not None:
+        try:
+            listener(message, reply)
+        except Exception:
+            pass
+    return reply
 
 
 def _composer_content(reply):

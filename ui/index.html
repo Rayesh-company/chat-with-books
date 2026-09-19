@@ -1110,6 +1110,8 @@
         <h1>طرح کلی اندیشۀ اسلامی در قرآن · انسان ۲۵۰ ساله</h1>
         <div class="status-row">
           <p class="status" id="status" data-state="unknown">در حال بررسی سرویس…</p>
+          <!-- The live session price (T22, GitLab #24): the tariff is config's business; this chip only reads the ledger. -->
+          <p class="status" id="usage-live" data-state="idle" title="هزینۀ این نشست از آغاز آخرین پرسش">هزینۀ نشست: —</p>
           <button type="button" id="reader-browse" class="browse-btn">کتاب‌ها</button>
         </div>
       </header>
@@ -1720,6 +1722,7 @@
             body: JSON.stringify({ question, answer, sources }),
             signal: quotedAbort.signal,
           });
+          refreshUsageLive();
           if (run !== citationRun) {
             return;
           }
@@ -1807,6 +1810,7 @@
             body: JSON.stringify({ question, sources }),
             signal: quotedAbort.signal,
           });
+          refreshUsageLive();
           if (run !== citationRun) {
             return;
           }
@@ -2088,6 +2092,22 @@
       // rides in from the server's ONE constant (ui/research.py's
       // RESEARCH_REPORT_CHIP) and is DRAFT, pending PM approval — the
       // sheet renames nothing (see the draft marker on #research-suggest).
+      // The live session price (T22, GitLab #24): one read after each
+      // phase lands — the ledger holds the truth, this only renders it.
+      async function refreshUsageLive() {
+        try {
+          const res = await fetch("/usage/live");
+          if (!res.ok) return;
+          const data = await res.json();
+          const el = document.getElementById("usage-live");
+          if (!el) return;
+          el.textContent = `هزینۀ نشست: ${(data.session_toman ?? 0).toLocaleString("fa-IR")} تومان · امروز: ${(data.today_toman ?? 0).toLocaleString("fa-IR")}`;
+          el.dataset.state = "live";
+        } catch (_) {
+          // The chip is decoration — a failed read leaves the last value.
+        }
+      }
+
       async function downloadResearchReport() {
         if (!researchSessionId) return;
         try {
@@ -2822,6 +2842,7 @@
         };
 
         try {
+          refreshUsageLive();
           const res = await fetch("/api/v1/recall", {
             method: "POST",
             headers: {

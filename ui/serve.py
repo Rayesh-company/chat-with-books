@@ -67,6 +67,13 @@ try:
         build_planner_prompt,
         build_quoted_prompt,
         compose_quoted_answer,
+        set_meter,
+    )
+    from ui.ledger import (
+        record_composer_call,
+        record_size_estimate,
+        session_total,
+        today_total,
     )
     from ui.picker import (
         build_picker_prompt,
@@ -175,6 +182,13 @@ except ImportError:  # the container runs this file as a script beside the modul
         build_planner_prompt,
         build_quoted_prompt,
         compose_quoted_answer,
+        set_meter,
+    )
+    from ledger import (
+        record_composer_call,
+        record_size_estimate,
+        session_total,
+        today_total,
     )
     from picker import (
         build_picker_prompt,
@@ -503,6 +517,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         if path == "/research/report":
             self._research_report()
+            return
+        if path == "/usage/live":
+            self._usage_live()
             return
         if path.startswith("/books/"):
             self._book_file(path)
@@ -929,22 +946,60 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # Research Mode starts from a fresh investigation. Another
             # phone's research is never touched.
             abort_phone_research(phone)
+            # The ask's own entry (T22, GitLab #24): the gate knows the
+            # request's size before the relay streams the answer — an
+            # input-side estimate, marked estimated like every
+            # non-metered entry. The phases' composer calls ride the
+            # thread's usage tap and land metered or estimated by the
+            # reply's own honesty.
+            record_size_estimate(
+                phone, "ask", int(self.headers.get("Content-Length", "0") or "0")
+            )
             self._proxy("POST")
             return
         if path == "/quoted-answer":
-            if self._quoted_phone() is None:
+            phone = self._quoted_phone()
+            if phone is None:
                 return
-            self._quoted_answer()
+            # The planner and the writer both ride this thread's composer
+            # calls — each upstream call lands its own ledger entry.
+            set_meter(
+                lambda prompt, reply: record_composer_call(
+                    phone, "writer", prompt, reply
+                )
+            )
+            try:
+                self._quoted_answer()
+            finally:
+                set_meter(None)
             return
         if path == "/quote-selection":
-            if self._quoted_phone() is None:
+            phone = self._quoted_phone()
+            if phone is None:
                 return
-            self._quote_selection()
+            set_meter(
+                lambda prompt, reply: record_composer_call(
+                    phone, "picker", prompt, reply
+                )
+            )
+            try:
+                self._quote_selection()
+            finally:
+                set_meter(None)
             return
         if path == "/recall-more":
-            if self._quoted_phone() is None:
+            phone = self._quoted_phone()
+            if phone is None:
                 return
-            self._recall_more()
+            set_meter(
+                lambda prompt, reply: record_composer_call(
+                    phone, "composer", prompt, reply
+                )
+            )
+            try:
+                self._recall_more()
+            finally:
+                set_meter(None)
             return
         if path == "/evidence-fallback":
             if self._quoted_phone() is None:
@@ -1174,6 +1229,23 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self._send_json(error[0], {"detail": error[1]})
             return
         self._send_json(200, payload)
+
+    def _usage_live(self) -> None:
+        """The sheet header's live read (T22, GitLab #24): the open
+        Session's running Toman total — everything since this Account's
+        newest `ask` entry inclusive — plus the server-local day's
+        spend. The tariff is config's business; this endpoint only
+        reports what the ledger already recorded."""
+        phone = resolve_identity(self)
+        if phone is None:
+            return
+        self._send_json(
+            200,
+            {
+                "session_toman": session_total(phone),
+                "today_toman": today_total(phone),
+            },
+        )
 
     def _research_report(self) -> None:
         """The Session report's read (T18, GitLab #19): one session's

@@ -7,7 +7,7 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY serve.py guard.py quotas.py composer.py picker.py dive.py research.py research_store.py recall_more.py page_resolver.py accounts.py report.py index.html ./
+COPY serve.py guard.py quotas.py composer.py picker.py dive.py research.py research_store.py recall_more.py page_resolver.py accounts.py report.py ledger.py index.html ./
 # The reader's client-side PDF engine (pdf.js, Apache-2.0) — vendored so
 # the sheet works on a LAN with no CDN (ADR-0007).
 COPY vendor /app/vendor

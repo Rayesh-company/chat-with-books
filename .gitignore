@@ -21,3 +21,4 @@ books/*.pdf
 *.tar.gz
 *.zip
 
+ui/usage_ledger.sqlite3
