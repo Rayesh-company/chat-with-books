@@ -974,6 +974,136 @@
     </style>
   </head>
   <body>
+    <!-- The login overlay (ADR-0013): the Account is the only door — an
+         email and a password issued by the Admin, never self-created.
+         One self-contained block, deliberately isolated: the rest of the
+         sheet's markup and JS is untouched, and the fetch wrapper below
+         is what turns any 401 («برای ادامه وارد شوید.») into this door. -->
+    <section id="auth-gate" hidden>
+      <style>
+        #auth-gate {
+          position: fixed;
+          inset: 0;
+          z-index: 60;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(31, 26, 22, 0.72);
+        }
+        #auth-gate[hidden] {
+          display: none;
+        }
+        #auth-gate form {
+          background: var(--paper, #fbf7f0);
+          border: 1px solid rgba(31, 26, 22, 0.25);
+          border-radius: 10px;
+          padding: 1.5rem 1.75rem;
+          min-width: min(22rem, 90vw);
+          display: grid;
+          gap: 0.6rem;
+        }
+        #auth-gate h2 {
+          margin: 0;
+          font-size: 1.05rem;
+        }
+        #auth-error {
+          margin: 0;
+          color: #a13226;
+          font-size: 0.85rem;
+        }
+      </style>
+      <form id="auth-form">
+        <h2>ورود</h2>
+        <label for="auth-email">ایمیل</label>
+        <input
+          type="email"
+          id="auth-email"
+          name="email"
+          autocomplete="email"
+          dir="ltr"
+          required
+        />
+        <label for="auth-password">گذرواژه</label>
+        <input
+          type="password"
+          id="auth-password"
+          name="password"
+          autocomplete="current-password"
+          dir="ltr"
+          required
+        />
+        <p id="auth-error" hidden></p>
+        <button type="submit">ورود</button>
+      </form>
+      <script>
+        (function () {
+          "use strict";
+          // The gate flip (ADR-0013): the sheet authenticates with the
+          // HttpOnly cwb_auth cookie the server sets; no client header
+          // authenticates anything any more. This block wraps window.fetch
+          // so ANY response 401 — the ask, the picker, a research poll —
+          // opens this overlay, without touching the sheet's own JS. A
+          // successful login hides the overlay and reloads, so every
+          // reader refetches with the cookie.
+          var gate = document.getElementById("auth-gate");
+          var errorEl = document.getElementById("auth-error");
+          var emailEl = document.getElementById("auth-email");
+          var passwordEl = document.getElementById("auth-password");
+          var originalFetch = window.fetch.bind(window);
+
+          function showAuthGate(message) {
+            if (message) {
+              errorEl.textContent = message;
+              errorEl.hidden = false;
+            }
+            gate.hidden = false;
+            if (emailEl.value) {
+              passwordEl.focus();
+            } else {
+              emailEl.focus();
+            }
+          }
+
+          window.fetch = function (input, init) {
+            return originalFetch(input, init).then(function (response) {
+              if (response.status === 401) {
+                showAuthGate();
+              }
+              return response;
+            });
+          };
+
+          document
+            .getElementById("auth-form")
+            .addEventListener("submit", function (event) {
+              event.preventDefault();
+              errorEl.hidden = true;
+              originalFetch("/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  email: emailEl.value.trim(),
+                  password: passwordEl.value,
+                }),
+              })
+                .then(function (response) {
+                  if (response.ok) {
+                    gate.hidden = true;
+                    passwordEl.value = "";
+                    window.location.reload();
+                    return;
+                  }
+                  return response.json().then(function (payload) {
+                    showAuthGate(payload.detail || "ورود ناموفق بود.");
+                  });
+                })
+                .catch(function () {
+                  showAuthGate("ورود ناموفق بود.");
+                });
+            });
+        })();
+      </script>
+    </section>
     <main>
       <header>
         <p class="kicker">نشست · سه مرحلهٔ پاسخ</p>

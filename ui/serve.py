@@ -11,10 +11,14 @@ and close with a Brief built from the research state."""
 from __future__ import annotations
 
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+import base64
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
 import re
+import secrets
 import sys
 import tempfile
 import threading
@@ -50,6 +54,11 @@ try:
         chats_today,
         normalize_phone,
         record_chat,
+    )
+    from ui.accounts import (
+        account_by_email,
+        create_account,
+        verify_login,
     )
     from ui.composer import (
         COMPOSER_MAX_TOKENS,
@@ -152,6 +161,11 @@ except ImportError:  # the container runs this file as a script beside the modul
         chats_today,
         normalize_phone,
         record_chat,
+    )
+    from accounts import (
+        account_by_email,
+        create_account,
+        verify_login,
     )
     from composer import (
         COMPOSER_MAX_TOKENS,
@@ -270,6 +284,156 @@ NEXT_TIER_TIMEOUT = int(os.environ.get("NEXT_TIER_TIMEOUT", "1200"))
 ALLOWED_PROXY = {"/health", "/api/v1/recall"}
 NEXT_TIER_SEARCH_TYPE = "GRAPH_COMPLETION_COT"
 
+# --- the Account gate (ADR-0013) ---------------------------------------------
+# The login page replaced the honor-system phone gate: an Account — an
+# email and a password issued by the Admin, never self-created — is the
+# only door, and the phone number survives as legacy data attached to
+# it, not an identity. Authentication is a stateless signed token in an
+# HttpOnly cookie: the payload is base64(JSON{email, role, exp}) and
+# the signature is hmac-sha256 over exactly those bytes with the server
+# secret — no revocation list, no server-side session store, nothing
+# for a handful of Admin-issued Accounts to outgrow.
+
+# The cookie the sheet's browser carries; HttpOnly so the sheet's own
+# JS can never read the token, Path=/ so every endpoint sees it.
+AUTH_COOKIE = "cwb_auth"
+# Twelve hours: a working day plus margin — the Session operator logs
+# in once per sitting, not once per ask. Pinned in source, never env.
+AUTH_TOKEN_TTL = 12 * 3600
+AUTH_LOGIN_401_DETAIL = "برای ادامه وارد شوید."
+AUTH_NO_PHONE_403_DETAIL = (
+    "حساب شما به شماره‌ای پیوند نخورده است؛ "
+    "از مدیر بخواهید شماره را پیوند بزند."
+)
+AUTH_NOT_ADMIN_403_DETAIL = "ساختن حساب فقط از دست مدیر برمی‌آید."
+AUTH_BAD_CREDENTIALS_DETAIL = "ایمیل یا گذرواژه نادرست است."
+AUTH_BAD_LOGIN_BODY_DETAIL = "ایمیل و گذرواژه را بفرستید."
+AUTH_LOGOUT_DETAIL = "خارج شدید."
+AUTH_EMAIL_TAKEN_DETAIL = "این ایمیل پیش‌تر حساب گرفته است."
+AUTH_BAD_ACCOUNT_BODY_DETAIL = (
+    "ایمیل و گذرواژهٔ حساب را بفرستید (گذرواژه خالی نباشد)."
+)
+
+# The generated-once-per-process secret lives here; auth_secret() reads
+# the env on every call so a test (or an operator) that pins
+# AUTH_SECRET always wins over a cached value.
+_GENERATED_AUTH_SECRET = None
+
+
+def auth_secret() -> bytes:
+    """The token-signing secret: AUTH_SECRET from the env when pinned,
+    otherwise one random secret generated once per process — with a
+    Farsi warning, because a per-process secret invalidates every
+    outstanding login at restart and the operator must know that. The
+    tests pin AUTH_SECRET so the client and server sign alike."""
+    global _GENERATED_AUTH_SECRET
+    pinned = os.environ.get("AUTH_SECRET", "")
+    if pinned:
+        return pinned.encode("utf-8")
+    if _GENERATED_AUTH_SECRET is None:
+        _GENERATED_AUTH_SECRET = secrets.token_hex(32)
+        sys.stderr.write(
+            "هشدار: AUTH_SECRET تنظیم نشده است؛ یک کلید موقت فقط برای "
+            "همین اجرا ساخته شد — با هر بازراه‌اندازی همه باید دوباره "
+            "وارد شوند. (ADR-0013)\n"
+        )
+    return _GENERATED_AUTH_SECRET.encode("utf-8")
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def issue_token(email: str, role: str, now: float = None) -> str:
+    """One signed login token — payload.signature, both URL-safe. The
+    expiry rides inside the signed payload so a client cannot extend
+    it; `now` is the injected clock the tests pin (the TurnBudget
+    pattern), never read from env."""
+    payload = {
+        "email": email,
+        "role": role,
+        "exp": int((time.time() if now is None else now) + AUTH_TOKEN_TTL),
+    }
+    body = _b64url_encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    )
+    signature = hmac.new(
+        auth_secret(), body.encode("ascii"), hashlib.sha256
+    ).hexdigest()
+    return f"{body}.{signature}"
+
+
+def verify_token(token: str):
+    """The signed payload {email, role}, or None. An unsigned, tampered,
+    malformed, or expired token — and a signature that merely fails to
+    compare — all refuse the same way: the caller answers one 401 and
+    never distinguishes why."""
+    if not isinstance(token, str) or token.count(".") != 1:
+        return None
+    body, _, signature = token.partition(".")
+    expected = hmac.new(
+        auth_secret(), body.encode("ascii"), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        payload = json.loads(_b64url_decode(body))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    exp = payload.get("exp")
+    if not isinstance(exp, (int, float)) or exp < time.time():
+        return None
+    email, role = payload.get("email"), payload.get("role")
+    if not isinstance(email, str) or not email or not isinstance(role, str):
+        return None
+    return {"email": email, "role": role}
+
+
+def resolve_identity(handler):
+    """The gate flip (ADR-0013): the Account's attached phone, derived
+    from the cwb_auth cookie — the phone-keyed stores' key, normalized
+    exactly like normalize_phone — or None after answering the request.
+
+    Every endpoint that once read the client-supplied phone header goes
+    through here; the header no longer authenticates anything. An
+    absent, invalid, expired, or tampered token (and a token whose
+    Account no longer exists — a re-issued bootstrap) answers 401; a
+    valid Account with no attached phone answers 403, because the
+    phone-keyed stores (quotas, research sessions) have no key to
+    address it by — the Admin must attach one. Neither answer ever
+    crashes: the gate's rejections keep the drain-first shape so the
+    response never dies to a reset."""
+    claims = verify_token(handler._cookie_token())
+    if claims is not None:
+        account = account_by_email(claims["email"])
+    else:
+        account = None
+    if account is None:
+        handler._json_error(401, AUTH_LOGIN_401_DETAIL)
+        return None
+    phone = normalize_phone(account.get("phone") or "")
+    if not phone:
+        handler._json_error(403, AUTH_NO_PHONE_403_DETAIL)
+        return None
+    return phone
+
+
+def resolve_account(handler):
+    """The auth-level identity (no phone required): the Account row
+    behind the cookie, or None without answering — /auth/me turns None
+    into the 401, the Admin-only account creation turns it into the
+    same 401 before its role check."""
+    claims = verify_token(handler._cookie_token())
+    if claims is None:
+        return None
+    return account_by_email(claims["email"])
+
 
 def validated_datasets(raw):
     """The ask's Book selection (ADR-0010): the client's list
@@ -318,6 +482,11 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            return
+        if path == "/auth/me":
+            # The whoami read (ADR-0013): open to reach — an anonymous
+            # call gets the 401 that shows the sheet's login overlay.
+            self._auth_me()
             return
         if path == "/health":
             self._proxy("GET")
@@ -552,23 +721,57 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self._drain_request_body()
         self._send_json(status, {"detail": detail})
 
-    def _send_json(self, status: int, payload: dict) -> None:
+    def _send_json(self, status: int, payload: dict, extra_headers=()) -> None:
         """One JSON reply. The caller must have consumed the request body
         already (or never had one) — unlike _json_error this does not
-        drain, so a second read cannot block on bytes already taken."""
+        drain, so a second read cannot block on bytes already taken.
+        extra_headers rides the same header block (the login's
+        Set-Cookie); the body stays untouched."""
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        for name, value in extra_headers:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
+    def _cookie_token(self) -> str:
+        """The cwb_auth token out of the Cookie header — '' when absent.
+        The only credential the gate reads: the client-supplied phone
+        header is retired (ADR-0013), and the cookie is HttpOnly, so
+        the sheet's JS cannot forge or read it either."""
+        for part in self.headers.get("Cookie", "").split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == AUTH_COOKIE:
+                return value
+        return ""
+
+    def _auth_cookie_header(self, token: str) -> tuple:
+        """The Set-Cookie pair that logs an Account in: HttpOnly (the
+        sheet's JS never holds the token), SameSite=Lax (cross-site
+        posts cannot ride it), Max-Age matching the token's own signed
+        expiry so the browser and the payload agree."""
+        return (
+            "Set-Cookie",
+            f"{AUTH_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; "
+            f"Max-Age={AUTH_TOKEN_TTL}",
+        )
+
+    _CLEAR_COOKIE = (
+        "Set-Cookie",
+        f"{AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+    )
+
     def _gate_phone(self):
-        """The ask gate: a valid phone with chats left today; records the
-        chat. Answers 400/429 itself and returns None when rejected."""
-        phone = normalize_phone(self.headers.get("X-Session-Phone", ""))
-        if not phone:
-            self._json_error(400, "شمارهٔ تلفن همراه را وارد کنید.")
+        """The ask gate (ADR-0013): the Account's attached phone —
+        resolved from the login cookie, never from a client header —
+        with chats left today; records the chat. The identity resolver
+        answers 401/403 itself and returns None when rejected; the
+        quota still bounds per Account through the attached phone,
+        which is exactly the store key the quota DB has always had."""
+        phone = resolve_identity(self)
+        if phone is None:
             return None
         if chats_today(phone) >= DAILY_CHAT_LIMIT:
             self._json_error(
@@ -579,11 +782,11 @@ class SessionHandler(SimpleHTTPRequestHandler):
         return phone
 
     def _quoted_phone(self):
-        """The phase-2 gate: a valid phone with at least one chat today
-        (the quoted answer belongs to a chat that already started)."""
-        phone = normalize_phone(self.headers.get("X-Session-Phone", ""))
-        if not phone:
-            self._json_error(400, "شمارهٔ تلفن همراه را وارد کنید.")
+        """The phase-2 gate: an Account whose attached phone has at
+        least one chat today (the quoted answer belongs to a chat that
+        already started)."""
+        phone = resolve_identity(self)
+        if phone is None:
             return None
         if chats_today(phone) < 1:
             self._json_error(
@@ -592,8 +795,128 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return None
         return phone
 
+    # --- the Account endpoints (ADR-0013) -----------------------------------
+    # Login is the one door; /auth/logout and /auth/me serve the sheet's
+    # overlay; /auth/accounts is the Admin's issuance. All four stay open
+    # to REACH (no token needed to be told 401) — the gate itself lives in
+    # resolve_identity.
+
+    def _auth_login(self) -> None:
+        """The one door: email + password in, the signed HttpOnly cookie
+        out — plus the whoami body the sheet reloads against. An unknown
+        email and a wrong password answer the identical 401: the
+        difference is never an attacker's to read."""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            email = payload["email"]
+            password = payload["password"]
+            if not isinstance(email, str) or not isinstance(password, str):
+                raise ValueError("email and password are required")
+        except (ValueError, KeyError, TypeError):
+            self._send_json(400, {"detail": AUTH_BAD_LOGIN_BODY_DETAIL})
+            return
+        account = verify_login(email, password)
+        if account is None:
+            self._send_json(401, {"detail": AUTH_BAD_CREDENTIALS_DETAIL})
+            return
+        token = issue_token(account["email"], account["role"])
+        self._send_json(
+            200,
+            {"email": account["email"], "role": account["role"]},
+            extra_headers=[self._auth_cookie_header(token)],
+        )
+
+    def _auth_logout(self) -> None:
+        """Clear the cookie client-side. The token is stateless, so the
+        server has nothing to revoke — its signed expiry ends it."""
+        self._send_json(
+            200, {"detail": AUTH_LOGOUT_DETAIL}, extra_headers=[self._CLEAR_COOKIE]
+        )
+
+    def _auth_me(self) -> None:
+        """The whoami read: the Account behind the cookie, or the same
+        401 every gated endpoint answers — one shape, so the sheet's
+        overlay hook treats it one way."""
+        account = resolve_account(self)
+        if account is None:
+            self._json_error(401, AUTH_LOGIN_401_DETAIL)
+            return
+        self._send_json(
+            200,
+            {
+                "email": account["email"],
+                "role": account["role"],
+                "phone": account["phone"],
+            },
+        )
+
+    def _auth_create_account(self) -> None:
+        """The Admin issues an operator Account (ADR-0013) — the only
+        creation path that exists, no signup page beside it. Anonymous
+        gets the standard 401; a logged-in operator gets 403, because
+        issuing Accounts is the Admin's act alone. The optional phone is
+        the legacy attachment the quota and research stores key by."""
+        account = resolve_account(self)
+        if account is None:
+            self._json_error(401, AUTH_LOGIN_401_DETAIL)
+            return
+        if account["role"] != "admin":
+            self._json_error(403, AUTH_NOT_ADMIN_403_DETAIL)
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            email = payload["email"]
+            password = payload["password"]
+            phone = payload.get("phone")
+            if not isinstance(email, str) or not email.strip():
+                raise ValueError("email is required")
+            if not isinstance(password, str) or not password:
+                raise ValueError("password is required")
+            if phone is not None and not isinstance(phone, str):
+                raise ValueError("phone must be a string")
+        except (ValueError, KeyError, TypeError):
+            # The body is already read above, so _send_json is safe —
+            # _json_error would drain a second time and block.
+            self._send_json(400, {"detail": AUTH_BAD_ACCOUNT_BODY_DETAIL})
+            return
+        if phone:
+            phone = normalize_phone(phone)
+            if not phone:
+                self._send_json(
+                    400, {"detail": "شمارهٔ تلفن همراه را وارد کنید."}
+                )
+                return
+        else:
+            phone = None
+        created = create_account(email, password, phone=phone, role="operator")
+        if created is None:
+            self._send_json(409, {"detail": AUTH_EMAIL_TAKEN_DETAIL})
+            return
+        self._send_json(
+            200,
+            {
+                "email": created["email"],
+                "role": created["role"],
+                "phone": created["phone"],
+            },
+        )
+
     def do_POST(self):
         path = self.path.split("?", 1)[0]
+        if path == "/auth/login":
+            # The one door (ADR-0013): email + password in, the
+            # HttpOnly cookie out. Open by design — there is no other
+            # way in.
+            self._auth_login()
+            return
+        if path == "/auth/logout":
+            self._auth_logout()
+            return
+        if path == "/auth/accounts":
+            self._auth_create_account()
+            return
         if path == "/api/v1/recall":
             phone = self._gate_phone()
             if phone is None:
@@ -795,9 +1118,12 @@ class SessionHandler(SimpleHTTPRequestHandler):
         "suggestions", "state"}), `failed` a short Farsi detail, and an
         unknown id (a restart emptied the registry, or a foreign phone)
         answers 404 — the recorded failure surface, never a hang. The
-        phone must match the turn's: one user's poll never reads
-        another user's research."""
-        phone = normalize_phone(self.headers.get("X-Session-Phone", ""))
+        phone must match the turn's: one Account's poll never reads
+        another's research. The identity comes from the login cookie
+        (ADR-0013): no valid Account, no poll — 401."""
+        phone = resolve_identity(self)
+        if phone is None:
+            return
         query = parse_qs(urlparse(self.path).query)
         turn_id = (query.get("turn") or [""])[0]
         payload = None
@@ -815,8 +1141,11 @@ class SessionHandler(SimpleHTTPRequestHandler):
         claim counts, gaps, pending proposals — phone matched, straight
         from the SQLite store, never from the in-memory registry. The
         chip set rides beside the summary under ``suggestions`` so a
-        refresh re-renders the skip with the map (T10, GitLab #11)."""
-        phone = normalize_phone(self.headers.get("X-Session-Phone", ""))
+        refresh re-renders the skip with the map (T10, GitLab #11).
+        The identity comes from the login cookie (ADR-0013)."""
+        phone = resolve_identity(self)
+        if phone is None:
+            return
         query = parse_qs(urlparse(self.path).query)
         session_id = (query.get("session") or [""])[0]
         if not session_id:
@@ -832,10 +1161,10 @@ class SessionHandler(SimpleHTTPRequestHandler):
         """The transcript read (ADR-0011): one session's messages in
         order, phone matched — a browser refresh re-fetches what was
         said instead of an empty chat. No LLM, no research side
-        effects."""
-        phone = normalize_phone(self.headers.get("X-Session-Phone", ""))
-        if not phone:
-            self._json_error(400, "شمارهٔ تلفن همراه را وارد کنید.")
+        effects. The identity comes from the login cookie (ADR-0013):
+        no valid Account, no transcript — 401."""
+        phone = resolve_identity(self)
+        if phone is None:
             return
         query = parse_qs(urlparse(self.path).query)
         session_id = (query.get("session") or [""])[0]
@@ -852,10 +1181,10 @@ class SessionHandler(SimpleHTTPRequestHandler):
         «منابع», as one self-contained RTL HTML document. Phone matched;
         a CLOSED session still answers (a finished Session's report is
         the deliverable); no Brief sections yet is the Farsi refusal.
-        The chat transcript never enters it."""
-        phone = normalize_phone(self.headers.get("X-Session-Phone", ""))
-        if not phone:
-            self._json_error(400, "شمارهٔ تلفن همراه را وارد کنید.")
+        The chat transcript never enters it. The identity comes from
+        the login cookie (ADR-0013): no valid Account, no report — 401."""
+        phone = resolve_identity(self)
+        if phone is None:
             return
         query = parse_qs(urlparse(self.path).query)
         session_id = (query.get("session") or [""])[0]

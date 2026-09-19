@@ -227,6 +227,10 @@ def test_compose_runs_the_session_sheet_in_a_container():
     assert env["NEXT_TIER_TIMEOUT"] == "${NEXT_TIER_TIMEOUT:-1200}"
     assert env["SESSION_UI_HOST"] == "0.0.0.0"
     assert env["SESSION_UI_QUOTA_DB"] == "/data/usage.sqlite3"
+    # The Account store persists on the same volume (ADR-0013), and the
+    # token-signing secret rides .env like the other keys.
+    assert env["ACCOUNTS_DB"] == "/data/accounts.sqlite3"
+    assert env["AUTH_SECRET"] == "${AUTH_SECRET:-}"
     # The composer key rides as compose interpolation from .env, never
     # baked into the image (the Dockerfile copies only the two files).
     assert env["LLM_API_KEY"] == "${LLM_API_KEY}"

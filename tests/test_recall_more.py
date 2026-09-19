@@ -197,13 +197,15 @@ def test_recall_more_endpoint_gates_like_phase_two(tmp_path):
     upstream = WidenUpstream(composer_items=[composer_reply(broaden_reply())])
     base, server, original = with_gate(tmp_path, upstream)
     try:
+        # Anonymous is the overlay's 401 now (ADR-0013): the phone
+        # header no longer authenticates anything.
         no_phone, _ = post(base, "/recall-more", {"question": "پرسش؟"})
         no_chat, payload = post(
             base, "/recall-more", {"question": "پرسش؟"}, phone=PHONE
         )
     finally:
         stop_gate(server, original)
-    assert no_phone == 400
+    assert no_phone == 401
     assert no_chat == 429
     assert "گفتگو" in payload["detail"]
     assert not upstream.search_bodies
@@ -261,6 +263,7 @@ def test_evidence_fallback_gates_like_the_ask_without_counting(tmp_path):
     upstream = WidenUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
+        # Anonymous is the overlay's 401 now (ADR-0013).
         no_phone, _ = post(base, "/evidence-fallback", {"question": "پرسش؟"})
         no_chat, payload = post(
             base, "/evidence-fallback", {"question": "پرسش؟"}, phone=PHONE
@@ -273,7 +276,7 @@ def test_evidence_fallback_gates_like_the_ask_without_counting(tmp_path):
         )
     finally:
         stop_gate(server, original)
-    assert no_phone == 400
+    assert no_phone == 401
     assert no_chat == 429
     assert "گفتگو" in payload["detail"]
     assert status == 200

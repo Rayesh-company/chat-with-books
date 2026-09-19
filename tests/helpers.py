@@ -18,6 +18,7 @@ from tests.conftest import REPO_ROOT
 sys.path.insert(0, str(REPO_ROOT))
 
 from ui import (  # noqa: E402
+    accounts,
     composer,
     dive,
     picker,
@@ -30,9 +31,14 @@ from ui import (  # noqa: E402
 
 
 def post(base, path, payload, phone=None):
+    """One POST; (status, payload). The gate tests speak the phone
+    dialect and the server now speaks Accounts (ADR-0013), so a phone
+    is translated here into that Account's login cookie — every call
+    site keeps working unchanged, and the wire shape is the cookie the
+    browser would carry. phone=None stays anonymous (the 401 shape)."""
     headers = {"Content-Type": "application/json"}
     if phone is not None:
-        headers["X-Session-Phone"] = phone
+        headers["Cookie"] = _login_cookie(base, phone)
     request = urllib.request.Request(
         base + path,
         data=json.dumps(payload).encode("utf-8"),
@@ -47,16 +53,139 @@ def post(base, path, payload, phone=None):
 
 
 def get(base, path, phone=None):
-    """One GET with the optional session phone; (status, payload)."""
+    """One GET with the optional session phone — translated into the
+    Account's login cookie exactly like post(); (status, payload)."""
     headers = {}
     if phone is not None:
-        headers["X-Session-Phone"] = phone
+        headers["Cookie"] = _login_cookie(base, phone)
     request = urllib.request.Request(base + path, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             return response.status, json.load(response)
     except urllib.error.HTTPError as exc:
         return exc.code, json.load(exc)
+
+
+# --- the Account seeding (ADR-0013) ------------------------------------------
+# One Account per test phone: email derived from the phone, the fixed
+# test password, the phone attached, role operator — plus one Admin per
+# patched DB (minted in patch_accounts). The seed runs at call time
+# against the patched ACCOUNTS_DB, because no fixture can know which
+# phones a test will pick; the store dedupes (an issued Account is
+# never re-issued).
+
+TEST_PASSWORD = "cwb-test-password"
+ADMIN_EMAIL = "admin@sheet.test"
+
+
+def account_email_for_phone(phone: str) -> str:
+    return f"{phone}@sheet.test"
+
+
+def ensure_account(phone: str) -> None:
+    accounts.create_account(
+        account_email_for_phone(phone), TEST_PASSWORD, phone=phone, role="operator"
+    )
+
+
+# Login cookies per (base, phone) — the token lives twelve hours, far
+# past any test; the cache is cleared when the patches are.
+_COOKIE_CACHE = {}
+
+
+def _login_cookie(base: str, phone: str) -> str:
+    ensure_account(phone)
+    cached = _COOKIE_CACHE.get((base, phone))
+    if cached is not None:
+        return cached
+    request = urllib.request.Request(
+        base + "/auth/login",
+        data=json.dumps(
+            {
+                "email": account_email_for_phone(phone),
+                "password": TEST_PASSWORD,
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        set_cookie = response.headers.get("Set-Cookie", "")
+    cookie = set_cookie.split(";", 1)[0].strip()
+    if not cookie:
+        raise AssertionError(f"login for {phone} set no cookie")
+    _COOKIE_CACHE[(base, phone)] = cookie
+    return cookie
+
+
+def raw_post(base: str, path: str, payload, cookie: str = None):
+    """One POST with an explicit cookie header value (not the phone
+    translation) — the auth tests' own client, so tampered/expired
+    tokens can ride exactly the header a browser would send."""
+    headers = {"Content-Type": "application/json"}
+    if cookie is not None:
+        headers["Cookie"] = cookie
+    request = urllib.request.Request(
+        base + path,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.load(exc)
+
+
+def raw_get(base: str, path: str, cookie: str = None):
+    """One GET with an explicit cookie header value — see raw_post."""
+    headers = {"Cookie": cookie} if cookie is not None else {}
+    request = urllib.request.Request(base + path, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.load(exc)
+
+
+def cookie_for(base: str, email: str, password: str = None) -> str:
+    """The cwb_auth cookie for an arbitrary Account (the Admin's tests
+    use this for /auth/accounts), via one real /auth/login."""
+    request = urllib.request.Request(
+        base + "/auth/login",
+        data=json.dumps(
+            {
+                "email": email,
+                "password": TEST_PASSWORD if password is None else password,
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        cookie = response.headers.get("Set-Cookie", "").split(";", 1)[0].strip()
+    if not cookie:
+        raise AssertionError(f"login for {email} set no cookie")
+    return cookie
+
+
+def patch_accounts(tmp_path) -> None:
+    """Patch the Account store to the test's own file (the quotas.py
+    pattern: the module attribute is the seam) and pin the auth secret
+    for the whole process — the sheet server and the test client must
+    sign tokens with the same secret. Mints the Admin (no phone
+    attached: the Admin issues Accounts, the Session operator's
+    Accounts carry the phones)."""
+    accounts.ACCOUNTS_DB = tmp_path / "accounts.sqlite3"
+    os.environ["AUTH_SECRET"] = "test-secret"
+    _COOKIE_CACHE.clear()
+    accounts.create_account(ADMIN_EMAIL, TEST_PASSWORD, phone=None, role="admin")
+
+
+def unpatch_accounts() -> None:
+    os.environ.pop("AUTH_SECRET", None)
+    _COOKIE_CACHE.clear()
 
 
 # The Book's text layer separates words with real backspace characters
@@ -213,18 +342,21 @@ class GateServer(ThreadingHTTPServer):
 
 
 def with_gate(tmp_path, upstream):
-    """Run a real sheet server against a patched quota DB, research DB,
-    and upstream; return (base URL, server, original urlopen). The
-    tests' finally blocks must shut the server down and restore all
-    three patches. The quota DB is patched at its owning module
-    (ui.quotas reads it per connection), the research store's DB at
+    """Run a real sheet server against a patched quota DB, accounts DB,
+    research DB, and upstream; return (base URL, server, original
+    urlopen). The tests' finally blocks must shut the server down and
+    restore all patches. The quota DB is patched at its owning module
+    (ui.quotas reads it per connection), the accounts DB and the auth
+    secret through patch_accounts (the sheet server and the test
+    client must sign tokens alike), the research store's DB at
     ui.research_store, and the fake stands at every owning module's
     urlopen seam — the facade's own relay/proxy, the composer's, the
-    picker's, the dive kernel's, and the research engine's (one upstream
-    told apart by URL). The turn registry starts empty — a server
-    restart is what empties it in production."""
+    picker's, the dive kernel's, and the research engine's (one
+    upstream told apart by URL). The turn registry starts empty — a
+    server restart is what empties it in production."""
     quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
     research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
+    patch_accounts(tmp_path)
     research.RESEARCH_REGISTRY.clear()
     originals = [
         (module, module.urlopen)
@@ -244,4 +376,5 @@ def stop_gate(server, original):
     server.server_close()
     for module, urlopen_original in original:
         module.urlopen = urlopen_original
+    unpatch_accounts()
     os.environ.pop("LLM_API_KEY", None)

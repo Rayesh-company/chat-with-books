@@ -81,7 +81,7 @@ def test_readme_research_section_locks_the_registry_and_the_store():
 def test_readme_records_the_research_gate_as_free():
     section = (
         README.read_text(encoding="utf-8")
-        .split("### Phone gate", 1)[1]
+        .split("### Accounts & login (ADR-0013)", 1)[1]
         .split("\n### ", 1)[0]
     )
     assert "/research/message" in section
