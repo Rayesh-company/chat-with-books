@@ -77,6 +77,7 @@ try:
     from ui.ledger import (
         record_composer_call,
         record_size_estimate,
+        session_history,
         session_total,
         today_total,
         day_total,
@@ -202,6 +203,7 @@ except ImportError:  # the container runs this file as a script beside the modul
     from ledger import (
         record_composer_call,
         record_size_estimate,
+        session_history,
         session_total,
         today_total,
         day_total,
@@ -360,6 +362,17 @@ AUTH_EMAIL_TAKEN_DETAIL = "این ایمیل پیش‌تر حساب گرفته �
 AUTH_BAD_ACCOUNT_BODY_DETAIL = (
     "ایمیل و گذرواژهٔ حساب را بفرستید (گذرواژه خالی نباشد)."
 )
+
+# The profile's honesty badges (T24, GitLab #27) — DRAFT display
+# vocabulary, pending PM approval (2026-09-19, CONTEXT.md's draft
+# roster discipline): the two labels that keep an estimate from ever
+# rendering as a measurement. They live here in ONE constant pair and
+# ride the /profile/data payload per entry, so the PM's approval
+# renames them in one line and the sheet never decides what counts as
+# measured (index.html documents the same strings in its own DRAFT
+# comment — the tests lock the two together).
+PROFILE_METERED_BADGE = "اندازه‌گیری‌شده"
+PROFILE_ESTIMATED_BADGE = "تخمینی"
 
 # The generated-once-per-process secret lives here; auth_secret() reads
 # the env on every call so a test (or an operator) that pins
@@ -557,6 +570,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # The «میز مدیریت» (T25): the Admin's server-rendered
             # mirror of the system — a read, never a mutation.
             self._admin_console()
+            return
+        if path == "/profile/data":
+            self._profile_data()
             return
         if path.startswith("/books/"):
             self._book_file(path)
@@ -1414,6 +1430,37 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def _profile_data(self) -> None:
+        """The profile read (T24, GitLab #27): the Account's own Balance
+        (اعتبار) straight from the store, the server-local day's spend,
+        and the spend history grouped into Sessions by the ledger's
+        session_history — the open Session first. The cookie IS the
+        address: there is no id parameter at all, so a caller — whatever
+        it sends — can only ever read its own Account's numbers, the
+        same shape /usage/live answers with. Each entry's honesty badge
+        rides the data (the DRAFT constants above): the sheet renders
+        the meter's own verdict, it never judges metered against
+        estimated itself, so an estimate can never look measured."""
+        phone = resolve_identity(self)
+        if phone is None:
+            return
+        sessions = session_history(phone)
+        for session in sessions:
+            for entry in session["entries"]:
+                entry["badge"] = (
+                    PROFILE_METERED_BADGE
+                    if entry["metered"]
+                    else PROFILE_ESTIMATED_BADGE
+                )
+        self._send_json(
+            200,
+            {
+                "balance_toman": get_balance(phone),
+                "today_toman": today_total(phone),
+                "sessions": sessions,
+            },
+        )
 
     def _research_report(self) -> None:
         """The Session report's read (T18, GitLab #19): one session's
