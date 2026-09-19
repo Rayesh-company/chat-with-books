@@ -18,6 +18,18 @@ def _isolated_ledger(tmp_path, monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_audit(tmp_path, monkeypatch):
+    """Every test's audit rows land in that test's own file — the same
+    isolation shape as the ledger's (T25): /auth/accounts appends an
+    account_created row from far too many tests to patch one by one,
+    and an audit row leaking between tests would be exactly the kind
+    of history the log exists to keep honest."""
+    from ui import audit
+
+    monkeypatch.setattr(audit, "AUDIT_DB", tmp_path / "audit.sqlite3")
+
+
 def parse_dotenv(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     for raw in path.read_text(encoding="utf-8").splitlines():

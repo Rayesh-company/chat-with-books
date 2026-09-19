@@ -179,6 +179,32 @@ def account_by_email(email):
     return _row_to_account(row) if row is not None else None
 
 
+def list_accounts():
+    """Every Account row (no password hash), creation order — the Admin
+    console's mirror (T25, GitLab #26): the balance_toman column rides
+    along (T23), so the console shows each Account's own Balance
+    without a second round-trip per row. A read like any other: it
+    never touches a hash."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT email, phone, role, created_at, balance_toman "
+            "FROM accounts ORDER BY rowid"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {
+            "email": row[0],
+            "phone": row[1],
+            "role": row[2],
+            "created_at": row[3],
+            "balance_toman": int(row[4]),
+        }
+        for row in rows
+    ]
+
+
 def get_role(email):
     """The Account's role — 'admin', 'operator', or None when unknown."""
     account = account_by_email(email)

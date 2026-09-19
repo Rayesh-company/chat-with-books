@@ -199,6 +199,10 @@ services:
       LEDGER_DB: /data/usage_ledger.sqlite3
       TARIFF_INPUT_TOMAN_PER_MTOK: ${TARIFF_INPUT_TOMAN_PER_MTOK:-2000}
       TARIFF_OUTPUT_TOMAN_PER_MTOK: ${TARIFF_OUTPUT_TOMAN_PER_MTOK:-8000}
+      # The admin audit log (T25, GitLab #26): the append-only record of
+      # the Admin's actions, on the same persisted volume — an audit
+      # that evaporates on a container rebuild is not an audit.
+      AUDIT_DB: /data/audit.sqlite3
     volumes:
       - session_quota:/data
       # The Book set's PDFs + page indexes (ADR-0007), served by

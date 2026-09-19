@@ -203,17 +203,25 @@ def session_total(phone: str) -> int:
             con.close()
 
 
-def today_total(phone: str) -> int:
-    """The server-local day's spend for the Account — the number the
-    profile (T24) and the console (T25) will read."""
+def day_total(phone: str, day: str) -> int:
+    """One calendar day's spend for the Account — `day` in the store's
+    own `%Y-%m-%d` shape. The console's yesterday read (T25, GitLab
+    #26): per-day usage and Toman was the ticket's ask, and every entry
+    already carries its day, so history answers without a new store."""
     with _LOCK:
         con = _connect()
         try:
             row = con.execute(
                 "SELECT COALESCE(SUM(cost_toman), 0) FROM usage_entries"
                 " WHERE phone = ? AND day = ?",
-                (phone, _today()),
+                (phone, str(day)),
             ).fetchone()
             return int(row[0])
         finally:
             con.close()
+
+
+def today_total(phone: str) -> int:
+    """The server-local day's spend for the Account — the number the
+    profile (T24) and the console (T25) read."""
+    return day_total(phone, _today())

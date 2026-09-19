@@ -60,8 +60,11 @@ try:
         create_account,
         deduct_balance,
         get_balance,
+        list_accounts,
         verify_login,
     )
+    from ui import audit
+    from ui.console import console_html
     from ui.composer import (
         COMPOSER_MAX_TOKENS,
         COMPOSER_TIMEOUT,
@@ -76,6 +79,7 @@ try:
         record_size_estimate,
         session_total,
         today_total,
+        day_total,
     )
     from ui import ledger
     from ui.picker import (
@@ -124,6 +128,9 @@ try:
         RESEARCH_MAX_CONCURRENT,
         RESEARCH_MODEL,
         RESEARCH_NO_EVIDENCE_DETAIL,
+        RESEARCH_RECENT_SETTLED,
+        RESEARCH_REGISTRY,
+        RESEARCH_REGISTRY_LOCK,
         RESEARCH_SESSION_CAP_DETAIL,
         RESEARCH_SESSION_CLOSED_DETAIL,
         RESEARCH_SESSION_NOT_FOUND_DETAIL,
@@ -177,8 +184,11 @@ except ImportError:  # the container runs this file as a script beside the modul
         create_account,
         deduct_balance,
         get_balance,
+        list_accounts,
         verify_login,
     )
+    import audit
+    from console import console_html
     from report import research_session_report
     from composer import (
         COMPOSER_MAX_TOKENS,
@@ -194,6 +204,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         record_size_estimate,
         session_total,
         today_total,
+        day_total,
     )
     import ledger
     from picker import (
@@ -241,6 +252,9 @@ except ImportError:  # the container runs this file as a script beside the modul
         RESEARCH_MAX_CONCURRENT,
         RESEARCH_MODEL,
         RESEARCH_NO_EVIDENCE_DETAIL,
+        RESEARCH_RECENT_SETTLED,
+        RESEARCH_REGISTRY,
+        RESEARCH_REGISTRY_LOCK,
         RESEARCH_SESSION_CAP_DETAIL,
         RESEARCH_SESSION_CLOSED_DETAIL,
         RESEARCH_SESSION_NOT_FOUND_DETAIL,
@@ -332,6 +346,13 @@ AUTH_NO_PHONE_403_DETAIL = (
     "از مدیر بخواهید شماره را پیوند بزند."
 )
 AUTH_NOT_ADMIN_403_DETAIL = "ساختن حساب فقط از دست مدیر برمی‌آید."
+# The console's own refusal (T25): the mirror is the Admin's surface —
+# a logged-in operator's cookie reaches the endpoint but not the page,
+# and the Farsi note names whose door it is.
+ADMIN_CONSOLE_403_DETAIL = "میز مدیریت فقط از دست مدیر برمی‌آید."
+# How many audit rows the console shows (T25): a glance at the newest
+# actions, not the archive — the log itself keeps everything.
+ADMIN_AUDIT_ROWS = 20
 AUTH_BAD_CREDENTIALS_DETAIL = "ایمیل یا گذرواژه نادرست است."
 AUTH_BAD_LOGIN_BODY_DETAIL = "ایمیل و گذرواژه را بفرستید."
 AUTH_LOGOUT_DETAIL = "خارج شدید."
@@ -531,6 +552,11 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         if path == "/usage/live":
             self._usage_live()
+            return
+        if path == "/admin":
+            # The «میز مدیریت» (T25): the Admin's server-rendered
+            # mirror of the system — a read, never a mutation.
+            self._admin_console()
             return
         if path.startswith("/books/"):
             self._book_file(path)
@@ -942,6 +968,25 @@ class SessionHandler(SimpleHTTPRequestHandler):
         if created is None:
             self._send_json(409, {"detail": AUTH_EMAIL_TAKEN_DETAIL})
             return
+        # The audit's first wired action (ADR-0013, T25): an issuance is
+        # the Admin's act and lands in the append-only log — the issuer
+        # and the issued, appended only after the creation truly
+        # succeeded. A refused creation (the 409 above, the bad body
+        # before it) logs nothing: the log records what HAPPENED, never
+        # what was attempted. A broken audit store must not un-issue
+        # the Account either — the failure stays loud on stderr, never
+        # silent, and the issuance stands.
+        try:
+            audit.append(
+                audit.ACCOUNT_CREATED,
+                actor_email=account["email"],
+                detail={"email": created["email"], "phone": created["phone"]},
+            )
+        except Exception as exc:
+            sys.stderr.write(
+                f"audit append failed for account_created "
+                f"{created['email']}: {exc!r}\n"
+            )
         self._send_json(
             200,
             {
@@ -1276,6 +1321,99 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 "today_toman": today_total(phone),
             },
         )
+
+    def _admin_console(self) -> None:
+        """The «میز مدیریت» read (T25, GitLab #26): the Admin's
+        server-rendered mirror of the system — every Account with its
+        Balance (اعتبار), the day's spend off the ledger, the day's
+        chats against the daily limit, the live research turns and the
+        recently settled ones with their failures called out, and the
+        audit log's newest rows. One HTML document, no JS dependency —
+        the console reads, it does not run the system from the browser.
+
+        The gate is /auth/accounts' shape exactly (resolve_account plus
+        the role check), and deliberately NOT resolve_identity: the
+        Admin's own Account carries no attached phone — it issues
+        Accounts, it does not chat — so resolve_identity's
+        attach-a-phone 403 would lock the Admin out of its own console
+        before the role ever ran. Anonymous still gets the standard
+        401; a logged-in operator gets the console's own 403.
+
+        Every read here stays a read: the registry snapshot copies the
+        live turns and the recent-settled ring under
+        RESEARCH_REGISTRY_LOCK and never writes back, the ledger and
+        the quota store answer their per-phone sums, and the audit read
+        is a plain SELECT against the append-only table. The console
+        never mutates silently — this round it never mutates at all
+        (the issuance and top-up write paths are T26, GitLab #28)."""
+        account = resolve_account(self)
+        if account is None:
+            self._json_error(401, AUTH_LOGIN_401_DETAIL)
+            return
+        if account["role"] != "admin":
+            self._json_error(403, ADMIN_CONSOLE_403_DETAIL)
+            return
+        yesterday = time.strftime(
+            "%Y-%m-%d",
+            time.localtime(time.time() - 24 * 60 * 60),
+        )
+        accounts_rows = []
+        for row in list_accounts():
+            phone = normalize_phone(row.get("phone") or "")
+            accounts_rows.append(
+                {
+                    "email": row["email"],
+                    "role": row["role"],
+                    "phone": phone,
+                    "balance_toman": row["balance_toman"],
+                    # The ledger and the quota key by the attached
+                    # phone; an Account with none attached (the Admin
+                    # itself) reads as zero spend and zero chats —
+                    # honest, not hidden.
+                    "yesterday_spend_toman": day_total(phone, yesterday)
+                    if phone
+                    else 0,
+                    "today_spend_toman": today_total(phone) if phone else 0,
+                    "chats_today": chats_today(phone) if phone else 0,
+                }
+            )
+        now_mono = time.monotonic()
+        with RESEARCH_REGISTRY_LOCK:
+            live_turns = [
+                {
+                    "id": turn.id,
+                    "phone": turn.phone,
+                    "state": turn.state,
+                    "elapsed": round(now_mono - turn.started_at, 1),
+                }
+                for turn in RESEARCH_REGISTRY.values()
+            ]
+            # The ring is appended oldest-first as turns settle; the
+            # page renders newest first, so the snapshot hands it over
+            # reversed. list() copies before the lock lets go.
+            settled_turns = [
+                {
+                    "id": turn.id,
+                    "phone": turn.phone,
+                    "state": turn.state,
+                    "error": turn.error,
+                }
+                for turn in reversed(list(RESEARCH_RECENT_SETTLED))
+            ]
+        body = console_html(
+            accounts_rows,
+            live_turns,
+            settled_turns,
+            audit.recent(ADMIN_AUDIT_ROWS),
+            quota_limit=DAILY_CHAT_LIMIT,
+            generated=time.strftime("%Y-%m-%d %H:%M"),
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _research_report(self) -> None:
         """The Session report's read (T18, GitLab #19): one session's

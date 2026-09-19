@@ -22,3 +22,4 @@ books/*.pdf
 *.zip
 
 ui/usage_ledger.sqlite3
+ui/audit.sqlite3
