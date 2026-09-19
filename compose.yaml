@@ -179,6 +179,15 @@ services:
       SESSION_UI_HOST: 0.0.0.0
       SESSION_UI_PORT: "8765"
       SESSION_UI_QUOTA_DB: /data/usage.sqlite3
+      # The Account store (ADR-0013) persists beside the quota counts on
+      # the same volume — a container rebuild must not throw the issued
+      # Accounts away.
+      ACCOUNTS_DB: /data/accounts.sqlite3
+      # The login tokens are signed with AUTH_SECRET (ADR-0013); it rides
+      # the compose-only .env like the keys above — unset, the server
+      # generates a per-process secret and warns that a restart logs
+      # every Account out.
+      AUTH_SECRET: ${AUTH_SECRET:-}
       # Research Mode's sessions persist beside the quota counts on the
       # same volume (ADR-0008) — a container rebuild must not throw an
       # in-progress investigation away.

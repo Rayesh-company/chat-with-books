@@ -154,15 +154,17 @@ def quote_payload(question="پرسش؟", sources=POOL):
     return {"question": question, "sources": sources}
 
 
-def test_quote_selection_without_a_phone_is_rejected_before_the_picker(tmp_path):
+def test_quote_selection_without_a_login_is_rejected_before_the_picker(tmp_path):
+    # The gate flip (ADR-0013): anonymous is the overlay's 401
+    # («برای ادامه وارد شوید.») — the picker is never invoked.
     composer = FakeComposer([picker_reply(verbatim_selections(4))])
     base, server, original = with_gate(tmp_path, composer)
     try:
         status, payload = post(base, "/quote-selection", quote_payload())
     finally:
         stop_gate(server, original)
-    assert status == 400
-    assert "شماره" in payload["detail"]
+    assert status == 401
+    assert "وارد شوید" in payload["detail"]
     assert composer.calls == []
 
 

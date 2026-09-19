@@ -1,7 +1,9 @@
-"""The phone gate: the public sheet identifies a Customer by a phone
-number, and each number gets five chats a day (PM call, 2026-09-10, for
-the VPS deploy). Honor-system — no SMS verification; the gate exists to
-stop casual credit-burn, not a determined caller."""
+"""The ask gate and its quota (ADR-0013): the sheet identifies the
+Session operator by their Account — an email and a password issued by
+the Admin — and the Account's attached phone gets five chats a day.
+The honor-system phone gate is retired: the login cookie replaced the
+phone header, and the phone number survives as legacy data attached to
+the Account, still the quota stores' key."""
 
 import json
 import sqlite3
@@ -87,7 +89,14 @@ def composer_replies():
 # The gate-test harness (the POST client and the sheet-server
 # with/stop pair) lives in tests.helpers — shared with the deep-dive
 # endpoint tests, so neither test module is the other's library.
-from tests.helpers import GateServer, post, stop_gate, with_gate  # noqa: E402
+from tests.helpers import (  # noqa: E402
+    GateServer,
+    patch_accounts,
+    post,
+    stop_gate,
+    unpatch_accounts,
+    with_gate,
+)
 
 
 def test_normalize_phone_maps_farsi_and_arabic_digits():
@@ -103,7 +112,10 @@ def test_normalize_phone_maps_farsi_and_arabic_digits():
     assert serve.normalize_phone(None) == ""
 
 
-def test_recall_without_a_phone_is_rejected_before_touching_cognee(tmp_path):
+def test_recall_without_a_login_is_rejected_before_touching_cognee(tmp_path):
+    # The gate flip (ADR-0013): the phone header no longer authenticates
+    # anything — an anonymous request is the overlay's 401 («برای ادامه
+    # وارد شوید.»), and Cognee is never touched.
     upstream = FakeUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
@@ -114,16 +126,21 @@ def test_recall_without_a_phone_is_rejected_before_touching_cognee(tmp_path):
         )
     finally:
         stop_gate(server, original)
-    assert status == 400
-    assert "شماره" in payload["detail"]
+    assert status == 401
+    assert "وارد شوید" in payload["detail"]
     assert upstream.calls == []
 
 
-def test_recall_with_a_too_short_phone_is_rejected(tmp_path):
+def test_an_attached_phone_that_normalizes_to_nothing_is_treated_as_none(tmp_path):
+    # ADR-0013: the phone is legacy data attached to the Account; the
+    # gate normalizes it exactly like before on every read. An Account
+    # whose attached phone is not 10-13 digits has, effectively, none —
+    # the phone-keyed stores cannot address it, so the 403 Farsi
+    # «پیوند نخورده» answer, never a 400 and never a crash.
     upstream = FakeUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        status, _ = post(
+        status, payload = post(
             base,
             "/api/v1/recall",
             {"searchType": "HYBRID_COMPLETION", "query": "پرسش؟"},
@@ -131,7 +148,8 @@ def test_recall_with_a_too_short_phone_is_rejected(tmp_path):
         )
     finally:
         stop_gate(server, original)
-    assert status == 400
+    assert status == 403
+    assert "پیوند" in payload["detail"]
     assert upstream.calls == []
 
 
@@ -398,6 +416,7 @@ def test_next_tier_relay_survives_a_slow_search(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(serve, "NEXT_TIER_TIMEOUT", 5)
     quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
+    patch_accounts(tmp_path)
     serve.record_chat("09120000012")
     sheet = GateServer(("127.0.0.1", 0), serve.SessionHandler)
     threading.Thread(target=sheet.serve_forever, daemon=True).start()
@@ -413,6 +432,7 @@ def test_next_tier_relay_survives_a_slow_search(tmp_path, monkeypatch):
         sheet.server_close()
         slow.shutdown()
         slow.server_close()
+        unpatch_accounts()
     assert status == 200
     assert body == [{"text": "پاسخ سطح بعدی"}]
 
@@ -429,6 +449,7 @@ def test_next_tier_relay_reports_a_timed_out_search(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(serve, "NEXT_TIER_TIMEOUT", 1)
     quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
+    patch_accounts(tmp_path)
     serve.record_chat("09120000013")
     sheet = GateServer(("127.0.0.1", 0), serve.SessionHandler)
     threading.Thread(target=sheet.serve_forever, daemon=True).start()
@@ -444,6 +465,7 @@ def test_next_tier_relay_reports_a_timed_out_search(tmp_path, monkeypatch):
         sheet.server_close()
         slow.shutdown()
         slow.server_close()
+        unpatch_accounts()
     assert status == 504
     assert body == {"detail": "next-tier unreachable: timed out"}
 
@@ -473,28 +495,47 @@ def test_sheet_sends_the_phone_and_shows_the_gate():
 def test_serve_pins_the_gate_shape():
     text = (REPO_ROOT / "ui" / "serve.py").read_text(encoding="utf-8")
     quotas_text = (REPO_ROOT / "ui" / "quotas.py").read_text(encoding="utf-8")
-    assert "X-Session-Phone" in text
+    accounts_text = (REPO_ROOT / "ui" / "accounts.py").read_text(encoding="utf-8")
+    # The gate flip (ADR-0013): no client header authenticates anything —
+    # the login cookie does, and the identity resolver is the one door.
+    assert "X-Session-Phone" not in text
+    assert "cwb_auth" in text
+    assert "resolve_identity" in text
+    assert "AUTH_SECRET" in text
+    assert "HttpOnly" in text
     assert "SESSION_UI_HOST" in text
     # The limit and its database live in the quota module now — still
     # pinned in source, never via env.
     assert "DAILY_CHAT_LIMIT = 5" in quotas_text
     assert "usage.sqlite3" in quotas_text
+    # The Account store follows the same pattern: its own file, its
+    # env-overridable path, the hash pin in source.
+    assert "PBKDF2_ITERATIONS = 240_000" in accounts_text
     # The retired swap noun stays out of the gate comment (round-2
     # review, 2026-09-12): the 5th chat's own Quoted answer must pass.
     assert "the 5th chat's own Quoted answer" in quotas_text
     assert "swap must pass" not in text + quotas_text
 
 
-def test_readme_records_the_phone_gate():
+def test_readme_records_the_account_gate():
+    # The gate flip (ADR-0013) rewrote the README's gate chapter: the
+    # login page replaced the honor-system phone gate, the Account is
+    # issued by the Admin, and the phone survives as the quota's key.
     section = (
         README.read_text(encoding="utf-8")
-        .split("### Phone gate", 1)[1]
+        .split("### Accounts & login (ADR-0013)", 1)[1]
         .split("\n### ", 1)[0]
     )
-    assert "X-Session-Phone" in section
+    assert "POST /auth/login" in section
+    assert "cwb_auth" in section
+    assert "X-Session-Phone" not in section
+    assert "no longer authenticates anything" in section
+    # The 5-ask daily quota stays, per Account through the attached phone.
     assert "five chats a day" in section
-    assert "no SMS verification" in section
-    # The header rides on every chat-owned call — the picker and the
+    assert "usage.sqlite3" in section
+    # No signup page exists; the first Admin comes from the script.
+    assert "bootstrap_admin" in section
+    # The cookie rides on every chat-owned call — the picker and the
     # research turns' polls included, not only the ask and phase 2
     # (full-spec review, 2026-09-12; ADR-0008).
     assert "/quote-selection" in section

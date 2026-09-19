@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 *.pyc
 ui/usage.sqlite3
+ui/accounts.sqlite3
 # The customer PDFs stay out of git; provision books/ from the
 # cognee storage export (see ADR-0007). The text indexes ship.
 books/*.pdf

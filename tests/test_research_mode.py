@@ -1585,8 +1585,9 @@ def test_the_messages_endpoint_gates_the_phone_and_returns_the_transcript(tmp_pa
 
 
 def test_research_message_needs_the_chat_today_gate(tmp_path):
-    # Phase 2's gate shape: no phone -> 400; a phone with no chat today
-    # -> 429; the upstream never runs for a rejected message.
+    # Phase 2's gate shape: no login -> 401 (ADR-0013 — the phone header
+    # no longer authenticates anything); a logged-in Account with no
+    # chat today -> 429; the upstream never runs for a rejected message.
     upstream = ResearchUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
@@ -1601,7 +1602,7 @@ def test_research_message_needs_the_chat_today_gate(tmp_path):
         )
     finally:
         stop_gate(server, original)
-    assert no_phone == 400
+    assert no_phone == 401
     assert no_chat == 429
     assert "گفتگو" in payload["detail"]
     assert upstream.calls == []
@@ -1747,8 +1748,8 @@ def test_the_turn_poll_gates_the_phone(tmp_path):
         unknown_status, unknown = get(
             base, "/research/turn?turn=does-not-exist", phone=PHONE
         )
-        # A running turn belongs to its phone: another number — and a
-        # request with no number at all — learns nothing.
+        # A running turn belongs to its Account: another Account — and
+        # an anonymous request (401, ADR-0013) — learns nothing.
         other_status, _ = get(
             base, f"/research/turn?turn={turn_id}", phone=OTHER_PHONE
         )
@@ -1758,8 +1759,9 @@ def test_the_turn_poll_gates_the_phone(tmp_path):
     finally:
         gate.set()
         stop_gate(server, original)
-    for status in (unknown_status, other_status, no_phone_status):
-        assert status == 404
+    assert unknown_status == 404
+    assert other_status == 404
+    assert no_phone_status == 401
     assert unknown["detail"] == research.RESEARCH_TURN_NOT_FOUND_DETAIL
 
 

@@ -14,7 +14,13 @@ import urllib.error  # noqa: E402
 import urllib.request  # noqa: E402
 
 from tests.conftest import REPO_ROOT  # noqa: E402
-from tests.helpers import stop_gate, with_gate  # noqa: E402
+from tests.helpers import (  # noqa: E402
+    account_email_for_phone,
+    cookie_for,
+    ensure_account,
+    stop_gate,
+    with_gate,
+)
 
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -94,11 +100,14 @@ def report_state(sections: int = 2) -> dict:
 
 
 def fetch_raw(base: str, path: str, phone: str = PHONE):
-    """One raw GET with the session phone: (status, headers, text) — the
+    """One raw GET as the session's Account: (status, headers, text) — the
     report read answers documents, not JSON, so the headers themselves
-    are the contract under test."""
-    headers = {"X-Session-Phone": phone} if phone else {}
-    request = urllib.request.Request(base + path, headers=headers)
+    are the contract under test. The identity rides the login cookie
+    (ADR-0013): the phone maps to its seeded Account via one real
+    /auth/login, the retired header authenticates nothing."""
+    ensure_account(phone)
+    cookie = cookie_for(base, account_email_for_phone(phone))
+    request = urllib.request.Request(base + path, headers={"Cookie": cookie})
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             return response.status, response.headers, response.read().decode("utf-8")
