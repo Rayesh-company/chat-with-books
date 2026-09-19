@@ -85,15 +85,16 @@ def test_compose_keeps_the_embedder_env_overridable_on_both_tiers():
 def test_readme_records_the_vps_embedder_pin_and_real_search_verification():
     # The incident class is recorded where deployers read it: the
     # embedder is frozen into the ingested data, a pre-ADR 0004 stack
-    # pins small/1536 in .env, and post-deploy verification includes
-    # one real recall search — health probes stayed green through the
-    # 2026-09-12 mismatch.
+    # pins small/1536 in .env, and post-deploy verification is a tool —
+    # the smoke's real Farsi search (T17) — plus the start guard, after
+    # health probes stayed green through the 2026-09-12 mismatch.
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     vps = readme.split("\n## VPS deploy", 1)[1].split("\n## ", 1)[0]
     assert "frozen into the ingested data" in vps
     assert "text-embedding-3-small" in vps and "1536" in vps
     assert "expected 1536 dimensions, not 3072" in vps
-    assert "/api/v1/recall" in vps
+    assert "scripts/smoke.py" in vps
+    assert "check_embedding_pin" in vps
     assert "2026-09-12" in vps
 
 

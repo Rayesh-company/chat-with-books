@@ -82,6 +82,7 @@ try:
         parse_evidence_sources,
         run_dive_round,
     )
+    from ui.report import research_session_report
     from ui.research import (
         COMMAND_AUDIT,
         COMMAND_BRIEF,
@@ -329,6 +330,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         if path == "/research/messages":
             self._research_messages()
+            return
+        if path == "/research/report":
+            self._research_report()
             return
         if path.startswith("/books/"):
             self._book_file(path)
@@ -841,6 +845,32 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         self._send_json(200, payload)
 
+    def _research_report(self) -> None:
+        """The Session report's read (T18, GitLab #19): one session's
+        walk-away artifact — question, destination, map summary, the
+        standing Brief with its quotes and pages, and the server-built
+        «منابع», as one self-contained RTL HTML document. Phone matched;
+        a CLOSED session still answers (a finished Session's report is
+        the deliverable); no Brief sections yet is the Farsi refusal.
+        The chat transcript never enters it."""
+        phone = normalize_phone(self.headers.get("X-Session-Phone", ""))
+        if not phone:
+            self._json_error(400, "شمارهٔ تلفن همراه را وارد کنید.")
+            return
+        query = parse_qs(urlparse(self.path).query)
+        session_id = (query.get("session") or [""])[0]
+        document, error = research_session_report(phone, session_id)
+        if document is None:
+            self._send_json(error[0], {"detail": error[1]})
+            return
+        body = document.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _research_message(self, phone: str) -> None:
         """The Research Mode message start (ADR-0008): the gate is the
         phase-2 shape exactly — the research conversation belongs to the
@@ -1069,7 +1099,40 @@ class SessionHandler(SimpleHTTPRequestHandler):
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
+# The embedder is frozen into the stored vectors (ADR-0004). The 2026-09-12
+# VPS incident: a recreated stack whose .env drifted to the wrong pins —
+# health stayed green and every search died. Present-but-wrong pins refuse
+# the start here, loudly; absent pins (a bare dev run outside compose)
+# cannot contradict the data and pass.
+FROZEN_EMBEDDING_MODEL = "text-embedding-3-large"
+FROZEN_EMBEDDING_DIMENSIONS = "3072"
+
+
+def check_embedding_pin() -> None:
+    """The drift guard (T17, GitLab #18): refuse a start whose embedding
+    config contradicts the frozen vectors — a crash with the Farsi operator
+    fix, never green-but-broken."""
+    drifted = []
+    for name, frozen in (
+        ("EMBEDDING_MODEL", FROZEN_EMBEDDING_MODEL),
+        ("EMBEDDING_DIMENSIONS", FROZEN_EMBEDDING_DIMENSIONS),
+    ):
+        value = os.environ.get(name)
+        if value is not None and value != frozen:
+            drifted.append(f"{name}={value} (ثابت: {frozen})")
+    if drifted:
+        sys.exit(
+            "پیکربندی امبدینگ با بردارهای ذخیره‌شده نمی‌خواند: "
+            + " ، ".join(drifted)
+            + " — سرویس اجرا نمی‌شود. مقدارهای ثابت را در .env بگذارید: "
+            + f"EMBEDDING_MODEL={FROZEN_EMBEDDING_MODEL} ، EMBEDDING_DIMENSIONS={FROZEN_EMBEDDING_DIMENSIONS} (ADR-0004)."
+        )
+
+
 def main() -> None:
+    # The drift guard runs before anything binds: a drifted stack must not
+    # come up even briefly.
+    check_embedding_pin()
     # The true-page resolver (ADR-0011): kept quotes' labels name the
     # passage's actual page, not the locator's drifted estimate.
     install_page_resolver()

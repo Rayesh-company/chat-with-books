@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# The pre-push test gate (T16, GitLab #17): the whole suite gates every push —
+# red blocks the push, green lets it through. No GitLab runner, no CI: the
+# suite itself is the gate. Git blocks a push exactly when this exits nonzero,
+# and `set -e` hands pytest's exit code straight through.
+#
+# Install (fresh clones, one command):
+#   git config core.hooksPath scripts/githooks
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q

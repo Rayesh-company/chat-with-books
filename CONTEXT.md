@@ -136,6 +136,34 @@ _Avoid_: glue text, preamble, filler paragraph (the superseded standalone-paragr
 The split-view panel (کتاب‌خوان) that renders the original Book PDFs; every Quote on the sheet clicks through to the passage's actual PDF page with the quoted letters highlighted (ADR-0007).
 _Avoid_: PDF viewer chrome (it is a provenance surface, not a generic viewer), book preview
 
+**Account**:
+The credential the platform recognizes (ADR-0013): an email and a password, issued by the Admin — never self-created — owning one Balance and every Session run under it. It replaced the honor-system phone gate; the phone number is legacy data attached to it, not an identity.
+_Avoid_: user (the glossary does not use the word), profile (the Profile is the Account's own view), registration (Accounts are issued, not registered), phone
+
+**Login**:
+The one entry where an email and a password open the platform to an Account. There is no other door.
+_Avoid_: signup, sign in page (the product has one Login, not flows), phone gate (retired by ADR-0013)
+
+**Balance (اعتبار)**:
+The prepaid Toman amount on an Account that asks and research turns deduct from; at zero the service stops with the honest Farsi note. Only the Admin tops it up.
+_Avoid_: credit card, wallet, quota (the daily ask limit is not the Balance; the Balance adds on top of it)
+
+**Tariff (تعرفه)**:
+The price table that turns recorded usage into Toman. Held apart from the code so prices change without the code.
+_Avoid_: pricing logic, hardcoded price, rate limiter
+
+**Admin (مدیر)**:
+The role on one Account that issues every other Account, tops up Balances, and watches the system. The PM holds it.
+_Avoid_: superuser, root, operator (the Session operator is the customer side)
+
+**Admin console (میز مدیریت)**:
+The Admin's surface: creating Accounts, spend and Balance with top-up, live research turns, failures and diagnoses, quota state — every action appended to an audit log, nothing mutated silently.
+_Avoid_: dashboard (the research map's avoided word), admin panel, separate admin app
+
+**Session report (گزارش نشست)**:
+The walk-away artifact of a Session: the research question with its versions, the destination, the map summary, the Brief sections with their citations, and the «منابع». The chat transcript is process, not deliverable, and stays out.
+_Avoid_: export (the action, not the artifact), PDF, backup, transcript copy
+
 ## Persian display names
 
 The approved plain-Persian naming table (ADR-0012): the single source every Research skill, stage, chip, and map row is named from — the Session operator never decodes the UI. Approved by the PM in the ADR-0012 roster and the ticket titles (#7–#14); the sheet renames only what this table names.
@@ -165,3 +193,5 @@ The approved plain-Persian naming table (ADR-0012): the single source every Rese
 **State caps (T12)**: the working ledgers — evidence, claims, gaps, decisions — keep their newest entries past their hard caps, so the writer prompts stay bounded in a long session. The map's own rows (open questions, fog) never trim silently: the map keeper (نقشه‌بان) surveys them and proposes each cleanup — a duplicate question, stale fog, a finished question's row — as the operator's decision through the usual accept/reject flow.
 
 **Question statuses**: در انتظار، جست‌وجو شد، شکاف. **Claim statuses**: پشتوانهٔ مستقیم، ترکیب شواهد، شواهد ناکافی.
+
+**Platform names (DRAFT — pending PM approval, 2026-09-19, spec2.md)**: Account «حساب» · Login «ورود» · Balance «اعتبار» · Tariff «تعرفه» · Admin «مدیر» · Admin console «میز مدیریت» · Session report «گزارش نشست» · the report chip «دریافت گزارش نشست». The sheet renders none of these until the PM approves them; then the approved rows join the tables above.

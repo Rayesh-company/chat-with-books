@@ -152,13 +152,34 @@ Deploy is tarball-shaped (the VPS copy is not a git checkout): tar the tree loca
 
 Two VPS-only compose facts, recorded 2026-09-12 when next-tier came up there: the stack's compose project is **`chat-withbooks`** (no dashes — the identity the running containers and the data volumes `chat-withbooks_postgres_data` / `chat-withbooks_cognee_*` carry, where the ingested memory lives), so the stack comes up with `docker compose -p chat-withbooks up -d` — a bare `up` in the swapped tree would invent a `chat-with-books` project and collide on container names. And the repo's compose publishes `0.0.0.0` for local dev, while the VPS runs every host port loopback-bound: after a tree swap, prefix the compose's host ports with `127.0.0.1:` before `up` (Docker publishes bypass ufw — an unprefixed `8001` would face the internet). The tarball swap also carries `ui/usage.sqlite3`, `ui/research.sqlite3`, and `.env` over from the previous tree (quota counts, research sessions, and keys), and `cognee-next-tier` is created on first `up` — Research Mode's searchers need it on `127.0.0.1:8001`.
 
-The embedder is frozen into the ingested data: compose interpolates `EMBEDDING_MODEL`/`EMBEDDING_DIMENSIONS` with the ADR 0004 default (`text-embedding-3-large`/3072), so a stack whose pgvector tables were ingested before ADR 0004 (`text-embedding-3-small`/1536) must pin small/1536 in the VPS `.env` until re-ingested. 2026-09-12: a `docker compose up -d` recreated the containers with the large/3072 embedder over small/1536 tables, and every search errored (`expected 1536 dimensions, not 3072`) while the health probes stayed green — post-deploy verification therefore includes one real `/api/v1/recall` search, not just health probes.
+The embedder is frozen into the ingested data: compose interpolates `EMBEDDING_MODEL`/`EMBEDDING_DIMENSIONS` with the ADR 0004 default (`text-embedding-3-large`/3072), so a stack whose pgvector tables were ingested before ADR 0004 (`text-embedding-3-small`/1536) must pin small/1536 in the VPS `.env` until re-ingested. 2026-09-12: a `docker compose up -d` recreated the containers with the large/3072 embedder over small/1536 tables, and every search errored (`expected 1536 dimensions, not 3072`) while the health probes stayed green — post-deploy verification therefore includes one real search, not just health probes. The verification is a tool now (T17): `python scripts/smoke.py` — `/livez`, `/health`, then one real UTF-8 Farsi CHUNKS search that exercises the embedder, pgvector, and the data without spending an LLM call or a chat (dev machine: `--cognee-url http://localhost:18000` for the recorded remap). The sheet itself refuses to start on present-but-drifted embedding pins — the guard (`check_embedding_pin` in `ui/serve.py`) turns the incident class into a Farsi crash before anything binds.
 
 The Book datasets are ingested once (`DATASET_PROCESSING_COMPLETED` in `/api/v1/datasets/status`); re-ingest is not part of a code deploy.
+
+## The nightly backup
+
+One timestamped archive holds everything git does not — **the memory layer's `cognee_db.dump`** (the `pg_dump` of `cognee_db`, custom format — `pg_restore` reads it HANDOFF-style), **both SQLite stores** (`usage.sqlite3` + `research.sqlite3`, off the session container's `/data`), **`.env`**, the **Book PDFs + page indexes**, and a **zip of the code** for convenience (git remains the code's real backup; the archive is the *only* copy of everything else). It lives in **two places on purpose**: 14 kept on the VPS, 30 pulled to the operator's machine — an archive only on the VPS dies with the VPS.
+
+- **VPS side** — `scripts/backup.sh` under cron (03:30 VPS time):
+  ```
+  30 3 * * * BACKUP_DIR=/var/backups/chat-with-books RETENTION=14 /path/to/repo/scripts/backup.sh >> /var/log/cwb-backup.log 2>&1
+  ```
+  Modes: default builds + prunes; `--dry-run` prints the plan and touches nothing (no Docker, no network — the test suite's seam); `--prune-only` applies retention.
+- **Operator side** — `scripts/pull_backup.ps1` fetches the newest archive via scp into `D:\code\CHATBOT\backups` (set `-VpsHost` first). One-time setup: an SSH key (`ssh-keygen -t ed25519`, public half onto the VPS's `~/.ssh/authorized_keys`), then the daily task:
+  ```
+  schtasks /Create /TN "chat-with-books backup pull" /SC DAILY /ST 04:00 /TR "powershell -ExecutionPolicy Bypass -File <repo>\scripts\pull_backup.ps1"
+  ```
+- **Restore** — T15 (#21) ships `scripts/restore.sh` and one rehearsed drill; until then the steps are HANDOFF.md's: bring Postgres up, `docker cp` the dump in, `pg_restore -U cognee -d cognee_db --clean --if-exists` (prefix `MSYS_NO_PATHCONV=1` on Git Bash), unpack the stores and books into the tree.
 
 ## Tests
 
 ```powershell
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
 python -m pytest
+```
+
+**The push gate** (T16): every push runs the whole suite (~33 s) and a red suite blocks the push — no GitLab runner, no CI, the suite itself is the gate. A fresh clone picks it up with one command:
+
+```bash
+git config core.hooksPath scripts/githooks
 ```
