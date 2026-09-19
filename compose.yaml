@@ -203,6 +203,14 @@ services:
       # the Admin's actions, on the same persisted volume — an audit
       # that evaporates on a container rebuild is not an audit.
       AUDIT_DB: /data/audit.sqlite3
+      # The first Admin from config (T26, GitLab #28): the bootstrap
+      # seed command is retired — the deployment plants the PM's
+      # Account once at startup, audited, and a restart never touches a
+      # standing Admin. Set both in the compose-only .env; leave them
+      # unset and the server comes up with no Admin, refusing every
+      # console and issuance path until the PM plants one.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     volumes:
       - session_quota:/data
       # The Book set's PDFs + page indexes (ADR-0007), served by

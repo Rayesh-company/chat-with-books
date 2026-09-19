@@ -57,8 +57,11 @@ try:
     )
     from ui.accounts import (
         account_by_email,
+        admins_exist,
         create_account,
+        credit_balance,
         deduct_balance,
+        ensure_admin,
         get_balance,
         list_accounts,
         verify_login,
@@ -182,8 +185,11 @@ except ImportError:  # the container runs this file as a script beside the modul
     )
     from accounts import (
         account_by_email,
+        admins_exist,
         create_account,
+        credit_balance,
         deduct_balance,
+        ensure_admin,
         get_balance,
         list_accounts,
         verify_login,
@@ -362,6 +368,22 @@ AUTH_EMAIL_TAKEN_DETAIL = "این ایمیل پیش‌تر حساب گرفته �
 AUTH_BAD_ACCOUNT_BODY_DETAIL = (
     "ایمیل و گذرواژهٔ حساب را بفرستید (گذرواژه خالی نباشد)."
 )
+# The console's write side (T26, GitLab #28): the forms POST
+# form-encoded bodies and get a 303 back to the page, so a refused
+# write re-renders the console with its Farsi note — one whitelisted
+# error code in the query string, never user text in a URL.
+ADMIN_ERROR_BAD_BODY = "bad_body"
+ADMIN_ERROR_BAD_PHONE = "bad_phone"
+ADMIN_ERROR_EMAIL_TAKEN = "email_taken"
+ADMIN_ERROR_BAD_AMOUNT = "bad_amount"
+ADMIN_ERROR_UNKNOWN_ACCOUNT = "unknown_account"
+ADMIN_ERROR_NOTES = {
+    ADMIN_ERROR_BAD_BODY: "ایمیل و گذرواژهٔ حساب را بفرستید (گذرواژه خالی نباشد).",
+    ADMIN_ERROR_BAD_PHONE: "شمارهٔ تلفن همراه را وارد کنید.",
+    ADMIN_ERROR_EMAIL_TAKEN: "این ایمیل پیش‌تر حساب گرفته است.",
+    ADMIN_ERROR_BAD_AMOUNT: "مقدار شارژ را به تومان و مثبت وارد کنید.",
+    ADMIN_ERROR_UNKNOWN_ACCOUNT: "حسابی با این ایمیل نیست.",
+}
 
 # The profile's honesty badges (T24, GitLab #27) — DRAFT display
 # vocabulary, pending PM approval (2026-09-19, CONTEXT.md's draft
@@ -398,6 +420,51 @@ def auth_secret() -> bytes:
             "وارد شوند. (ADR-0013)\n"
         )
     return _GENERATED_AUTH_SECRET.encode("utf-8")
+
+
+def audit_quiet(action: str, actor_email, detail) -> None:
+    """One audit append that never breaks the action it records (T26's
+    shared shape): the log records what HAPPENED, so it rides AFTER the
+    store said yes — and a broken audit store must not un-issue an
+    Account or un-top a Balance. The failure stays loud on stderr,
+    never silent, and the action stands."""
+    try:
+        audit.append(action, actor_email=actor_email, detail=detail)
+    except Exception as exc:
+        sys.stderr.write(
+            f"audit append failed for {action}: {exc!r}\n"
+        )
+
+
+def ensure_first_admin_from_env() -> None:
+    """The first Admin from config (T26, GitLab #28 — the bootstrap
+    seed command retired): compose env carries ADMIN_EMAIL and
+    ADMIN_PASSWORD; the server creates that Admin once at startup and
+    records it in the audit log (the deployment's act is history too).
+    When an Admin already stands — or either variable is empty, or the
+    email is taken — nothing is touched and the skip is loud on
+    stderr: a restart must never quietly re-issue the PM's password,
+    and the console never mutates silently, at startup included."""
+    email = os.environ.get("ADMIN_EMAIL", "").strip()
+    password = os.environ.get("ADMIN_PASSWORD", "")
+    if not email or not password:
+        return
+    if ensure_admin(email, password):
+        audit_quiet(audit.ADMIN_SEEDED, actor_email=email, detail={"email": email})
+        sys.stderr.write(
+            f"مدیر نخستین از ADMIN_EMAIL ساخته شد ({email}) و در "
+            "دفتر رخدادها ثبت شد.\n"
+        )
+    elif not admins_exist():
+        sys.stderr.write(
+            f"ADMIN_EMAIL ({email}) پیش‌تر به یک حساب دیگر رسیده است؛ "
+            "مدیری ساخته نشد.\n"
+        )
+    else:
+        sys.stderr.write(
+            "مدیری از پیش وجود دارد؛ ADMIN_EMAIL/ADMIN_PASSWORD نادیده "
+            "گرفته شد — گذرواژهٔ کسی بی‌کنش عوض نمی‌شود.\n"
+        )
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -463,7 +530,7 @@ def resolve_identity(handler):
     Every endpoint that once read the client-supplied phone header goes
     through here; the header no longer authenticates anything. An
     absent, invalid, expired, or tampered token (and a token whose
-    Account no longer exists — a re-issued bootstrap) answers 401; a
+    Account no longer exists) answers 401; a
     valid Account with no attached phone answers 403, because the
     phone-keyed stores (quotas, research sessions) have no key to
     address it by — the Admin must attach one. Neither answer ever
@@ -989,20 +1056,12 @@ class SessionHandler(SimpleHTTPRequestHandler):
         # and the issued, appended only after the creation truly
         # succeeded. A refused creation (the 409 above, the bad body
         # before it) logs nothing: the log records what HAPPENED, never
-        # what was attempted. A broken audit store must not un-issue
-        # the Account either — the failure stays loud on stderr, never
-        # silent, and the issuance stands.
-        try:
-            audit.append(
-                audit.ACCOUNT_CREATED,
-                actor_email=account["email"],
-                detail={"email": created["email"], "phone": created["phone"]},
-            )
-        except Exception as exc:
-            sys.stderr.write(
-                f"audit append failed for account_created "
-                f"{created['email']}: {exc!r}\n"
-            )
+        # what was attempted.
+        audit_quiet(
+            audit.ACCOUNT_CREATED,
+            actor_email=account["email"],
+            detail={"email": created["email"], "phone": created["phone"]},
+        )
         self._send_json(
             200,
             {
@@ -1025,6 +1084,16 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         if path == "/auth/accounts":
             self._auth_create_account()
+            return
+        if path == "/admin/accounts":
+            # The console's issuance form (T26, GitLab #28): the same
+            # act as /auth/accounts, wearing the page's shape.
+            self._admin_create_account()
+            return
+        if path == "/admin/topup":
+            # The console's top-up form (T26, GitLab #28): Toman lands
+            # on a Balance, audited, from the browser.
+            self._admin_topup()
             return
         if path == "/api/v1/recall":
             phone = self._gate_phone()
@@ -1359,9 +1428,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
         live turns and the recent-settled ring under
         RESEARCH_REGISTRY_LOCK and never writes back, the ledger and
         the quota store answer their per-phone sums, and the audit read
-        is a plain SELECT against the append-only table. The console
-        never mutates silently — this round it never mutates at all
-        (the issuance and top-up write paths are T26, GitLab #28)."""
+        is a plain SELECT against the append-only table. The page's own
+        writes ride the two forms below (T26, GitLab #28) — audited,
+        admin-only, never silent."""
         account = resolve_account(self)
         if account is None:
             self._json_error(401, AUTH_LOGIN_401_DETAIL)
@@ -1416,6 +1485,15 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 }
                 for turn in reversed(list(RESEARCH_RECENT_SETTLED))
             ]
+        # A refused write redirects back with one whitelisted code
+        # (T26): only codes with a Farsi note render — user text never
+        # rides a URL into the page.
+        error_code = self.path.split("?", 1)[-1] if "?" in self.path else ""
+        error_code = dict(
+            pair.split("=", 1) for pair in error_code.split("&") if "=" in pair
+        ).get("error", "")
+        if error_code not in ADMIN_ERROR_NOTES:
+            error_code = ""
         body = console_html(
             accounts_rows,
             live_turns,
@@ -1423,6 +1501,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             audit.recent(ADMIN_AUDIT_ROWS),
             quota_limit=DAILY_CHAT_LIMIT,
             generated=time.strftime("%Y-%m-%d %H:%M"),
+            error_code=error_code,
         ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1430,6 +1509,106 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_redirect(self, location: str) -> None:
+        """The form posts' answer (T26): 303 See Other — the browser
+        re-reads the page it acted from, fresh. Post, redirect, get:
+        the console re-renders its own new state."""
+        self.send_response(303)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _admin_gate(self):
+        """The write forms' gate — the console's own (resolve_account
+        plus the role check). Returns the acting Admin's account dict,
+        or None after the refusal was sent (401 anonymous, 403
+        operator): the Admin's Account carries no attached phone, so
+        resolve_identity's attach-a-phone 403 would lock the Admin out
+        of its own writes before the role ever ran."""
+        account = resolve_account(self)
+        if account is None:
+            self._json_error(401, AUTH_LOGIN_401_DETAIL)
+            return None
+        if account["role"] != "admin":
+            self._json_error(403, ADMIN_CONSOLE_403_DETAIL)
+            return None
+        return account
+
+    def _read_form(self) -> dict:
+        """One form-encoded body as a plain dict (first value wins —
+        these forms carry no repeated fields). Empty body → {}."""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length) if length else b""
+        parsed = parse_qs(raw.decode("utf-8"), keep_blank_values=True)
+        return {key: values[0] for key, values in parsed.items()}
+
+    def _admin_create_account(self) -> None:
+        """The console's issuance form (T26, GitLab #28) — account
+        creation moves into the console here: email, password, and the
+        optional legacy phone attach, posted from the page, audited
+        like /auth/accounts, and answered with a redirect back to the
+        fresh mirror. A refused write redirects with a whitelisted
+        error code and logs nothing."""
+        account = self._admin_gate()
+        if account is None:
+            return
+        form = self._read_form()
+        email = (form.get("email") or "").strip()
+        password = form.get("password") or ""
+        phone = (form.get("phone") or "").strip() or None
+        if not email or not password:
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_BAD_BODY}")
+            return
+        if phone:
+            phone = normalize_phone(phone)
+            if not phone:
+                self._send_redirect(f"/admin?error={ADMIN_ERROR_BAD_PHONE}")
+                return
+        created = create_account(email, password, phone=phone, role="operator")
+        if created is None:
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_EMAIL_TAKEN}")
+            return
+        audit_quiet(
+            audit.ACCOUNT_CREATED,
+            actor_email=account["email"],
+            detail={"email": created["email"], "phone": created["phone"]},
+        )
+        self._send_redirect("/admin")
+
+    def _admin_topup(self) -> None:
+        """The console's top-up form (T26, GitLab #28): Toman lands on
+        the named Account's Balance (credit_balance — email-keyed, the
+        same row the operator's own reads answer from), the audit log
+        carries the actor, the amount, and the new balance, and the
+        redirect re-renders the mirror with the new اعتبار showing."""
+        account = self._admin_gate()
+        if account is None:
+            return
+        form = self._read_form()
+        email = (form.get("email") or "").strip()
+        try:
+            amount = int((form.get("amount") or "").strip())
+        except ValueError:
+            amount = 0
+        if amount <= 0:
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_BAD_AMOUNT}")
+            return
+        new_balance = credit_balance(email, amount)
+        if new_balance is None:
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_UNKNOWN_ACCOUNT}")
+            return
+        audit_quiet(
+            audit.BALANCE_TOPPED,
+            actor_email=account["email"],
+            detail={
+                "email": email,
+                "amount_toman": amount,
+                "new_balance_toman": new_balance,
+            },
+        )
+        self._send_redirect("/admin")
 
     def _profile_data(self) -> None:
         """The profile read (T24, GitLab #27): the Account's own Balance
@@ -1773,6 +1952,10 @@ def main() -> None:
     # The true-page resolver (ADR-0011): kept quotes' labels name the
     # passage's actual page, not the locator's drifted estimate.
     install_page_resolver()
+    # The first Admin from compose env (T26, GitLab #28): the seed
+    # command is retired — the deployment itself plants the PM's
+    # Account, once, loudly.
+    ensure_first_admin_from_env()
     server = ThreadingHTTPServer((HOST, PORT), SessionHandler)
     print(f"Session sheet http://{HOST}:{PORT}", flush=True)
     print(f"Proxying /api/v1/recall and /health to {COGNEE_URL}", flush=True)

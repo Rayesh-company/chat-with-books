@@ -30,10 +30,13 @@ AUDIT_DB = Path(
     os.environ.get("AUDIT_DB", str(Path(__file__).resolve().parent / "audit.sqlite3"))
 )
 
-# The action vocabulary (T25 wires the first one; T26's top-ups and
-# issuances grow it). Actions are stable wire strings — the console's
-# Farsi labels key off them, never off display text.
+# The action vocabulary (T25 wired the first one; T26 grows it with
+# the console's top-up and the deployment's first-admin seeding).
+# Actions are stable wire strings — the console's Farsi labels key off
+# them, never off display text.
 ACCOUNT_CREATED = "account_created"
+BALANCE_TOPPED = "balance_topped"
+ADMIN_SEEDED = "admin_seeded"
 
 
 def _now() -> str:

@@ -533,8 +533,13 @@ def test_readme_records_the_account_gate():
     # The 5-ask daily quota stays, per Account through the attached phone.
     assert "five chats a day" in section
     assert "usage.sqlite3" in section
-    # No signup page exists; the first Admin comes from the script.
-    assert "bootstrap_admin" in section
+    # No signup page exists; the first Admin comes from compose env
+    # (T26: the bootstrap seed command is retired — README and the
+    # deployment agree), and the console issues and tops up, audited.
+    assert "ADMIN_EMAIL" in section
+    assert "bootstrap_admin" not in section
+    assert "/admin/topup" in section
+    assert "audit log" in section
     # The cookie rides on every chat-owned call — the picker and the
     # research turns' polls included, not only the ask and phase 2
     # (full-spec review, 2026-09-12; ADR-0008).

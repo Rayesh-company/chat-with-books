@@ -241,6 +241,38 @@ def get_balance(phone: str) -> int:
         conn.close()
 
 
+def credit_balance(email, amount: int) -> int | None:
+    """The Admin's top-up (T26, GitLab #28): Toman lands on the Account
+    keyed by its EMAIL — the Account is the identity now (ADR-0013),
+    and the row it updates is the same one the phone-keyed reads
+    (get_balance, the profile, /usage/live) answer from, so the
+    operator sees the new اعتبار the moment it lands. Returns the new
+    balance, or None when no Account carries this email. A non-positive
+    amount is a caller's bug, not a user's mistake — ValueError, never
+    a silent no-op, and never a deduction wearing a top-up's name."""
+    amount = int(amount)
+    if amount <= 0:
+        raise ValueError("a top-up is positive Toman")
+    conn = _connect()
+    try:
+        cursor = conn.execute(
+            "UPDATE accounts SET balance_toman = balance_toman + ?"
+            " WHERE email = ?",
+            (amount, _normalize_email(email)),
+        )
+        if cursor.rowcount == 0:
+            conn.commit()
+            return None
+        row = conn.execute(
+            "SELECT balance_toman FROM accounts WHERE email = ?",
+            (_normalize_email(email),),
+        ).fetchone()
+        conn.commit()
+        return int(row[0])
+    finally:
+        conn.close()
+
+
 def adjust_balance(phone: str, delta: int) -> int:
     """One Balance change (the Admin's top-up is #28's write path; the
     deduction below is the meter's) — returns the new balance."""
@@ -269,9 +301,9 @@ def deduct_balance(phone: str, amount: int) -> int:
 
 
 def admins_exist() -> bool:
-    """Whether any Admin Account exists — the bootstrap's guard: the
-    first Admin is minted once, and a second minting is refused unless
-    forced."""
+    """Whether any Admin Account exists — the first-admin guard: the
+    env seeding (T26) creates an Admin only once, and a deployment
+    restart must never quietly mint a second or overwrite the first."""
     conn = _connect()
     try:
         row = conn.execute(
@@ -282,28 +314,17 @@ def admins_exist() -> bool:
     return row is not None
 
 
-def bootstrap_admin(email, password, force=False) -> str:
-    """Mint the first Admin ('created'), refuse when one already exists
-    ('exists'), or — with force — re-issue the given Admin credentials
-    over whatever stands there ('reissued'; the PM's recovery path).
-    The store stays role-dumb about WHO calls it; the script and the
-    tests own the refusal UX."""
-    email = _normalize_email(email)
+def ensure_admin(email, password) -> bool:
+    """The first Admin from config (T26, GitLab #28 — the bootstrap
+    seed command's retirement): when no Admin exists, this creates one
+    and answers True; when one already stands, it answers False and
+    touches NOTHING — a restart that silently re-issued the PM's
+    password would be exactly the mutation the audit log exists to
+    make loud. The seed is a deployment act, not a console one, so the
+    caller (serve.py's startup) owns the audit row and the stderr
+    notes. False also when the email is already taken by an operator
+    Account — the deployment picks a free email, the refusal is loud."""
     if admins_exist():
-        if not force:
-            return "exists"
-        conn = _connect()
-        try:
-            conn.execute(
-                "INSERT INTO accounts (email, password_hash, phone, role,"
-                " created_at) VALUES (?, ?, NULL, 'admin', ?) "
-                "ON CONFLICT(email) DO UPDATE SET "
-                "password_hash = excluded.password_hash, role = 'admin'",
-                (email, hash_password(password), _now()),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-        return "reissued"
+        return False
     created = create_account(email, password, phone=None, role="admin")
-    return "created" if created is not None else "exists"
+    return created is not None

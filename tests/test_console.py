@@ -28,6 +28,7 @@ from tests.helpers import (
     stop_gate,
     with_gate,
 )
+from ui import accounts as accounts_store
 from ui import audit, ledger, quotas, research
 from ui.console import CONSOLE_TITLE, console_html
 from ui.ledger import cost_toman, record
@@ -54,6 +55,32 @@ def get_html(base, path, cookie=None):
             exc.headers.get("Content-Type", ""),
             exc.read().decode("utf-8"),
         )
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """The form tests' client: a 303 must be SEEN, not silently
+    followed — the post/redirect/get discipline is the write side's
+    contract with the browser."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def post_form(base, path, fields, cookie=None):
+    """One form-encoded POST that refuses to follow the redirect —
+    (status, Location header). The browser's own view of a console
+    write."""
+    opener = urllib.request.build_opener(_NoRedirect)
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    if cookie is not None:
+        headers["Cookie"] = cookie
+    body = urllib.parse.urlencode(fields).encode("utf-8")
+    request = urllib.request.Request(base + path, data=body, headers=headers)
+    try:
+        with opener.open(request, timeout=10) as response:
+            return response.status, response.headers.get("Location", "")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.headers.get("Location", "")
 
 
 def seed_live_turn(phone):
@@ -298,6 +325,227 @@ def test_account_creation_appends_exactly_one_audit_row():
         assert len(audit.recent(10)) == 1
     finally:
         stop_gate(server, originals)
+
+
+# --- the write side (T26, GitLab #28) ------------------------------------------
+
+
+def test_the_console_page_carries_the_write_forms():
+    """The page itself is the write surface: the issuance form and the
+    top-up form, the latter's account list rendered from the very rows
+    the mirror shows — the pure function renders only what it is
+    handed."""
+    html = console_html(
+        [
+            {
+                "email": "op@sheet.test",
+                "role": "operator",
+                "phone": "09120000003",
+                "balance_toman": 500_000,
+                "yesterday_spend_toman": 0,
+                "today_spend_toman": 0,
+                "chats_today": 0,
+            }
+        ],
+        [],
+        [],
+        [],
+        quota_limit=5,
+    )
+    assert 'action="/admin/accounts"' in html
+    assert 'action="/admin/topup"' in html
+    assert 'method="post"' in html
+    assert '<option value="op@sheet.test">' in html
+    # A refused write's note renders from the whitelisted code only.
+    assert "این ایمیل پیش‌تر حساب گرفته است." in console_html(
+        [], [], [], [], quota_limit=5, error_code="email_taken"
+    )
+    # An unknown code — or user text wearing one — renders no note.
+    plain = console_html([], [], [], [], quota_limit=5)
+    odd = console_html(
+        [], [], [], [], quota_limit=5, error_code="<script>alert(1)</script>"
+    )
+    assert '<p class="write-error" role="alert">' not in plain
+    assert '<p class="write-error" role="alert">' not in odd
+
+
+def test_the_admin_issues_an_account_from_the_console():
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp())
+    base, server, originals = with_gate(tmp, None)
+    try:
+        admin_cookie = cookie_for(base, ADMIN_EMAIL)
+        status, location = post_form(
+            base,
+            "/admin/accounts",
+            {"email": "new@sheet.test", "password": TEST_PASSWORD,
+             "phone": "09120000011"},
+            cookie=admin_cookie,
+        )
+        assert status == 303
+        assert location == "/admin"
+        # The Account exists with its attached phone, and logs in.
+        from ui import accounts
+
+        assert accounts.account_by_email("new@sheet.test")["phone"] == (
+            "09120000011"
+        )
+        # The audited issuance: one row, the issuer and the issued.
+        rows = audit.recent(10)
+        assert [row["action"] for row in rows] == [audit.ACCOUNT_CREATED]
+        assert "new@sheet.test" in rows[0]["detail"]
+        # The redirect re-renders the mirror with the new row showing.
+        _, _, html = get_html(base, "/admin", cookie=admin_cookie)
+        assert "new@sheet.test" in html
+    finally:
+        stop_gate(server, originals)
+
+
+def test_the_admin_tops_a_balance_up_from_the_console():
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp())
+    base, server, originals = with_gate(tmp, None)
+    try:
+        phone = "09120000012"
+        ensure_account(phone)
+        admin_cookie = cookie_for(base, ADMIN_EMAIL)
+        status, location = post_form(
+            base,
+            "/admin/topup",
+            {"email": f"{phone}@sheet.test", "amount": "120000"},
+            cookie=admin_cookie,
+        )
+        assert status == 303
+        assert location == "/admin"
+        # The audited top-up: actor, amount, and the new balance —
+        # the seeded 1,000,000 plus the top-up's 120,000.
+        rows = audit.recent(10)
+        assert [row["action"] for row in rows] == [audit.BALANCE_TOPPED]
+        assert '"amount_toman": 120000' in rows[0]["detail"]
+        assert '"new_balance_toman": 1120000' in rows[0]["detail"]
+        # The operator sees the new اعتبار wherever the Balance renders
+        # — the profile (/profile/data) answers the same row the top-up
+        # landed on, keyed by the operator's own cookie.
+        status, body = get(base, "/profile/data", phone=phone)
+        assert status == 200
+        assert body["balance_toman"] == 1_120_000
+        # The console's own mirror re-renders it, and the audit table
+        # names the action in Farsi.
+        _, _, html = get_html(base, "/admin", cookie=admin_cookie)
+        assert "1,120,000" in html
+        assert "شارژ اعتبار" in html
+    finally:
+        stop_gate(server, originals)
+
+
+def test_the_write_paths_refuse_everyone_but_the_admin():
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp())
+    base, server, originals = with_gate(tmp, None)
+    try:
+        ensure_account("09120000021")
+        operator_cookie = cookie_for(base, "09120000021@sheet.test")
+        # A logged-in operator: both forms refused with the console's
+        # own Farsi 403 — issuance and top-up are the Admin's acts.
+        for path in ("/admin/accounts", "/admin/topup"):
+            status, body = raw_post(base, path, {"email": "x@y.test"}, cookie=operator_cookie)
+            assert status == 403
+            assert body["detail"] == "میز مدیریت فقط از دست مدیر برمی‌آید."
+            status, _ = post_form(base, path, {"email": "x@y.test"}, cookie=operator_cookie)
+            assert status == 403
+            # The anonymous: the standard 401.
+            status, body = raw_post(base, path, {"email": "x@y.test"})
+            assert status == 401
+            assert body["detail"] == "برای ادامه وارد شوید."
+    finally:
+        stop_gate(server, originals)
+
+
+def test_refused_writes_redirect_with_a_code_and_log_nothing():
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp())
+    base, server, originals = with_gate(tmp, None)
+    try:
+        admin_cookie = cookie_for(base, ADMIN_EMAIL)
+        # A duplicate issuance: 409's console shape is the redirect
+        # with the email_taken code — and the log records nothing,
+        # because nothing happened.
+        payload = {"email": "dup@sheet.test", "password": TEST_PASSWORD}
+        status, _ = post_form(base, "/admin/accounts", payload, cookie=admin_cookie)
+        assert status == 303
+        status, location = post_form(
+            base, "/admin/accounts", payload, cookie=admin_cookie
+        )
+        assert status == 303
+        assert location == "/admin?error=email_taken"
+        # A bad amount and an unknown account: their own codes.
+        status, location = post_form(
+            base, "/admin/topup", {"email": "dup@sheet.test", "amount": "-5"},
+            cookie=admin_cookie,
+        )
+        assert location == "/admin?error=bad_amount"
+        status, location = post_form(
+            base, "/admin/topup", {"email": "no@sheet.test", "amount": "1000"},
+            cookie=admin_cookie,
+        )
+        assert location == "/admin?error=unknown_account"
+        status, location = post_form(
+            base, "/admin/accounts", {"email": "", "password": ""},
+            cookie=admin_cookie,
+        )
+        assert location == "/admin?error=bad_body"
+        # Exactly two lawful actions stand in the log: the one
+        # issuance, no top-up at all.
+        actions = [row["action"] for row in audit.recent(10)]
+        assert actions == [audit.ACCOUNT_CREATED]
+    finally:
+        stop_gate(server, originals)
+
+
+def test_the_first_admin_comes_from_the_env():
+    """The seed command is retired (T26): the deployment plants the
+    first Admin from ADMIN_EMAIL/ADMIN_PASSWORD at startup — once,
+    audited — and a restart, an empty env, or a taken email never
+    touches a standing Account."""
+    import tempfile
+
+    from ui import serve as serve_module
+
+    original_db = accounts_store.ACCOUNTS_DB
+    db = Path(tempfile.mkdtemp()) / "accounts.sqlite3"
+    accounts_store.ACCOUNTS_DB = db
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv("ADMIN_EMAIL", "pm@sheet.test")
+            mp.setenv("ADMIN_PASSWORD", "رمز-مدیر")
+            serve_module.ensure_first_admin_from_env()
+        assert accounts_store.verify_login("pm@sheet.test", "رمز-مدیر")["role"] == (
+            "admin"
+        )
+        # The deployment's act is history: one admin_seeded row.
+        rows = audit.recent(10)
+        assert [row["action"] for row in rows] == [audit.ADMIN_SEEDED]
+        # The restart: the standing Admin is untouched, nothing logs.
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv("ADMIN_EMAIL", "pm@sheet.test")
+            mp.setenv("ADMIN_PASSWORD", "رمز-تازه")
+            serve_module.ensure_first_admin_from_env()
+            assert accounts_store.verify_login("pm@sheet.test", "رمز-تازه") is None
+            assert len(audit.recent(10)) == 1
+            # An empty env: no seed, no refusal noise, no NEW row — the
+            # phase-one row stands, history is never rewritten.
+            accounts_store.ACCOUNTS_DB = Path(tempfile.mkdtemp()) / "fresh.sqlite3"
+            with pytest.MonkeyPatch.context() as mp:
+                mp.delenv("ADMIN_EMAIL", raising=False)
+                mp.delenv("ADMIN_PASSWORD", raising=False)
+                serve_module.ensure_first_admin_from_env()
+            assert len(audit.recent(10)) == 1
+    finally:
+        accounts_store.ACCOUNTS_DB = original_db
 
 
 # --- the config lock ---------------------------------------------------------

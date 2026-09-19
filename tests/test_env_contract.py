@@ -49,3 +49,16 @@ def test_env_example_caps_embedding_throughput_for_avalai():
     assert env["EMBEDDING_RATE_LIMIT_ENABLED"].lower() == "true"
     assert int(env["EMBEDDING_RATE_LIMIT_REQUESTS"]) <= 120
     assert env["EMBEDDING_RATE_LIMIT_INTERVAL"] == "60"
+
+
+def test_env_example_names_the_first_admin_without_shipping_a_password():
+    """The seed command is retired (T26, GitLab #28): the first Admin
+    rides compose env. The example carries both names with a placeholder
+    password — never a real credential — and compose passes them through
+    so the deployment plants the PM's Account at startup."""
+    env = parse_dotenv(ENV_EXAMPLE)
+    assert "ADMIN_EMAIL" in env
+    assert env["ADMIN_PASSWORD"] == "choose_a_real_password_here"
+    compose = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert "ADMIN_EMAIL: ${ADMIN_EMAIL:-}" in compose
+    assert "ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}" in compose

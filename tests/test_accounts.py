@@ -1,16 +1,15 @@
 """The Account gate's contract locks (ADR-0013): the store's pbkdf2
 hashing and verify, the stateless signed token (sign, verify, expiry,
 tamper), the open/Admin-only shapes of the /auth endpoints, the flipped
-gate's 401/403 over the real sheet server, the bootstrap script's
-mint-once discipline, the quota's survival per Account, and the sheet's
+gate's 401/403 over the real sheet server, the first-admin env seeding's
+create-once discipline (T26 — the bootstrap seed command retired), the
+top-up's store shape, the quota's survival per Account, and the sheet's
 login-overlay marker. External behavior through the real server, store
 behavior through the patched module — the house test shape."""
 
 import base64
 import json
 import os
-import subprocess
-import sys
 import time
 
 from tests.conftest import REPO_ROOT
@@ -380,51 +379,84 @@ def test_the_daily_quota_still_bounds_per_account(tmp_path):
     assert status_other == 200
 
 
-# --- the bootstrap script -------------------------------------------------------
+# --- the first admin from config (T26: the seed command retired) -----------------
 
 
-def run_bootstrap(env_db, *args):
-    env = {
-        **os.environ,
-        "ACCOUNTS_DB": str(env_db),
-        "PYTHONIOENCODING": "utf-8",
-    }
-    return subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "bootstrap_admin.py"), *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        env=env,
-        cwd=str(REPO_ROOT),
-    )
-
-
-def test_bootstrap_script_mints_one_admin_and_refuses_a_second(tmp_path):
+def test_ensure_admin_mints_once_and_never_touches_a_standing_admin(tmp_path):
     db = tmp_path / "accounts.sqlite3"
     original_db = accounts.ACCOUNTS_DB
-    first = run_bootstrap(db, "pm@sheet.test", "رمز-مدیر")
-    assert first.returncode == 0
-    assert "حساب مدیر ساخته شد" in first.stdout
-    assert "pm@sheet.test" in first.stdout
     accounts.ACCOUNTS_DB = db
     try:
-        assert accounts.verify_login("pm@sheet.test", "رمز-مدیر")["role"] == (
-            "admin"
+        # The empty store takes the seed: the admin logs in at once.
+        assert accounts.ensure_admin("pm@sheet.test", "رمز-مدیر") is True
+        assert accounts.verify_login("pm@sheet.test", "رمز-مدیر")["role"] == "admin"
+        # A second seeding touches NOTHING — a restart must never
+        # quietly re-issue the PM's password, the force path is gone.
+        assert accounts.ensure_admin("pm@sheet.test", "رمز-تازه") is False
+        assert accounts.verify_login("pm@sheet.test", "رمز-تازه") is None
+        assert accounts.verify_login("pm@sheet.test", "رمز-مدیر") is not None
+        # A different email refuses too while any admin stands.
+        assert accounts.ensure_admin("other@sheet.test", "دیگر") is False
+        assert accounts.account_by_email("other@sheet.test") is None
+    finally:
+        accounts.ACCOUNTS_DB = original_db
+
+
+def test_ensure_admin_refuses_an_email_an_operator_already_holds(tmp_path):
+    db = tmp_path / "accounts.sqlite3"
+    original_db = accounts.ACCOUNTS_DB
+    accounts.ACCOUNTS_DB = db
+    try:
+        created = accounts.create_account(
+            "pm@sheet.test", "رمز-اپراتور", role="operator"
+        )
+        assert created is not None
+        assert accounts.ensure_admin("pm@sheet.test", "رمز-مدیر") is False
+        # The operator Account is untouched by the refused seed.
+        assert accounts.verify_login("pm@sheet.test", "رمز-اپراتور")["role"] == (
+            "operator"
         )
     finally:
         accounts.ACCOUNTS_DB = original_db
-    # The second minting refuses — the Admin is minted once.
-    second = run_bootstrap(db, "other@sheet.test", "دیگر")
-    assert second.returncode == 1
-    assert "وجود دارد" in second.stdout
-    # --force is the recovery path: re-issue the named credentials.
-    third = run_bootstrap(db, "pm@sheet.test", "رمز-تازه", "--force")
-    assert third.returncode == 0
-    assert "دوباره صادر شد" in third.stdout
+
+
+# --- the top-up store (T26) ------------------------------------------------------
+
+
+def test_credit_balance_lands_toman_on_the_account(tmp_path):
+    db = tmp_path / "accounts.sqlite3"
+    original_db = accounts.ACCOUNTS_DB
     accounts.ACCOUNTS_DB = db
     try:
-        assert accounts.verify_login("pm@sheet.test", "رمز-مدیر") is None
-        assert accounts.verify_login("pm@sheet.test", "رمز-تازه") is not None
+        accounts.create_account("op@sheet.test", TEST_PASSWORD, phone="09120000042")
+        assert accounts.get_balance("09120000042") == 0
+        # The top-up keys by EMAIL — the Account is the identity — and
+        # the phone-keyed read answers the same row: the operator sees
+        # the new اعتبار wherever the Balance renders.
+        new_balance = accounts.credit_balance("op@sheet.test", 250_000)
+        assert new_balance == 250_000
+        assert accounts.get_balance("09120000042") == 250_000
+        assert accounts.credit_balance("op@sheet.test", 7) == 250_007
+        assert accounts.get_balance("09120000042") == 250_007
+    finally:
+        accounts.ACCOUNTS_DB = original_db
+
+
+def test_credit_balance_refuses_the_unknown_and_the_non_positive(tmp_path):
+    db = tmp_path / "accounts.sqlite3"
+    original_db = accounts.ACCOUNTS_DB
+    accounts.ACCOUNTS_DB = db
+    try:
+        accounts.create_account("op@sheet.test", TEST_PASSWORD, phone="09120000043")
+        assert accounts.credit_balance("noone@sheet.test", 1000) is None
+        import pytest
+
+        with pytest.raises(ValueError):
+            accounts.credit_balance("op@sheet.test", 0)
+        with pytest.raises(ValueError):
+            accounts.credit_balance("op@sheet.test", -500)
+        # The refusals landed nothing.
+        assert accounts.get_balance("09120000043") == 0
     finally:
         accounts.ACCOUNTS_DB = original_db
 

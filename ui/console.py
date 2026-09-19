@@ -7,16 +7,20 @@ store, no registry, no wall clock of its own, so a test drives it with
 plain dicts and pins the exact markup.
 
 The snapshot's four tables render in the ticket's order: the Accounts
-(email, role, attached phone, Balance in Toman, today's spend, chats
-today against the daily limit), the live research turns (id, phone,
-state, elapsed), the recently settled turns with their FAILURES called
-out in Farsi (a failure is visible, never silent — the Diagnoser's
-rule at system scale), and the audit log's newest rows. The caller
-(serve.py's GET /admin) gathers every table — the accounts+ledger+quota
-snapshot, the registry read under RESEARCH_REGISTRY_LOCK — and this
-module only renders what it is handed: the console never mutates the
-stores, never touches the registry, and this round has no write path
-at all (the top-up and issuance UI is T26, GitLab #28).
+(email, role, attached phone, Balance in Toman, yesterday's and
+today's spend, chats today against the daily limit), the live research
+turns (id, phone, state, elapsed), the recently settled turns with
+their FAILURES called out in Farsi (a failure is visible, never
+silent — the Diagnoser's rule at system scale), and the audit log's
+newest rows. Beside the Accounts table ride the page's two WRITE
+forms (T26, GitLab #28): issuing an Account (email, password, phone
+attach) and topping a Balance up — plain HTML forms posting to
+serve.py's admin endpoints, answered by a 303 back to the fresh page,
+every action appended to the audit log. The caller (serve.py's GET
+/admin) gathers every table — the accounts+ledger+quota snapshot, the
+registry read under RESEARCH_REGISTRY_LOCK — and this module only
+renders what it is handed: the console never mutates the stores, and
+never mutates silently at all.
 
 The title is the DRAFT platform name «میز مدیریت» (the draft roster in
 CONTEXT.md, pending PM approval, 2026-09-19) — it lives in the ONE
@@ -47,9 +51,24 @@ _TURN_STATE_LABELS = {
 }
 
 # The audit actions' Farsi labels; an unknown action renders as its own
-# wire name — a new action is never silently unlabelled.
+# wire name — a new action is never silently unlabelled. (All DRAFT,
+# the roster discipline: the PM's approval renames a line, nothing
+# else.)
 _ACTION_LABELS = {
     "account_created": "ساختن حساب",
+    "balance_topped": "شارژ اعتبار",
+    "admin_seeded": "ساختن مدیر نخستین",
+}
+
+# The refused writes' Farsi notes (T26), keyed by the whitelisted error
+# code serve.py redirects back with — user text never rides a URL into
+# this page.
+_ERROR_NOTES = {
+    "bad_body": "ایمیل و گذرواژهٔ حساب را بفرستید (گذرواژه خالی نباشد).",
+    "bad_phone": "شمارهٔ تلفن همراه را وارد کنید.",
+    "email_taken": "این ایمیل پیش‌تر حساب گرفته است.",
+    "bad_amount": "مقدار شارژ را به تومان و مثبت وارد کنید.",
+    "unknown_account": "حسابی با این ایمیل نیست.",
 }
 
 _ROLE_LABELS = {
@@ -192,6 +211,43 @@ def _audit_table(rows) -> str:
     return _table(("زمان", "رخداد", "مدیر", "جزئیات"), rows_html)
 
 
+def _write_forms(accounts_rows, error_note: str) -> str:
+    """The console's write side (T26, GitLab #28): the issuance form
+    and the top-up form, plain HTML forms posting form-encoded bodies
+    to serve.py's admin endpoints and getting a 303 back — post,
+    redirect, get, no JavaScript and no framework. The top-up's
+    account list comes from the same rows the mirror table renders
+    (the function stays pure: it renders only what it is handed), and
+    a refused write's Farsi note renders above the forms when the
+    redirect carried a whitelisted code."""
+    options = "".join(
+        f'<option value="{_esc(row.get("email", ""))}">'
+        f'{_esc(row.get("email", ""))}</option>'
+        for row in accounts_rows
+    )
+    error = (
+        f'<p class="write-error" role="alert">{_esc(error_note)}</p>'
+        if error_note
+        else ""
+    )
+    return f"""{error}
+<div class="writes">
+<form action="/admin/accounts" method="post" class="write">
+  <h3>ساختن حساب</h3>
+  <label>ایمیل <input type="email" name="email" required dir="ltr"></label>
+  <label>گذرواژه <input type="password" name="password" required dir="ltr"></label>
+  <label>شمارۀ پیوند‌خورده (اختیاری) <input type="text" name="phone" dir="ltr"></label>
+  <button type="submit">ساختن حساب</button>
+</form>
+<form action="/admin/topup" method="post" class="write">
+  <h3>شارژ اعتبار</h3>
+  <label>حساب <select name="email" required>{options}</select></label>
+  <label>مقدار (تومان) <input type="number" name="amount" min="1" step="1" required dir="ltr"></label>
+  <button type="submit">شارژ</button>
+</form>
+</div>"""
+
+
 def console_html(
     accounts_rows,
     live_turns,
@@ -199,6 +255,7 @@ def console_html(
     audit_rows,
     quota_limit,
     generated: str = "",
+    error_code: str = "",
 ) -> str:
     """The «میز مدیریت» page over its inputs — pure, so the tests drive
     it with plain dicts. `accounts_rows` carries one dict per Account
@@ -210,13 +267,17 @@ def console_html(
     `audit_rows` the log's newest rows, newest first (ts, action,
     actor_email, detail); `quota_limit` the daily chat limit the
     accounts table counts against; `generated` the caller's timestamp
-    label (the function itself reads no clock). Renders in the fixed
-    order: Accounts, live turns, settled turns, the audit."""
+    label (the function itself reads no clock); `error_code` a
+    whitelisted refused-write code (T26) or "". Renders in the fixed
+    order: Accounts, the write forms, live turns, settled turns, the
+    audit."""
     limit = int(quota_limit)
     rows = [
         {**row, "quota_limit": row.get("quota_limit", limit)} for row in accounts_rows
     ]
     stamp = f" · {_esc(generated)}" if generated else ""
+    error_note = _ERROR_NOTES.get(str(error_code or ""), "")
+    writes = _write_forms(accounts_rows, error_note)
     return f"""<!DOCTYPE html>
 <html dir="rtl" lang="fa">
 <head>
@@ -237,6 +298,9 @@ def console_html(
 <h2>حساب‌ها</h2>
 {_accounts_table(rows)}
 
+<h2>نوشتن از همین میز <span class="write-note">هر دو کنش ثبت می‌شوند</span></h2>
+{writes}
+
 <h2>پیام‌های پژوهش در جریان</h2>
 {_live_table(live_turns)}
 
@@ -246,9 +310,9 @@ def console_html(
 <h2>دفتر رخدادها <span class="append-only">فقط افزودنی</span></h2>
 {_audit_table(audit_rows)}
 
-<footer class="note">این صفحه فقط می‌خواند: حساب‌ها، خرج امروز و گفتگوهای امروز
-از دفترهای خودشان، پیام‌های پژوهش از رجیستری زنده، و رخدادها از دفتر فقط‌افزودنی.
-ساختن حساب و شارژ اعتبار از همین میز، در نوبت بعدی می‌آید.</footer>
+<footer class="note">این صفحه فقط می‌خواند — جز ساختن حساب و شارژ اعتبار که
+از همین میز انجام می‌شود؛ هر دو کنش در دفتر رخدادها ثبت می‌شوند و بدون ثبت
+هیچ‌چیز عوض نمی‌شود.</footer>
 </div>
 </body>
 </html>"""
@@ -287,6 +351,24 @@ _STYLE = """
   tr.failed-row { background: #fdf1ee; }
   tr.failed-row td { border-bottom: 1px solid #f0d5cd; }
   .failure-count { font-size: 13px; color: #8a2b20; margin: 4px 0 8px; }
+  .write-note { font-size: 12px; background: #f3e2c7; color: #7a5a20;
+                border-radius: 8px; padding: 1px 8px; }
+  .write-error { background: #fdf1ee; color: #8a2b20;
+                 border: 1px solid #e5b8ad; border-radius: 8px;
+                 padding: 6px 12px; font-size: 13.5px; margin: 8px 0; }
+  .writes { display: flex; gap: 18px; flex-wrap: wrap; }
+  form.write { background: #fff; border: 1px solid #e0d8ca;
+               border-radius: 8px; padding: 12px 16px 14px; flex: 1 1 300px; }
+  form.write h3 { margin: 0 0 10px; font-size: 15px; color: #6e3418; }
+  form.write label { display: block; font-size: 13px; color: #5c4a3d;
+                     margin-bottom: 8px; }
+  form.write input, form.write select { display: block; width: 100%;
+                     margin-top: 3px; padding: 5px 8px; font-size: 14px;
+                     border: 1px solid #d8cfc0; border-radius: 6px;
+                     background: #fbfaf7; box-sizing: border-box; }
+  form.write button { margin-top: 4px; background: #8a3d20; color: #fff;
+                      border: none; border-radius: 6px; padding: 7px 18px;
+                      font-size: 14px; font-family: inherit; cursor: pointer; }
   footer.note { margin-top: 30px; font-size: 12.5px; color: #75695f;
                 border-top: 1px solid #e0d8ca; padding-top: 10px; }
 """
