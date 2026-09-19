@@ -26,12 +26,24 @@ from __future__ import annotations
 import html
 from datetime import datetime
 
-from ui.research import (
-    RESEARCH_SESSION_NOT_FOUND_DETAIL,
-    ensure_state_shape,
-    research_state_summary,
-)
-from ui import research_store
+# The repo runs this module inside the ui package; the container runs it
+# flat beside the other modules (the serve.py dual-import shape) — both
+# must resolve, or the report endpoint dies only in the deployed image,
+# exactly the failure the manual stack test caught (2026-09-19).
+try:
+    from ui.research import (
+        RESEARCH_SESSION_NOT_FOUND_DETAIL,
+        ensure_state_shape,
+        research_state_summary,
+    )
+    from ui import research_store
+except ImportError:  # the container runs this file flat beside the modules
+    from research import (
+        RESEARCH_SESSION_NOT_FOUND_DETAIL,
+        ensure_state_shape,
+        research_state_summary,
+    )
+    import research_store
 
 RESEARCH_REPORT_EMPTY_DETAIL = (
     "خلاصۀ پژوهش هنوز بخشی ندارد؛ گزارش نشست پس از نخستین بخش آماده می‌شود."

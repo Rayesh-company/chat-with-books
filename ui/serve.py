@@ -167,6 +167,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         create_account,
         verify_login,
     )
+    from report import research_session_report
     from composer import (
         COMPOSER_MAX_TOKENS,
         COMPOSER_TIMEOUT,
