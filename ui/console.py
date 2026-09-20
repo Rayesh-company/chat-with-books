@@ -58,6 +58,7 @@ _ACTION_LABELS = {
     "account_created": "ساختن حساب",
     "balance_topped": "شارژ اعتبار",
     "admin_seeded": "ساختن مدیر نخستین",
+    "phone_attached": "پیوند شماره",
 }
 
 # The refused writes' Farsi notes (T26), keyed by the whitelisted error
@@ -149,13 +150,13 @@ def _live_table(turns) -> str:
         rows_html.append(
             "<tr>"
             f"<td class=\"mono\">{_esc(turn.get('id', ''))}</td>"
-            f"<td class=\"mono\">{_esc(turn.get('phone', ''))}</td>"
+            f"<td class=\"email\">{_esc(turn.get('account', ''))}</td>"
             f"<td>{_esc(_state_label(turn.get('state', '')))}</td>"
             f"<td class=\"num\">{elapsed:,.0f} ثانیه</td>"
             "</tr>"
         )
     return _table(
-        ("شناسۀ پیام", "شماره", "وضعیت", "زمان سپری‌شده"),
+        ("شناسۀ پیام", "حساب", "وضعیت", "زمان سپری‌شده"),
         rows_html,
     )
 
@@ -179,7 +180,7 @@ def _settled_table(turns) -> str:
         rows_html.append(
             f"<tr{cls}>"
             f"<td class=\"mono\">{_esc(turn.get('id', ''))}</td>"
-            f"<td class=\"mono\">{_esc(turn.get('phone', ''))}</td>"
+            f"<td class=\"email\">{_esc(turn.get('account', ''))}</td>"
             f"<td>{'<strong>' if failed else ''}{_esc(_state_label(state))}"
             f"{'</strong>' if failed else ''}</td>"
             f"{detail_cell}"
@@ -212,14 +213,14 @@ def _audit_table(rows) -> str:
 
 
 def _write_forms(accounts_rows, error_note: str) -> str:
-    """The console's write side (T26, GitLab #28): the issuance form
-    and the top-up form, plain HTML forms posting form-encoded bodies
-    to serve.py's admin endpoints and getting a 303 back — post,
-    redirect, get, no JavaScript and no framework. The top-up's
-    account list comes from the same rows the mirror table renders
-    (the function stays pure: it renders only what it is handed), and
-    a refused write's Farsi note renders above the forms when the
-    redirect carried a whitelisted code."""
+    """The console's write side (T26, GitLab #28; T21's attach joins):
+    the issuance form, the top-up form, and the phone-attach form —
+    plain HTML forms posting form-encoded bodies to serve.py's admin
+    endpoints and getting a 303 back — post, redirect, get, no
+    JavaScript and no framework. The select lists come from the same
+    rows the mirror table renders (the function stays pure: it renders
+    only what it is handed), and a refused write's Farsi note renders
+    above the forms when the redirect carried a whitelisted code."""
     options = "".join(
         f'<option value="{_esc(row.get("email", ""))}">'
         f'{_esc(row.get("email", ""))}</option>'
@@ -244,6 +245,12 @@ def _write_forms(accounts_rows, error_note: str) -> str:
   <label>حساب <select name="email" required>{options}</select></label>
   <label>مقدار (تومان) <input type="number" name="amount" min="1" step="1" required dir="ltr"></label>
   <button type="submit">شارژ</button>
+</form>
+<form action="/admin/attach" method="post" class="write">
+  <h3>پیوند شماره</h3>
+  <label>حساب <select name="email" required>{options}</select></label>
+  <label>شمارۀ پیوند‌خورده <input type="text" name="phone" dir="ltr"></label>
+  <button type="submit">پیوند</button>
 </form>
 </div>"""
 

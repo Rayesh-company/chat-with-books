@@ -13,6 +13,7 @@ from pathlib import Path
 
 from tests.helpers import (
     TEST_BALANCE_TOMAN,
+    account_email_for_phone,
     get,
     raw_get,
     stop_gate,
@@ -28,7 +29,9 @@ from ui.ledger import (
 )
 
 PHONE = "09120000000"
+ACCOUNT = account_email_for_phone(PHONE)  # the store key (T21)
 OTHER = "09350000000"
+OTHER_ACCOUNT = account_email_for_phone(OTHER)
 
 # The two-session composition the grouping tests read: each ask's
 # input-side estimate (300 / 400 tokens) rounds to 1 toman, the picker
@@ -41,10 +44,10 @@ SECOND_COST = cost_toman(400, 0) + cost_toman(0, 250_000)
 def _seed_two_sessions():
     """One Account's first two Sessions: ask + picker, then a second
     ask + writer — the shape the profile's grouping and badges read."""
-    record_size_estimate(PHONE, "ask", 900)  # session one opens
-    record(PHONE, "picker", 1_000_000, 0, metered=True)  # 2000, metered
-    record_size_estimate(PHONE, "ask", 1200)  # session two re-anchors
-    record(PHONE, "writer", 0, 250_000, metered=True)  # 2000, metered
+    record_size_estimate(ACCOUNT, "ask", 900)  # session one opens
+    record(ACCOUNT, "picker", 1_000_000, 0, metered=True)  # 2000, metered
+    record_size_estimate(ACCOUNT, "ask", 1200)  # session two re-anchors
+    record(ACCOUNT, "writer", 0, 250_000, metered=True)  # 2000, metered
 
 
 # --- the ledger read ---------------------------------------------------------
@@ -56,7 +59,7 @@ def test_the_history_groups_two_asks_into_two_sessions_newest_first(
     monkeypatch.setattr(accounts, "ACCOUNTS_DB", tmp_path / "accounts.sqlite3")
     _seed_two_sessions()
 
-    groups = session_history(PHONE)
+    groups = session_history(ACCOUNT)
 
     assert len(groups) == 2, "each ask opens its own Session group"
     newest, oldest = groups  # the open Session leads
@@ -80,7 +83,7 @@ def test_the_grouped_entries_carry_their_honesty(tmp_path, monkeypatch):
     monkeypatch.setattr(accounts, "ACCOUNTS_DB", tmp_path / "accounts.sqlite3")
     _seed_two_sessions()
 
-    groups = session_history(PHONE)
+    groups = session_history(ACCOUNT)
     by_kind = {entry["kind"]: entry for entry in groups[0]["entries"]}
     assert by_kind["writer"]["metered"] is True
     assert by_kind["ask"]["metered"] is False, "the estimate never passes for a measurement"
@@ -96,18 +99,18 @@ def test_the_history_caps_at_twenty_sessions_but_the_day_counts_all(
     render, the day's spend still counts every ask behind them."""
     monkeypatch.setattr(accounts, "ACCOUNTS_DB", tmp_path / "accounts.sqlite3")
     for _ in range(ledger.SESSION_HISTORY_CAP + 5):
-        record_size_estimate(PHONE, "ask", 900)
+        record_size_estimate(ACCOUNT, "ask", 900)
 
-    groups = session_history(PHONE)
+    groups = session_history(ACCOUNT)
     assert len(groups) == ledger.SESSION_HISTORY_CAP
     assert groups[0]["started"] >= groups[-1]["started"], "newest first"
-    assert today_total(PHONE) == ledger.SESSION_HISTORY_CAP + 5
+    assert today_total(ACCOUNT) == ledger.SESSION_HISTORY_CAP + 5
 
 
 def test_the_history_is_per_account(tmp_path, monkeypatch):
     monkeypatch.setattr(accounts, "ACCOUNTS_DB", tmp_path / "accounts.sqlite3")
     _seed_two_sessions()
-    assert session_history(OTHER) == []
+    assert session_history(OTHER_ACCOUNT) == []
 
 
 # --- the endpoint ------------------------------------------------------------
@@ -122,9 +125,9 @@ def test_the_endpoint_answers_only_its_own_account(tmp_path):
     try:
         get(base, "/profile/data", phone=PHONE)  # seeds both Accounts
         get(base, "/profile/data", phone=OTHER)
-        record_size_estimate(PHONE, "ask", 900)
-        record(PHONE, "picker", 1_000_000, 0, metered=True)
-        record_size_estimate(OTHER, "ask", 900)
+        record_size_estimate(ACCOUNT, "ask", 900)
+        record(ACCOUNT, "picker", 1_000_000, 0, metered=True)
+        record_size_estimate(OTHER_ACCOUNT, "ask", 900)
 
         status, mine = get(base, "/profile/data", phone=PHONE)
         assert status == 200
@@ -176,17 +179,17 @@ def test_the_balance_rides_the_response_and_matches_the_store(tmp_path):
     try:
         status, body = get(base, "/profile/data", phone=PHONE)
         assert status == 200
-        assert body["balance_toman"] == accounts.get_balance(PHONE)
+        assert body["balance_toman"] == accounts.get_balance(ACCOUNT)
         assert body["balance_toman"] == TEST_BALANCE_TOMAN
-        assert body["today_toman"] == ledger.today_total(PHONE) == 0
+        assert body["today_toman"] == ledger.today_total(ACCOUNT) == 0
 
-        record(PHONE, "picker", 1_000_000, 0, metered=True)  # 2000 off the Balance
+        record(ACCOUNT, "picker", 1_000_000, 0, metered=True)  # 2000 off the Balance
 
         status, body = get(base, "/profile/data", phone=PHONE)
         assert status == 200
-        assert body["balance_toman"] == accounts.get_balance(PHONE)
+        assert body["balance_toman"] == accounts.get_balance(ACCOUNT)
         assert body["balance_toman"] == TEST_BALANCE_TOMAN - cost_toman(1_000_000, 0)
-        assert body["today_toman"] == today_total(PHONE) == cost_toman(1_000_000, 0)
+        assert body["today_toman"] == today_total(ACCOUNT) == cost_toman(1_000_000, 0)
     finally:
         stop_gate(server, originals)
 
@@ -199,8 +202,8 @@ def test_the_badge_vocabulary_rides_the_data_and_pins_the_sheet(tmp_path):
     base, server, originals = with_gate(tmp_path, None)
     try:
         get(base, "/profile/data", phone=PHONE)
-        record_size_estimate(PHONE, "ask", 900)  # estimated
-        record(PHONE, "picker", 1_000_000, 0, metered=True)  # metered
+        record_size_estimate(ACCOUNT, "ask", 900)  # estimated
+        record(ACCOUNT, "picker", 1_000_000, 0, metered=True)  # metered
 
         status, body = get(base, "/profile/data", phone=PHONE)
         assert status == 200

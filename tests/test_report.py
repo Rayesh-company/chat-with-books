@@ -156,32 +156,32 @@ def test_zero_sections_refuses_in_farsi():
 def test_the_read_is_phone_gated_and_closed_sessions_still_answer(monkeypatch):
     state = make_state()
     sessions = {
-        "s-1": {"phone": "09120000000", "state": state},
-        "s-closed": {"phone": "09120000000", "state": {**state, "closed": True}},
-        "s-other": {"phone": "09350000000", "state": state},
+        "s-1": {"account": "09120000000@sheet.test", "state": state},
+        "s-closed": {"account": "09120000000@sheet.test", "state": {**state, "closed": True}},
+        "s-other": {"account": "other@sheet.test", "state": state},
     }
     monkeypatch.setattr(research_store, "load_session", lambda session_id: sessions.get(session_id))
 
-    document, error = research_session_report("09120000000", "s-1")
+    document, error = research_session_report("09120000000@sheet.test", "s-1")
     assert error is None and document is not None and REPORT in document
 
-    closed, closed_error = research_session_report("09120000000", "s-closed")
+    closed, closed_error = research_session_report("09120000000@sheet.test", "s-closed")
     assert closed is not None and closed_error is None, "a finished Session's report is the deliverable — closed still answers"
 
-    stranger, stranger_error = research_session_report("09350000000", "s-1")
+    stranger, stranger_error = research_session_report("other@sheet.test", "s-1")
     assert stranger is None
     assert stranger_error[0] == 404
 
-    missing, missing_error = research_session_report("09120000000", "s-nope")
+    missing, missing_error = research_session_report("09120000000@sheet.test", "s-nope")
     assert missing is None and missing_error[0] == 404
 
 
 def test_a_session_without_sections_refuses_with_the_farsi_detail(monkeypatch):
     state = make_state()
     state["brief_document"] = {"complete": False, "sections": []}
-    monkeypatch.setattr(research_store, "load_session", lambda session_id: {"phone": "09120000000", "state": state})
+    monkeypatch.setattr(research_store, "load_session", lambda session_id: {"account": "09120000000@sheet.test", "state": state})
 
-    document, error = research_session_report("09120000000", "s-1")
+    document, error = research_session_report("09120000000@sheet.test", "s-1")
 
     assert document is None
     assert error[0] == 409

@@ -89,7 +89,8 @@ def composer_replies():
 # The gate-test harness (the POST client and the sheet-server
 # with/stop pair) lives in tests.helpers — shared with the deep-dive
 # endpoint tests, so neither test module is the other's library.
-from tests.helpers import (  # noqa: E402
+from tests.helpers import (
+    account_email_for_phone,  # noqa: E402
     GateServer,
     patch_accounts,
     post,
@@ -131,16 +132,17 @@ def test_recall_without_a_login_is_rejected_before_touching_cognee(tmp_path):
     assert upstream.calls == []
 
 
-def test_an_attached_phone_that_normalizes_to_nothing_is_treated_as_none(tmp_path):
-    # ADR-0013: the phone is legacy data attached to the Account; the
-    # gate normalizes it exactly like before on every read. An Account
-    # whose attached phone is not 10-13 digits has, effectively, none —
-    # the phone-keyed stores cannot address it, so the 403 Farsi
-    # «پیوند نخورده» answer, never a 400 and never a crash.
+def test_an_attached_phone_that_normalizes_to_nothing_changes_nothing(tmp_path):
+    # T21, GitLab #23: the stores key by the Account's email, so an
+    # attached legacy phone that normalizes to nothing ("12345") has no
+    # identity meaning left at all — the Account chats, spends, and is
+    # bounded like any other; the phone is display data the console
+    # shows as nothing. The old no-attached-phone 403 retired with the
+    # phone-keyed stores.
     upstream = FakeUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        status, payload = post(
+        status, _ = post(
             base,
             "/api/v1/recall",
             {"searchType": "HYBRID_COMPLETION", "query": "پرسش؟"},
@@ -148,9 +150,9 @@ def test_an_attached_phone_that_normalizes_to_nothing_is_treated_as_none(tmp_pat
         )
     finally:
         stop_gate(server, original)
-    assert status == 403
-    assert "پیوند" in payload["detail"]
-    assert upstream.calls == []
+    assert status == 200
+    assert len(upstream.calls) == 1
+    assert serve.chats_today(account_email_for_phone("12345")) == 1
 
 
 def test_a_valid_phone_passes_and_the_chat_is_recorded(tmp_path):
@@ -168,7 +170,7 @@ def test_a_valid_phone_passes_and_the_chat_is_recorded(tmp_path):
     assert status == 200
     # One upstream call — the recall itself — and one recorded chat.
     assert len(upstream.calls) == 1
-    assert serve.chats_today("09123456789") == 1
+    assert serve.chats_today(account_email_for_phone("09123456789")) == 1
 
 
 def test_five_chats_is_the_daily_limit_and_other_phones_unaffected(tmp_path):
@@ -176,7 +178,7 @@ def test_five_chats_is_the_daily_limit_and_other_phones_unaffected(tmp_path):
     base, server, original = with_gate(tmp_path, upstream)
     try:
         for _ in range(5):
-            serve.record_chat("09120000001")
+            serve.record_chat(account_email_for_phone("09120000001"))
         status_full, payload = post(
             base,
             "/api/v1/recall",
@@ -208,7 +210,7 @@ def test_gate_rejection_reads_the_request_body_before_answering(tmp_path):
     base, server, original = with_gate(tmp_path, upstream)
     try:
         for _ in range(5):
-            serve.record_chat("09120000009")
+            serve.record_chat(account_email_for_phone("09120000009"))
         status, payload = post(
             base,
             "/api/v1/recall",
@@ -224,17 +226,17 @@ def test_gate_rejection_reads_the_request_body_before_answering(tmp_path):
 
 def test_yesterday_chats_do_not_count_against_today(tmp_path):
     quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
-    assert serve.chats_today("09120000003") == 0  # also creates the table
+    assert serve.chats_today(account_email_for_phone("09120000003")) == 0  # also creates the table
     conn = sqlite3.connect(str(quotas.QUOTA_DB))
     try:
         conn.execute(
-            "INSERT INTO chats (phone, day) VALUES (?, ?)",
-            ("09120000003", "2000-01-01"),
+            "INSERT INTO chats (account, day) VALUES (?, ?)",
+            (account_email_for_phone("09120000003"), "2000-01-01"),
         )
         conn.commit()
     finally:
         conn.close()
-    assert serve.chats_today("09120000003") == 0
+    assert serve.chats_today(account_email_for_phone("09120000003")) == 0
 
 
 # What the guard returns for WRITER_BLOCKS: text is stripped, every kept
@@ -275,7 +277,7 @@ def test_quoted_answer_needs_a_phone_that_chatted_today(tmp_path):
     try:
         status_none, _ = post(base, "/quoted-answer", payload, phone="09120000004")
         calls_after_rejected = list(upstream.calls)
-        serve.record_chat("09120000004")
+        serve.record_chat(account_email_for_phone("09120000004"))
         status_ok, body = post(base, "/quoted-answer", payload, phone="09120000004")
     finally:
         stop_gate(server, original)
@@ -296,7 +298,7 @@ def test_next_tier_recall_needs_a_phone_that_chatted_today(tmp_path):
             base, "/next-tier-recall", {"query": "پرسش؟"}, phone="09120000005"
         )
         calls_after_rejected = list(upstream.calls)
-        serve.record_chat("09120000005")
+        serve.record_chat(account_email_for_phone("09120000005"))
         status_ok, body = post(
             base, "/next-tier-recall", {"query": "پرسش؟"}, phone="09120000005"
         )
@@ -316,7 +318,7 @@ def test_next_tier_recall_pins_the_search_shape_and_the_second_service(tmp_path)
     upstream = FakeUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat("09120000006")
+        serve.record_chat(account_email_for_phone("09120000006"))
         status, _ = post(
             base, "/next-tier-recall", {"query": "پرسش؟"}, phone="09120000006"
         )
@@ -339,19 +341,19 @@ def test_next_tier_recall_never_counts_a_chat(tmp_path):
     upstream = FakeUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat("09120000007")
+        serve.record_chat(account_email_for_phone("09120000007"))
         post(base, "/next-tier-recall", {"query": "پرسش؟"}, phone="09120000007")
         post(base, "/next-tier-recall", {"query": "پرسش؟"}, phone="09120000007")
     finally:
         stop_gate(server, original)
-    assert serve.chats_today("09120000007") == 1
+    assert serve.chats_today(account_email_for_phone("09120000007")) == 1
 
 
 def test_next_tier_recall_rejects_an_empty_query(tmp_path):
     upstream = FakeUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat("09120000008")
+        serve.record_chat(account_email_for_phone("09120000008"))
         status, _ = post(
             base, "/next-tier-recall", {"query": "   "}, phone="09120000008"
         )
@@ -390,7 +392,7 @@ def test_next_tier_relay_rides_its_own_leash(tmp_path):
     upstream = FakeUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat("09120000011")
+        serve.record_chat(account_email_for_phone("09120000011"))
         post(base, "/next-tier-recall", {"query": "پرسش؟"}, phone="09120000011")
         post(
             base,
@@ -417,7 +419,7 @@ def test_next_tier_relay_survives_a_slow_search(tmp_path, monkeypatch):
     monkeypatch.setattr(serve, "NEXT_TIER_TIMEOUT", 5)
     quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
     patch_accounts(tmp_path)
-    serve.record_chat("09120000012")
+    serve.record_chat(account_email_for_phone("09120000012"))
     sheet = GateServer(("127.0.0.1", 0), serve.SessionHandler)
     threading.Thread(target=sheet.serve_forever, daemon=True).start()
     try:
@@ -450,7 +452,7 @@ def test_next_tier_relay_reports_a_timed_out_search(tmp_path, monkeypatch):
     monkeypatch.setattr(serve, "NEXT_TIER_TIMEOUT", 1)
     quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
     patch_accounts(tmp_path)
-    serve.record_chat("09120000013")
+    serve.record_chat(account_email_for_phone("09120000013"))
     sheet = GateServer(("127.0.0.1", 0), serve.SessionHandler)
     threading.Thread(target=sheet.serve_forever, daemon=True).start()
     try:

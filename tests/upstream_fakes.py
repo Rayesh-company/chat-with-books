@@ -173,7 +173,7 @@ def run_turn_sync(
     orchestration seam without the HTTP layer or the thread. The budget
     configuration rides the same highest point the worker exposes
     (clock, deadline seconds, call cap); None leaves the defaults."""
-    turn = research.ResearchTurn(session["phone"], session["id"], message)
+    turn = research.ResearchTurn(session["account"], session["id"], message)
     research.RESEARCH_REGISTRY[turn.id] = turn
 
     def run():

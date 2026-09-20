@@ -85,17 +85,19 @@ def account_email_for_phone(phone: str) -> str:
 TEST_BALANCE_TOMAN = 1_000_000
 
 
-def ensure_account(phone: str) -> None:
+def ensure_account(phone: str) -> str:
     """The seeded operator's Account carries a generous Balance — the
     house tests exercise the pipeline, not the prepaid stop; the tests
     that pin the stop drain their own Account explicitly and stay
     drained: the top-up rides CREATION only, so a re-ensure never
-    refills a drained Account."""
+    refills a drained Account. Returns the Account's EMAIL — the key
+    every store takes since T21."""
     email = account_email_for_phone(phone)
     existed = accounts.account_by_email(email) is not None
     accounts.create_account(email, TEST_PASSWORD, phone=phone, role="operator")
     if not existed:
-        accounts.adjust_balance(phone, TEST_BALANCE_TOMAN)
+        accounts.adjust_balance(email, TEST_BALANCE_TOMAN)
+    return email
 
 
 # Login cookies per (base, phone) — the token lives twelve hours, far

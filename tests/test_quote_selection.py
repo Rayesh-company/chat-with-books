@@ -12,7 +12,8 @@ from tests.conftest import REPO_ROOT
 sys.path.insert(0, str(REPO_ROOT))
 
 from ui import serve  # noqa: E402
-from tests.helpers import (  # noqa: E402
+from tests.helpers import (
+    account_email_for_phone,  # noqa: E402
     OTHER_PASSAGE,
     POOL,
     POOL_PASSAGE,
@@ -183,7 +184,7 @@ def test_quote_selection_needs_a_chat_today_and_never_counts(tmp_path):
         )
         calls_after_rejected = list(composer.calls)
         for _ in range(5):
-            serve.record_chat(phone)
+            serve.record_chat(account_email_for_phone(phone))
         status_ok, body = post(
             base, "/quote-selection", quote_payload(), phone=phone
         )
@@ -194,7 +195,7 @@ def test_quote_selection_needs_a_chat_today_and_never_counts(tmp_path):
     assert calls_after_rejected == []
     assert status_ok == 200
     # The day's five chats stayed five — the picker never counts.
-    assert serve.chats_today(phone) == 5
+    assert serve.chats_today(account_email_for_phone(phone)) == 5
 
 
 def test_quote_selection_rejects_a_malformed_body_and_an_empty_pool(tmp_path):
@@ -203,7 +204,7 @@ def test_quote_selection_rejects_a_malformed_body_and_an_empty_pool(tmp_path):
     composer = FakeComposer()
     base, server, original = with_gate(tmp_path, composer)
     phone = "09120000022"
-    serve.record_chat(phone)
+    serve.record_chat(account_email_for_phone(phone))
     try:
         status_no_sources, _ = post(base, "/quote-selection", {"question": "پرسش؟"}, phone=phone)
         status_empty, _ = post(
@@ -232,7 +233,7 @@ def test_quote_selection_answers_the_mixed_reply_with_labels_and_pool_size(tmp_p
     )
     base, server, original = with_gate(tmp_path, composer)
     phone = "09120000023"
-    serve.record_chat(phone)
+    serve.record_chat(account_email_for_phone(phone))
     try:
         status, body = post(
             base, "/quote-selection", quote_payload(), phone=phone
@@ -252,7 +253,7 @@ def test_quote_selection_picker_failure_answers_empty_with_200(tmp_path):
     composer = FakeComposer([OSError("composer down")])
     base, server, original = with_gate(tmp_path, composer)
     phone = "09120000024"
-    serve.record_chat(phone)
+    serve.record_chat(account_email_for_phone(phone))
     try:
         status, body = post(
             base, "/quote-selection", quote_payload(), phone=phone
@@ -269,7 +270,7 @@ def test_quote_selection_below_the_floor_answers_empty_with_200(tmp_path):
     )
     base, server, original = with_gate(tmp_path, composer)
     phone = "09120000025"
-    serve.record_chat(phone)
+    serve.record_chat(account_email_for_phone(phone))
     try:
         status, body = post(
             base, "/quote-selection", quote_payload(), phone=phone

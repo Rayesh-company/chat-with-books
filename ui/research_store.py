@@ -2,7 +2,10 @@
 one per transcript message — the load/save/append functions the
 wayfinder engine reads. The database path is the module attribute tests
 patch (the quotas.py pattern, its own file so a patched quota DB and a
-patched research DB never share a test).
+patched research DB never share a test). Sessions key by the ACCOUNT's
+email (T21, GitLab #23 — ADR-0013's contract step): the phone no longer
+keys anything; a pre-T21 store's rows remap through ui/migrate.py's
+attach map.
 
 The store also owns the write serialization (T11): every session state
 row carries a version, every reader's snapshot is stamped with the
@@ -79,11 +82,21 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(RESEARCH_DB), timeout=5)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS research_sessions ("
-        "id TEXT PRIMARY KEY, phone TEXT NOT NULL, "
+        "id TEXT PRIMARY KEY, account TEXT NOT NULL, "
         "state_json TEXT NOT NULL, created_at TEXT NOT NULL, "
         "updated_at TEXT NOT NULL, "
         "version INTEGER NOT NULL DEFAULT 0)"
     )
+    # A pre-T21 store keys its rows `phone` — the column renames in
+    # place (the values follow when ui/migrate.py runs the attach map).
+    columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(research_sessions)")
+    }
+    if "phone" in columns and "account" not in columns:
+        conn.execute(
+            "ALTER TABLE research_sessions RENAME COLUMN phone TO account"
+        )
+        conn.commit()
     # A store written before T11 has no version column — top it up in
     # place; every existing row starts at 0.
     columns = {row[1] for row in conn.execute("PRAGMA table_info(research_sessions)")}
@@ -115,7 +128,7 @@ def _durable(state: dict) -> str:
     )
 
 
-def create_session(session_id: str, phone: str, state: dict) -> None:
+def create_session(session_id: str, account: str, state: dict) -> None:
     """Insert one new session row; the caller owns the id (the engine's
     registry minted it before the first write, so a created session is
     always addressable by the id it already answered with). The state
@@ -127,9 +140,9 @@ def create_session(session_id: str, phone: str, state: dict) -> None:
         stamp = _now()
         state[SAVE_BASE_VERSION] = 0
         conn.execute(
-            "INSERT INTO research_sessions (id, phone, state_json, created_at,"
+            "INSERT INTO research_sessions (id, account, state_json, created_at,"
             " updated_at, version) VALUES (?, ?, ?, ?, ?, 0)",
-            (session_id, phone, _durable(state), stamp, stamp),
+            (session_id, account, _durable(state), stamp, stamp),
         )
         conn.commit()
     finally:
@@ -208,7 +221,7 @@ def save_session(session_id: str, state: dict, decision_record: dict = None) -> 
 
 
 def load_session(session_id: str):
-    """One session row as {"id", "phone", "state", "messages"}; None when
+    """One session row as {"id", "account", "state", "messages"}; None when
     unknown. The messages ride in creation order — the transcript the
     engine's classify pass reads its recent tail from. The state is
     stamped with the row version it was read at (T11) — the writer's
@@ -216,7 +229,7 @@ def load_session(session_id: str):
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT id, phone, state_json, version FROM research_sessions "
+            "SELECT id, account, state_json, version FROM research_sessions "
             "WHERE id = ?",
             (session_id,),
         ).fetchone()
@@ -234,7 +247,7 @@ def load_session(session_id: str):
         state[SAVE_BASE_VERSION] = int(row[3])
     return {
         "id": row[0],
-        "phone": row[1],
+        "account": row[1],
         "state": state,
         "messages": [
             {"role": role, "payload": json.loads(payload)}

@@ -83,23 +83,23 @@ def post_form(base, path, fields, cookie=None):
         return exc.code, exc.headers.get("Location", "")
 
 
-def seed_live_turn(phone):
+def seed_live_turn(account):
     """One fake live turn in the registry — a real ResearchTurn at a
     working state, so the console's snapshot has something to mirror.
     The test removes it in its finally (the registry is the engine's
     own; the test only borrows a slot)."""
-    turn = research.ResearchTurn(phone=phone, session_id="sess-console", message="پرسش آزمایشی")
+    turn = research.ResearchTurn(account=account, session_id="sess-console", message="پرسش آزمایشی")
     turn.state = "searching"
     with research.RESEARCH_REGISTRY_LOCK:
         research.RESEARCH_REGISTRY[turn.id] = turn
     return turn
 
 
-def seed_settled_turn(phone, state, error=None):
+def seed_settled_turn(account, state, error=None):
     """One fake settled turn in the recent-settled ring — the shape a
     worker leaves behind at reap time (T11), state terminal, `done`
     set."""
-    turn = research.ResearchTurn(phone=phone, session_id="sess-settled", message="پیام آزمایشی")
+    turn = research.ResearchTurn(account=account, session_id="sess-settled", message="پیام آزمایشی")
     turn.state = state
     turn.error = error
     turn.done.set()
@@ -119,10 +119,11 @@ def test_the_console_renders_the_system_for_the_admin():
     turn = None
     try:
         phone = "09120000001"
-        ensure_account(phone)
+        account = ensure_account(phone)
         # One metered ask-path entry: 3000 in / 1500 out at the pinned
-        # tariff — 18 toman off the seeded 1,000,000 Balance today.
-        record(phone, "ask", 3000, 1500, metered=True)
+        # tariff — 18 toman off the seeded 1,000,000 Balance today,
+        # keyed by the Account's email (T21).
+        record(account, "ask", 3000, 1500, metered=True)
         assert cost_toman(3000, 1500) == 18
         # One yesterday entry, landed directly with its own day: the
         # console's per-day read answers history, not just the live
@@ -133,22 +134,22 @@ def test_the_console_renders_the_system_for_the_admin():
         conn = sqlite3.connect(ledger.LEDGER_DB)
         try:
             conn.execute(
-                "INSERT INTO usage_entries (phone, ts, day, kind, metered,"
+                "INSERT INTO usage_entries (account, ts, day, kind, metered,"
                 " input_tokens, output_tokens, cost_toman)"
                 " VALUES (?, ?, ?, 'ask', 1, 1000, 500, 6)",
-                (phone, f"{yesterday} 10:00:00", yesterday),
+                (account, f"{yesterday} 10:00:00", yesterday),
             )
             conn.commit()
         finally:
             conn.close()
-        assert ledger.day_total(phone, yesterday) == 6
-        assert ledger.day_total(phone, ledger._today()) == 18
-        quotas.record_chat(phone)
-        turn = seed_live_turn(phone)
+        assert ledger.day_total(account, yesterday) == 6
+        assert ledger.day_total(account, ledger._today()) == 18
+        quotas.record_chat(account)
+        turn = seed_live_turn(account)
         failed = seed_settled_turn(
-            phone, "failed", error=research.RESEARCH_FAILED_DETAIL
+            account, "failed", error=research.RESEARCH_FAILED_DETAIL
         )
-        done = seed_settled_turn(phone, "done")
+        done = seed_settled_turn(account, "done")
 
         status, content_type, html = get_html(
             base, "/admin", cookie=cookie_for(base, ADMIN_EMAIL)

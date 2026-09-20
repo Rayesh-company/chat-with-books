@@ -10,13 +10,19 @@ import json
 import sys
 
 from tests.conftest import REPO_ROOT
-from tests.helpers import post, stop_gate, with_gate
+from tests.helpers import (
+    account_email_for_phone,
+    post,
+    stop_gate,
+    with_gate,
+)
 
 sys.path.insert(0, str(REPO_ROOT))
 
 from ui import dive, recall_more, serve  # noqa: E402
 
 PHONE = "09120000000"
+ACCOUNT = account_email_for_phone(PHONE)  # the store key (T21)
 
 SENTENCE = "سخن در این است؛"
 OTHER_SENTENCE = "این جمله از قطعهٔ دیگری است."
@@ -215,7 +221,7 @@ def test_recall_more_endpoint_rejects_a_body_without_a_question(tmp_path):
     upstream = WidenUpstream(composer_items=[composer_reply(broaden_reply())])
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         bad, _ = post(base, "/recall-more", {"sources": []}, phone=PHONE)
     finally:
         stop_gate(server, original)
@@ -226,7 +232,7 @@ def test_recall_more_endpoint_returns_only_the_fresh_sources(tmp_path):
     upstream = WidenUpstream(composer_items=[composer_reply(broaden_reply())])
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         status, payload = post(
             base,
             "/recall-more",
@@ -246,7 +252,7 @@ def test_recall_more_endpoint_answers_the_honest_empty_shape(tmp_path):
     upstream = WidenUpstream(composer_items=[composer_reply("[]")])
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         status, payload = post(
             base, "/recall-more", {"question": "پرسش؟"}, phone=PHONE
         )
@@ -270,7 +276,7 @@ def test_evidence_fallback_gates_like_the_ask_without_counting(tmp_path):
         )
         # A phone WITH a chat today passes — and it never records a
         # second one.
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         status, _ = post(
             base, "/evidence-fallback", {"question": "پرسش؟"}, phone=PHONE
         )
@@ -280,14 +286,14 @@ def test_evidence_fallback_gates_like_the_ask_without_counting(tmp_path):
     assert no_chat == 429
     assert "گفتگو" in payload["detail"]
     assert status == 200
-    assert serve.chats_today(PHONE) == 1
+    assert serve.chats_today(ACCOUNT) == 1
 
 
 def test_evidence_fallback_returns_the_searched_pool(tmp_path):
     upstream = WidenUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         status, payload = post(
             base,
             "/evidence-fallback",
@@ -310,7 +316,7 @@ def test_evidence_fallback_rejects_a_body_without_a_question(tmp_path):
     upstream = WidenUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         bad, _ = post(base, "/evidence-fallback", {}, phone=PHONE)
     finally:
         stop_gate(server, original)

@@ -270,7 +270,9 @@ def test_zero_sections_refuses_the_twin_too():
 def test_the_md_endpoint_serves_the_attachment_headers(tmp_path):
     base, server, originals = with_gate(tmp_path, None)
     try:
-        research_store.create_session("s-twin-1", PHONE, report_state())
+        research_store.create_session(
+        "s-twin-1", account_email_for_phone(PHONE), report_state()
+    )
 
         status, headers, body = fetch_raw(
             base, "/research/report?session=s-twin-1&format=md"

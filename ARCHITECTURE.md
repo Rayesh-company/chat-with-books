@@ -668,28 +668,48 @@ carries behavior.**
 
 ---
 
-## 11. Access control — phone gate, quotas, turn registry
+## 11. Access control — Accounts, quotas, Balance, turn registry
 
-There is no account system. The gate is deliberately lightweight
-("stops casual credit-burn, not a determined caller"):
+The honor-system phone gate is retired (ADR-0013, finished by T21/GitLab
+#23 — the store migration). An **Account** — an email and a password,
+issued by the Admin, never self-registered — is the only door:
 
 ```
-Phone number (10–13 digits, Persian/Arabic-Indic digits normalized)
-   │  rides in X-Session-Phone header to serve.py
-   │  (never forwarded to Cognee)
+cwb_auth cookie (HttpOnly, hmac-sha256-signed by AUTH_SECRET, 12h)
+   │  serve.py resolves the Account (resolve_identity) — no client
+   │  header authenticates anything; the token's Account is the identity
    ▼
-ui/usage.sqlite3  (container: session_quota volume, /data/usage.sqlite3)
-   ├── one ASK = one chat. 5 per phone per server-local day.
-   │     phase 1 records it; 6th ask of the day → 429
-   ├── phases 2 & 3: need "≥1 chat today" for that phone; never count anything
+The Account's EMAIL keys every store — the phone never keys anything:
+ui/usage.sqlite3 chats          (container: /data/usage.sqlite3)
+   ├── one ASK = one chat. 5 per Account per server-local day.
+   │     phase 1 records it; 6th ask of the day → 429 (Farsi)
+ui/usage_ledger.sqlite3         (T22/T24: the metered spend, the tariff
+   │  converts tokens→Toman in config; /usage/live prices the open
+   │  Session live, /profile/data shows the Account's whole picture)
+ui/accounts.sqlite3 Balance     (T23/T25: the prepaid اعتبار; at zero the
+   │  ask and every phase answer 402 with the Farsi fix — a turn already
+   │  running finishes; the quota stays ON TOP, never replaced)
    └── research turn registry (in-memory, NOT sqlite):
-         ≤1 in-flight turn per phone, ≤3 globally, 429+Farsi message beyond,
+         ≤1 in-flight turn per Account, ≤3 globally, 429+Farsi message beyond,
          cooperative abort + session close on new ask, 404 after restart
-         (the SESSION itself persists in ui/research.sqlite3)
+         (the SESSION itself persists in ui/research.sqlite3, keyed by email)
 ```
 
-Honor-system by design: no SMS verification. The point is protecting the
-Z.AI/AvalAI budgets, not real authentication.
+The phone number survives as **legacy data attached to the Account**
+(display column in the console), never a key — it feeds only the
+mapping the Admin's attach
+flow (the console's «پیوند شماره» form) gives `ui/migrate.py` to rekey
+pre-account rows: `usage.sqlite3`, the ledger, and `research.sqlite3`
+renamed their key columns `phone`→`account` in place, and every
+attached phone's rows remapped to its Account's email — the
+pre-migration quota counts, spend history, and research sessions
+survived the flip. No store table keys on a bare phone anymore. The
+first Admin comes from `ADMIN_EMAIL`/`ADMIN_PASSWORD` in the compose
+env (planted once at startup, audited); the Admin console
+(`GET /admin`, server-rendered) issues Accounts, tops up Balances, and
+attaches phones — every action appended to the append-only audit log
+(`ui/audit.sqlite3`, engine-enforced: UPDATE and DELETE abort below
+the application).
 
 ---
 

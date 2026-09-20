@@ -213,8 +213,9 @@ def get_role(email):
 
 def attach_phone(email, phone) -> bool:
     """Attach the legacy phone to an Account — the Admin's migration
-    act that makes a phone-keyed store (quotas, research sessions)
-    addressable by this Account. False when the Account is unknown."""
+    act: the mapping ui/migrate.py rekeys the pre-account stores'
+    rows by (quotas, ledger, research sessions), so a phone's history
+    survives under its Account. False when the Account is unknown."""
     conn = _connect()
     try:
         cursor = conn.execute(
@@ -227,14 +228,15 @@ def attach_phone(email, phone) -> bool:
         conn.close()
 
 
-def get_balance(phone: str) -> int:
-    """The Balance (اعتبار) of the Account attached to this phone — the
-    prepaid Toman the metered events deduct from."""
+def get_balance(account: str) -> int:
+    """The Balance (اعتبار) of this Account — the prepaid Toman the
+    metered events deduct from, keyed by the Account's own email
+    (T21, GitLab #23): the phone no longer keys anything."""
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT COALESCE(SUM(balance_toman), 0) FROM accounts WHERE phone = ?",
-            (phone,),
+            "SELECT COALESCE(SUM(balance_toman), 0) FROM accounts WHERE email = ?",
+            (_normalize_email(account),),
         ).fetchone()
         return int(row[0])
     finally:
@@ -273,31 +275,32 @@ def credit_balance(email, amount: int) -> int | None:
         conn.close()
 
 
-def adjust_balance(phone: str, delta: int) -> int:
+def adjust_balance(account: str, delta: int) -> int:
     """One Balance change (the Admin's top-up is #28's write path; the
-    deduction below is the meter's) — returns the new balance."""
+    deduction below is the meter's) — returns the new balance, keyed
+    by the Account's email (T21)."""
     conn = _connect()
     try:
         conn.execute(
-            "UPDATE accounts SET balance_toman = balance_toman + ? WHERE phone = ?",
-            (delta, phone),
+            "UPDATE accounts SET balance_toman = balance_toman + ? WHERE email = ?",
+            (delta, _normalize_email(account)),
         )
         conn.commit()
         row = conn.execute(
-            "SELECT COALESCE(SUM(balance_toman), 0) FROM accounts WHERE phone = ?",
-            (phone,),
+            "SELECT COALESCE(SUM(balance_toman), 0) FROM accounts WHERE email = ?",
+            (_normalize_email(account),),
         ).fetchone()
         return int(row[0])
     finally:
         conn.close()
 
 
-def deduct_balance(phone: str, amount: int) -> int:
+def deduct_balance(account: str, amount: int) -> int:
     """The meter's deduction: the cost of one recorded entry off the
     Balance. May land slightly negative — the event that emptied the
     Balance already ran (a running turn finishes, ADR-0013); the gate
     stops the NEXT spend, never the one in flight."""
-    return adjust_balance(phone, -amount)
+    return adjust_balance(account, -amount)
 
 
 def admins_exist() -> bool:

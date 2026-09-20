@@ -58,6 +58,7 @@ try:
     from ui.accounts import (
         account_by_email,
         admins_exist,
+        attach_phone,
         create_account,
         credit_balance,
         deduct_balance,
@@ -66,7 +67,7 @@ try:
         list_accounts,
         verify_login,
     )
-    from ui import audit
+    from ui import audit, migrate
     from ui.console import console_html
     from ui.composer import (
         COMPOSER_MAX_TOKENS,
@@ -117,7 +118,7 @@ try:
         COMMAND_SYNTHESIZE,
         CONVERSATIONAL_INTENTS,
         RESEARCH_BUSY_GLOBAL_DETAIL,
-        RESEARCH_BUSY_PHONE_DETAIL,
+        RESEARCH_BUSY_ACCOUNT_DETAIL,
         RESEARCH_EVIDENCE_FLOOR,
         RESEARCH_EVENT_ABORTED,
         RESEARCH_EVENT_BRIEF,
@@ -142,7 +143,7 @@ try:
         RESEARCH_TURN_NOT_FOUND_DETAIL,
         TURN_TERMINAL_STATES,
         ResearchTurn,
-        abort_phone_research,
+        abort_account_research,
         abort_research_turn,
         build_classify_prompt,
         build_conversational_prompt,
@@ -186,6 +187,7 @@ except ImportError:  # the container runs this file as a script beside the modul
     from accounts import (
         account_by_email,
         admins_exist,
+        attach_phone,
         create_account,
         credit_balance,
         deduct_balance,
@@ -194,7 +196,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         list_accounts,
         verify_login,
     )
-    import audit
+    import audit, migrate
     from console import console_html
     from report import research_session_report
     from composer import (
@@ -245,7 +247,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         COMMAND_SYNTHESIZE,
         CONVERSATIONAL_INTENTS,
         RESEARCH_BUSY_GLOBAL_DETAIL,
-        RESEARCH_BUSY_PHONE_DETAIL,
+        RESEARCH_BUSY_ACCOUNT_DETAIL,
         RESEARCH_EVIDENCE_FLOOR,
         RESEARCH_EVENT_ABORTED,
         RESEARCH_EVENT_BRIEF,
@@ -270,7 +272,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         RESEARCH_TURN_NOT_FOUND_DETAIL,
         TURN_TERMINAL_STATES,
         ResearchTurn,
-        abort_phone_research,
+        abort_account_research,
         abort_research_turn,
         build_classify_prompt,
         build_conversational_prompt,
@@ -349,10 +351,6 @@ AUTH_COOKIE = "cwb_auth"
 # in once per sitting, not once per ask. Pinned in source, never env.
 AUTH_TOKEN_TTL = 12 * 3600
 AUTH_LOGIN_401_DETAIL = "برای ادامه وارد شوید."
-AUTH_NO_PHONE_403_DETAIL = (
-    "حساب شما به شماره‌ای پیوند نخورده است؛ "
-    "از مدیر بخواهید شماره را پیوند بزند."
-)
 AUTH_NOT_ADMIN_403_DETAIL = "ساختن حساب فقط از دست مدیر برمی‌آید."
 # The console's own refusal (T25): the mirror is the Admin's surface —
 # a logged-in operator's cookie reaches the endpoint but not the page,
@@ -523,19 +521,21 @@ def verify_token(token: str):
 
 
 def resolve_identity(handler):
-    """The gate flip (ADR-0013): the Account's attached phone, derived
-    from the cwb_auth cookie — the phone-keyed stores' key, normalized
-    exactly like normalize_phone — or None after answering the request.
+    """The gate flip (ADR-0013), finished (T21, GitLab #23): the
+    Account's EMAIL — the identity every store now keys by — derived
+    from the cwb_auth cookie, or None after answering the request.
 
     Every endpoint that once read the client-supplied phone header goes
     through here; the header no longer authenticates anything. An
     absent, invalid, expired, or tampered token (and a token whose
-    Account no longer exists) answers 401; a
-    valid Account with no attached phone answers 403, because the
-    phone-keyed stores (quotas, research sessions) have no key to
-    address it by — the Admin must attach one. Neither answer ever
-    crashes: the gate's rejections keep the drain-first shape so the
-    response never dies to a reset."""
+    Account no longer exists) answers 401. The old no-attached-phone
+    403 is retired with the phone-keyed stores: an Account without
+    attached legacy history is a working Account — it chats, it spends,
+    it is bounded by its quota and Balance like any other. The attached
+    phone survives as legacy data only: the mapping the Admin's attach
+    flow gives ui/migrate.py to carry pre-T21 rows onto their Accounts.
+    Neither answer ever crashes: the gate's rejections keep the
+    drain-first shape so the response never dies to a reset."""
     claims = verify_token(handler._cookie_token())
     if claims is not None:
         account = account_by_email(claims["email"])
@@ -544,11 +544,7 @@ def resolve_identity(handler):
     if account is None:
         handler._json_error(401, AUTH_LOGIN_401_DETAIL)
         return None
-    phone = normalize_phone(account.get("phone") or "")
-    if not phone:
-        handler._json_error(403, AUTH_NO_PHONE_403_DETAIL)
-        return None
-    return phone
+    return account["email"]
 
 
 def resolve_account(handler):
@@ -901,14 +897,14 @@ class SessionHandler(SimpleHTTPRequestHandler):
         f"{AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
     )
 
-    def _balance_gate(self, phone: str) -> bool:
+    def _balance_gate(self, account: str) -> bool:
         """The prepaid stop (T23, GitLab #25): an Account whose Balance
         (اعتبار) is spent answers 402 with the Farsi fix — the ask and
         the phases each pay for themselves before they run, and a turn
         that cannot be paid for never starts. A turn or phase already
         running finishes; only the NEXT spend is stopped. The daily
         quota still applies on top of the Balance, never instead."""
-        if get_balance(phone) <= 0:
+        if get_balance(account) <= 0:
             self._json_error(
                 402,
                 "اعتبار این حساب تمام شده است؛ از مدیر بخواهید اعتبار را شارژ کند.",
@@ -916,41 +912,39 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return False
         return True
 
-    def _gate_phone(self):
-        """The ask gate (ADR-0013): the Account's attached phone —
-        resolved from the login cookie, never from a client header —
-        with chats left today; records the chat. The identity resolver
-        answers 401/403 itself and returns None when rejected; the
-        quota still bounds per Account through the attached phone,
-        which is exactly the store key the quota DB has always had."""
-        phone = resolve_identity(self)
-        if phone is None:
+    def _gate_account(self):
+        """The ask gate (ADR-0013): the Account behind the login
+        cookie — resolved, never client-supplied — with chats left
+        today; records the chat. The identity resolver answers 401
+        itself and returns None when rejected; the quota bounds per
+        Account through the email the store keys by (T21)."""
+        account = resolve_identity(self)
+        if account is None:
             return None
-        if not self._balance_gate(phone):
+        if not self._balance_gate(account):
             return None
-        if chats_today(phone) >= DAILY_CHAT_LIMIT:
+        if chats_today(account) >= DAILY_CHAT_LIMIT:
             self._json_error(
-                429, "شمار گفتگوهای امروز این شماره پر شده است؛ فردا بیایید."
+                429, "شمار گفتگوهای امروز این حساب پر شده است؛ فردا بیایید."
             )
             return None
-        record_chat(phone)
-        return phone
+        record_chat(account)
+        return account
 
-    def _quoted_phone(self):
-        """The phase-2 gate: an Account whose attached phone has at
-        least one chat today (the quoted answer belongs to a chat that
-        already started)."""
-        phone = resolve_identity(self)
-        if phone is None:
+    def _quoted_account(self):
+        """The phase-2 gate: an Account with at least one chat today
+        (the quoted answer belongs to a chat that already started)."""
+        account = resolve_identity(self)
+        if account is None:
             return None
-        if not self._balance_gate(phone):
+        if not self._balance_gate(account):
             return None
-        if chats_today(phone) < 1:
+        if chats_today(account) < 1:
             self._json_error(
                 429, "پاسخ استنادی بخشی از همان گفتگو است؛ اول یک پرسش بپرسید."
             )
             return None
-        return phone
+        return account
 
     # --- the Account endpoints (ADR-0013) -----------------------------------
     # Login is the one door; /auth/logout and /auth/me serve the sheet's
@@ -1095,17 +1089,23 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # on a Balance, audited, from the browser.
             self._admin_topup()
             return
+        if path == "/admin/attach":
+            # The console's attach form (T21, GitLab #23): the legacy
+            # phone joins its Account, and the stores' pre-account rows
+            # follow the mapping — audited, from the browser.
+            self._admin_attach()
+            return
         if path == "/api/v1/recall":
-            phone = self._gate_phone()
-            if phone is None:
+            account = self._gate_account()
+            if account is None:
                 return
             # A new ask owns the sheet (issue #26): after the gate has
-            # recorded the chat, the phone's in-flight research turns
-            # abort — cooperatively; the worker exits at its next
+            # recorded the chat, the Account's in-flight research
+            # turns abort — cooperatively; the worker exits at its next
             # boundary — and their sessions close, so the new ask's
             # Research Mode starts from a fresh investigation. Another
-            # phone's research is never touched.
-            abort_phone_research(phone)
+            # Account's research is never touched.
+            abort_account_research(account)
             # The ask's own entry (T22, GitLab #24): the gate knows the
             # request's size before the relay streams the answer — an
             # input-side estimate, marked estimated like every
@@ -1113,19 +1113,19 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # thread's usage tap and land metered or estimated by the
             # reply's own honesty.
             record_size_estimate(
-                phone, "ask", int(self.headers.get("Content-Length", "0") or "0")
+                account, "ask", int(self.headers.get("Content-Length", "0") or "0")
             )
             self._proxy("POST")
             return
         if path == "/quoted-answer":
-            phone = self._quoted_phone()
-            if phone is None:
+            account = self._quoted_account()
+            if account is None:
                 return
             # The planner and the writer both ride this thread's composer
             # calls — each upstream call lands its own ledger entry.
             set_meter(
                 lambda prompt, reply: record_composer_call(
-                    phone, "writer", prompt, reply
+                    account, "writer", prompt, reply
                 )
             )
             try:
@@ -1134,12 +1134,12 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 set_meter(None)
             return
         if path == "/quote-selection":
-            phone = self._quoted_phone()
-            if phone is None:
+            account = self._quoted_account()
+            if account is None:
                 return
             set_meter(
                 lambda prompt, reply: record_composer_call(
-                    phone, "picker", prompt, reply
+                    account, "picker", prompt, reply
                 )
             )
             try:
@@ -1148,12 +1148,12 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 set_meter(None)
             return
         if path == "/recall-more":
-            phone = self._quoted_phone()
-            if phone is None:
+            account = self._quoted_account()
+            if account is None:
                 return
             set_meter(
                 lambda prompt, reply: record_composer_call(
-                    phone, "composer", prompt, reply
+                    account, "composer", prompt, reply
                 )
             )
             try:
@@ -1162,24 +1162,24 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 set_meter(None)
             return
         if path == "/evidence-fallback":
-            if self._quoted_phone() is None:
+            if self._quoted_account() is None:
                 return
             self._evidence_fallback()
             return
         if path == "/research/message":
-            phone = self._quoted_phone()
-            if phone is None:
+            account = self._quoted_account()
+            if account is None:
                 return
-            self._research_message(phone)
+            self._research_message(account)
             return
         if path == "/research/decide":
-            phone = self._quoted_phone()
-            if phone is None:
+            account = self._quoted_account()
+            if account is None:
                 return
-            self._research_decide(phone)
+            self._research_decide(account)
             return
         if path == "/next-tier-recall":
-            if self._quoted_phone() is None:
+            if self._quoted_account() is None:
                 return
             self._next_tier_recall()
             return
@@ -1226,7 +1226,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
         without an Evidence block, ONE pinned reference-on search over
         the question (the dive kernel's searcher, the ask's selected
         Books) fetches the pool directly so the Quote selection and
-        phase 2 still run. The gate is the ask's own shape (a phone
+        phase 2 still run. The gate is the ask's own shape (an Account
         with a chat today; the ask already recorded it — this never
         counts another). A malformed body answers 400; a searcher that
         finds nothing answers 200 {"sources": []} — the honest empty
@@ -1294,8 +1294,8 @@ class SessionHandler(SimpleHTTPRequestHandler):
         """Pick the Quote selection (ADR-0006, issue #28): the pool
         exactly as the sheet parsed it, one picker call, the guarded
         selections back. The gate is phase 2's shape — the picker
-        belongs to the chat phase 1 recorded — so it needs a phone with
-        at least one chat today and never records or counts one. A
+        belongs to the chat phase 1 recorded — so it needs an Account
+        with at least one chat today and never records or counts one. A
         malformed body or an empty pool answers 400 (a JSON detail, the
         gate's shape) before any upstream call; a picker failure or a
         below-floor selection answers 200 {"selections": []} — the one
@@ -1332,19 +1332,19 @@ class SessionHandler(SimpleHTTPRequestHandler):
         Farsi events, and elapsed seconds — and, when the turn settled,
         its outcome. `done` carries the reply payload ({"reply",
         "suggestions", "state"}), `failed` a short Farsi detail, and an
-        unknown id (a restart emptied the registry, or a foreign phone)
+        unknown id (a restart emptied the registry, or a foreign Account)
         answers 404 — the recorded failure surface, never a hang. The
-        phone must match the turn's: one Account's poll never reads
+        account must match the turn's: one Account's poll never reads
         another's research. The identity comes from the login cookie
         (ADR-0013): no valid Account, no poll — 401."""
-        phone = resolve_identity(self)
-        if phone is None:
+        account = resolve_identity(self)
+        if account is None:
             return
         query = parse_qs(urlparse(self.path).query)
         turn_id = (query.get("turn") or [""])[0]
         payload = None
         turn = find_turn(turn_id)
-        if turn is not None and turn.phone == phone:
+        if turn is not None and turn.account == account:
             payload = turn_status_payload(turn)
         if payload is None:
             self._json_error(404, RESEARCH_TURN_NOT_FOUND_DETAIL)
@@ -1354,20 +1354,20 @@ class SessionHandler(SimpleHTTPRequestHandler):
     def _research_state(self) -> None:
         """The state panel's read: one session's summary projection —
         the research question and its version count, scope, evidence and
-        claim counts, gaps, pending proposals — phone matched, straight
+        claim counts, gaps, pending proposals — account matched, straight
         from the SQLite store, never from the in-memory registry. The
         chip set rides beside the summary under ``suggestions`` so a
         refresh re-renders the skip with the map (T10, GitLab #11).
         The identity comes from the login cookie (ADR-0013)."""
-        phone = resolve_identity(self)
-        if phone is None:
+        account = resolve_identity(self)
+        if account is None:
             return
         query = parse_qs(urlparse(self.path).query)
         session_id = (query.get("session") or [""])[0]
         if not session_id:
             self._json_error(404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
             return
-        payload, error = research_session_state(phone, session_id)
+        payload, error = research_session_state(account, session_id)
         if payload is None:
             self._json_error(error[0], error[1])
             return
@@ -1375,16 +1375,16 @@ class SessionHandler(SimpleHTTPRequestHandler):
 
     def _research_messages(self) -> None:
         """The transcript read (ADR-0011): one session's messages in
-        order, phone matched — a browser refresh re-fetches what was
+        order, account matched — a browser refresh re-fetches what was
         said instead of an empty chat. No LLM, no research side
         effects. The identity comes from the login cookie (ADR-0013):
         no valid Account, no transcript — 401."""
-        phone = resolve_identity(self)
-        if phone is None:
+        account = resolve_identity(self)
+        if account is None:
             return
         query = parse_qs(urlparse(self.path).query)
         session_id = (query.get("session") or [""])[0]
-        payload, error = research_session_messages(phone, session_id)
+        payload, error = research_session_messages(account, session_id)
         if payload is None:
             self._send_json(error[0], {"detail": error[1]})
             return
@@ -1396,14 +1396,14 @@ class SessionHandler(SimpleHTTPRequestHandler):
         newest `ask` entry inclusive — plus the server-local day's
         spend. The tariff is config's business; this endpoint only
         reports what the ledger already recorded."""
-        phone = resolve_identity(self)
-        if phone is None:
+        account = resolve_identity(self)
+        if account is None:
             return
         self._send_json(
             200,
             {
-                "session_toman": session_total(phone),
-                "today_toman": today_total(phone),
+                "session_toman": session_total(account),
+                "today_toman": today_total(account),
             },
         )
 
@@ -1418,16 +1418,16 @@ class SessionHandler(SimpleHTTPRequestHandler):
 
         The gate is /auth/accounts' shape exactly (resolve_account plus
         the role check), and deliberately NOT resolve_identity: the
-        Admin's own Account carries no attached phone — it issues
-        Accounts, it does not chat — so resolve_identity's
-        attach-a-phone 403 would lock the Admin out of its own console
-        before the role ever ran. Anonymous still gets the standard
-        401; a logged-in operator gets the console's own 403.
+        console is nobody's account view — it mirrors the whole system —
+        so the identity an endpoint like /profile/data derives from the
+        cookie is beside the point here. Anonymous still gets the
+        standard 401; a logged-in operator gets the console's own 403.
 
         Every read here stays a read: the registry snapshot copies the
         live turns and the recent-settled ring under
         RESEARCH_REGISTRY_LOCK and never writes back, the ledger and
-        the quota store answer their per-phone sums, and the audit read
+        the quota store answer their per-Account sums (keyed by the
+        Account's email, T21), and the audit read
         is a plain SELECT against the append-only table. The page's own
         writes ride the two forms below (T26, GitLab #28) — audited,
         admin-only, never silent."""
@@ -1444,22 +1444,19 @@ class SessionHandler(SimpleHTTPRequestHandler):
         )
         accounts_rows = []
         for row in list_accounts():
-            phone = normalize_phone(row.get("phone") or "")
             accounts_rows.append(
                 {
                     "email": row["email"],
                     "role": row["role"],
-                    "phone": phone,
+                    # The attached phone is display data now (T21): the
+                    # legacy handle the Admin attached history by, never
+                    # a key — the spend and quota reads below key by the
+                    # Account's own email.
+                    "phone": normalize_phone(row.get("phone") or ""),
                     "balance_toman": row["balance_toman"],
-                    # The ledger and the quota key by the attached
-                    # phone; an Account with none attached (the Admin
-                    # itself) reads as zero spend and zero chats —
-                    # honest, not hidden.
-                    "yesterday_spend_toman": day_total(phone, yesterday)
-                    if phone
-                    else 0,
-                    "today_spend_toman": today_total(phone) if phone else 0,
-                    "chats_today": chats_today(phone) if phone else 0,
+                    "yesterday_spend_toman": day_total(row["email"], yesterday),
+                    "today_spend_toman": today_total(row["email"]),
+                    "chats_today": chats_today(row["email"]),
                 }
             )
         now_mono = time.monotonic()
@@ -1467,7 +1464,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             live_turns = [
                 {
                     "id": turn.id,
-                    "phone": turn.phone,
+                    "account": turn.account,
                     "state": turn.state,
                     "elapsed": round(now_mono - turn.started_at, 1),
                 }
@@ -1479,7 +1476,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             settled_turns = [
                 {
                     "id": turn.id,
-                    "phone": turn.phone,
+                    "account": turn.account,
                     "state": turn.state,
                     "error": turn.error,
                 }
@@ -1524,9 +1521,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
         """The write forms' gate — the console's own (resolve_account
         plus the role check). Returns the acting Admin's account dict,
         or None after the refusal was sent (401 anonymous, 403
-        operator): the Admin's Account carries no attached phone, so
-        resolve_identity's attach-a-phone 403 would lock the Admin out
-        of its own writes before the role ever ran."""
+        operator): the console is nobody's account view, so identity
+        resolution is beside the point here — the role is the whole
+        gate."""
         account = resolve_account(self)
         if account is None:
             self._json_error(401, AUTH_LOGIN_401_DETAIL)
@@ -1610,6 +1607,34 @@ class SessionHandler(SimpleHTTPRequestHandler):
         )
         self._send_redirect("/admin")
 
+    def _admin_attach(self) -> None:
+        """The console's attach form (T21, GitLab #23): the Admin
+        attaches each legacy phone to the Account created for it — the
+        mapping ui/migrate.py rekeys the pre-account stores by — and
+        the rekey runs immediately, so the demo is attach, redirect,
+        and the old rows read under their Account. Audited
+        (phone_attached), admin-only, refused with the whitelisted
+        codes and logged with nothing."""
+        actor = self._admin_gate()
+        if actor is None:
+            return
+        form = self._read_form()
+        email = (form.get("email") or "").strip()
+        phone = normalize_phone(form.get("phone") or "")
+        if not email or not phone:
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_BAD_BODY}")
+            return
+        if not attach_phone(email, phone):
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_UNKNOWN_ACCOUNT}")
+            return
+        report = migrate.rekey_stores()
+        audit_quiet(
+            audit.PHONE_ATTACHED,
+            actor_email=actor["email"],
+            detail={"email": email, "phone": phone, "rekeyed": report},
+        )
+        self._send_redirect("/admin")
+
     def _profile_data(self) -> None:
         """The profile read (T24, GitLab #27): the Account's own Balance
         (اعتبار) straight from the store, the server-local day's spend,
@@ -1621,10 +1646,10 @@ class SessionHandler(SimpleHTTPRequestHandler):
         rides the data (the DRAFT constants above): the sheet renders
         the meter's own verdict, it never judges metered against
         estimated itself, so an estimate can never look measured."""
-        phone = resolve_identity(self)
-        if phone is None:
+        account = resolve_identity(self)
+        if account is None:
             return
-        sessions = session_history(phone)
+        sessions = session_history(account)
         for session in sessions:
             for entry in session["entries"]:
                 entry["badge"] = (
@@ -1635,8 +1660,8 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self._send_json(
             200,
             {
-                "balance_toman": get_balance(phone),
-                "today_toman": today_total(phone),
+                "balance_toman": get_balance(account),
+                "today_toman": today_total(account),
                 "sessions": sessions,
             },
         )
@@ -1657,13 +1682,13 @@ class SessionHandler(SimpleHTTPRequestHandler):
         file, not a page — while the default html stays inline for the
         sheet's chip and the print-to-PDF path. Anything but "md" reads
         as the default html."""
-        phone = resolve_identity(self)
-        if phone is None:
+        account = resolve_identity(self)
+        if account is None:
             return
         query = parse_qs(urlparse(self.path).query)
         session_id = (query.get("session") or [""])[0]
         fmt = (query.get("format") or ["html"])[0]
-        document, error = research_session_report(phone, session_id, fmt=fmt)
+        document, error = research_session_report(account, session_id, fmt=fmt)
         if document is None:
             self._send_json(error[0], {"detail": error[1]})
             return
@@ -1687,18 +1712,18 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _research_message(self, phone: str) -> None:
+    def _research_message(self, account: str) -> None:
         """The Research Mode message start (ADR-0008): the gate is the
         phase-2 shape exactly — the research conversation belongs to the
-        chat phase 1 recorded, so it needs a phone with at least one
-        chat today and never counts or checks the limit. The creating
+        chat phase 1 recorded, so it needs an Account with at least
+        one chat today and never counts or checks the limit. The creating
         call carries the ask's question and its phase-1 Evidence pool
         (the session's founding goal and evidence); later calls carry
         only the text. The turn runs on its own registry job and this
         handler answers the turn identity immediately: 202 {"turn_id",
         "session_id"} — the sheet polls /research/turn for state,
-        events, and the reply. Nothing is ever queued: a busy phone (or
-        a full registry) is rejected, not deferred."""
+        events, and the reply. Nothing is ever queued: a busy Account
+        (or a full registry) is rejected, not deferred."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -1723,18 +1748,18 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self._send_json(400, {"detail": "پیام پژوهش را بفرستید."})
             return
         session, error = ensure_session(
-            phone, session_id, text.strip(), question, sources, datasets
+            account, session_id, text.strip(), question, sources, datasets
         )
         if session is None:
             self._send_json(error[0], {"detail": error[1]})
             return
-        turn, busy_detail = start_research_turn(phone, session, text.strip())
+        turn, busy_detail = start_research_turn(account, session, text.strip())
         if turn is None:
             self._send_json(429, {"detail": busy_detail})
             return
         self._send_json(202, {"turn_id": turn.id, "session_id": session["id"]})
 
-    def _research_decide(self, phone: str) -> None:
+    def _research_decide(self, account: str) -> None:
         """The checkpoint resolution: one pending proposal applied or
         dropped — the only path a research question or scope change
         lands through. Synchronous (no LLM, no registry job): the
@@ -1761,7 +1786,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self._send_json(400, {"detail": "تصمیم پیشنهاد را بفرستید."})
             return
         result, error = decide_proposal(
-            phone,
+            account,
             session_id.strip(),
             proposal_id.strip(),
             accept,
@@ -1956,6 +1981,11 @@ def main() -> None:
     # command is retired — the deployment itself plants the PM's
     # Account, once, loudly.
     ensure_first_admin_from_env()
+    # The store migration (T21, GitLab #23): every attached phone's
+    # legacy rows rekey to their Account before the first request —
+    # ADR-0013's contract step, run loudly.
+    report = migrate.rekey_stores()
+    sys.stderr.write(f"store migration: {report}\n")
     server = ThreadingHTTPServer((HOST, PORT), SessionHandler)
     print(f"Session sheet http://{HOST}:{PORT}", flush=True)
     print(f"Proxying /api/v1/recall and /health to {COGNEE_URL}", flush=True)

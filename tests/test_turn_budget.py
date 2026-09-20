@@ -32,6 +32,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import pytest  # noqa: E402
 
 from tests.helpers import (  # noqa: E402
+    account_email_for_phone,
     get,
     post,
     stop_gate,
@@ -263,7 +264,7 @@ def test_the_sheet_poll_surfaces_the_budget(tmp_path):
     )
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(account_email_for_phone(PHONE))
         status, body = post(
             base,
             "/research/message",

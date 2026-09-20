@@ -17,12 +17,23 @@ import os
 import threading
 
 from tests.conftest import REPO_ROOT
-from tests.helpers import get, post, stop_gate, wait_turn_done, with_gate
+from tests.helpers import (
+    account_email_for_phone,
+    get,
+    post,
+    stop_gate,
+    wait_turn_done,
+    with_gate,
+)
 
 from ui import dive, research, research_store, serve  # noqa: E402
 
 PHONE = "09120000000"
 OTHER_PHONE = "09120000077"
+# The quota and the research store key by the ACCOUNT's email (T21);
+# the phones are only the login handles the seeded Accounts are found by.
+ACCOUNT = account_email_for_phone(PHONE)
+OTHER_ACCOUNT = account_email_for_phone(OTHER_PHONE)
 
 BS = "\b"
 SENTENCE = "سخن در این است؛"
@@ -181,7 +192,7 @@ def with_research_upstream(upstream, tmp_path):
 def run_turn_sync(session, message, upstream, tmp_path):
     """Run one turn's worker synchronously over a registry turn — the
     orchestration seam without the HTTP layer or the thread."""
-    turn = research.ResearchTurn(session["phone"], session["id"], message)
+    turn = research.ResearchTurn(session["account"], session["id"], message)
     research.RESEARCH_REGISTRY[turn.id] = turn
     with_research_upstream(upstream, tmp_path)(
         lambda: research.run_research_turn(turn, session)
@@ -469,7 +480,7 @@ def test_dive_retrieve_checks_cancel_between_rounds():
 def test_the_store_round_trips_a_session_and_its_transcript(tmp_path):
     research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
     session, _ = research.ensure_session(
-        PHONE, None, "پیام", "پرسش؟", []
+        ACCOUNT, None, "پیام", "پرسش؟", []
     )
     # The message is not persisted by ensure_session (T11): preparing a
     # session admits nothing — the accepted turn appends the message to
@@ -482,7 +493,7 @@ def test_the_store_round_trips_a_session_and_its_transcript(tmp_path):
     research_store.save_session(session["id"], state)
     research_store.append_message(session["id"], "assistant", [{"type": "note", "text": "پاسخ"}])
     loaded = research_store.load_session(session["id"])
-    assert loaded["phone"] == PHONE
+    assert loaded["account"] == ACCOUNT
     assert loaded["state"]["evidence"][0]["passage"] == SENTENCE
     assert loaded["messages"] == [
         {"role": "user", "payload": "پیام"},
@@ -1327,7 +1338,7 @@ def test_the_recall_proxy_validates_the_body_and_names_no_foreign_dataset(tmp_pa
     upstream = ResearchUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         status, _ = post(
             base,
             "/api/v1/recall",
@@ -1376,7 +1387,7 @@ def test_a_research_session_searches_the_selected_books_only(tmp_path):
     )
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         _, body = post(
             base,
             "/research/message",
@@ -1551,7 +1562,7 @@ def test_the_messages_endpoint_gates_the_phone_and_returns_the_transcript(tmp_pa
     )
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         _, body = post(
             base,
             "/research/message",
@@ -1612,7 +1623,7 @@ def test_research_message_rejects_bad_bodies(tmp_path):
     upstream = ResearchUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         empty, _ = post(base, "/research/message", {"text": "   "}, phone=PHONE)
         no_question, _ = post(
             base, "/research/message", {"text": "پیام"}, phone=PHONE
@@ -1630,7 +1641,7 @@ def test_a_message_answers_the_turn_identity_and_never_counts_a_chat(tmp_path):
     )
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         status, body = post(
             base,
             "/research/message",
@@ -1661,7 +1672,7 @@ def test_a_message_answers_the_turn_identity_and_never_counts_a_chat(tmp_path):
     assert payload["research_state"]["evidence_count"] == 3
     # Research belongs to a chat that already started: it neither counts
     # nor checks the five-per-day limit.
-    assert serve.chats_today(PHONE) == 1
+    assert serve.chats_today(ACCOUNT) == 1
 
 
 def test_research_runs_even_at_the_daily_limit(tmp_path):
@@ -1671,7 +1682,7 @@ def test_research_runs_even_at_the_daily_limit(tmp_path):
     base, server, original = with_gate(tmp_path, upstream)
     try:
         for _ in range(serve.DAILY_CHAT_LIMIT):
-            serve.record_chat(PHONE)
+            serve.record_chat(ACCOUNT)
         status, body = post(
             base,
             "/research/message",
@@ -1702,7 +1713,7 @@ def test_a_session_survives_the_server_and_continues(tmp_path):
     )
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         _, first = post(
             base,
             "/research/message",
@@ -1737,7 +1748,7 @@ def test_the_turn_poll_gates_the_phone(tmp_path):
     )
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         _, body = post(
             base,
             "/research/message",
@@ -1773,7 +1784,7 @@ def test_a_second_message_while_one_runs_is_rejected_farsi_busy(tmp_path):
     )
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         _, body = post(
             base,
             "/research/message",
@@ -1793,7 +1804,7 @@ def test_a_second_message_while_one_runs_is_rejected_farsi_busy(tmp_path):
         gate.set()
         stop_gate(server, original)
     assert busy_status == 429
-    assert busy["detail"] == research.RESEARCH_BUSY_PHONE_DETAIL
+    assert busy["detail"] == research.RESEARCH_BUSY_ACCOUNT_DETAIL
 
 
 def test_a_new_ask_aborts_the_turn_and_closes_the_session(tmp_path):
@@ -1804,7 +1815,7 @@ def test_a_new_ask_aborts_the_turn_and_closes_the_session(tmp_path):
     )
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         _, body = post(
             base,
             "/research/message",
@@ -1851,8 +1862,8 @@ def test_a_new_ask_by_another_phone_never_aborts_someone_elses_turn(tmp_path):
     )
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
-        serve.record_chat(OTHER_PHONE)
+        serve.record_chat(ACCOUNT)
+        serve.record_chat(OTHER_ACCOUNT)
         _, body = post(
             base,
             "/research/message",
@@ -1887,7 +1898,7 @@ def test_the_decide_endpoint_resolves_a_checkpoint(tmp_path):
     )
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         _, body = post(
             base,
             "/research/message",
@@ -1922,7 +1933,7 @@ def test_the_state_endpoint_gates_the_phone_and_session(tmp_path):
     upstream = ResearchUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         foreign, _ = get(base, "/research/state?session=no-such", phone=PHONE)
         empty, _ = get(base, "/research/state", phone=PHONE)
     finally:
@@ -1943,7 +1954,7 @@ def test_the_state_read_returns_the_chips_so_a_refresh_keeps_the_skip(tmp_path):
     )
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         _, body = post(
             base,
             "/research/message",
@@ -1969,7 +1980,7 @@ def test_a_foreign_session_id_is_rejected(tmp_path):
     upstream = ResearchUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(ACCOUNT)
         status, payload = post(
             base,
             "/research/message",

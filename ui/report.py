@@ -322,8 +322,8 @@ def report_markdown(state: dict) -> str | None:
     return "\n".join(lines).strip() + "\n"
 
 
-def research_session_report(phone: str, session_id: str, fmt: str = "html"):
-    """The report read (T18, GitLab #19): phone-matched like every other
+def research_session_report(account: str, session_id: str, fmt: str = "html"):
+    """The report read (T18, GitLab #19): account-matched like every other
     session read — and, unlike the state panel, a CLOSED session still
     answers, because a finished Session's report is the deliverable.
     (document, None) or (None, (status, Farsi detail)). `fmt` picks the
@@ -333,7 +333,7 @@ def research_session_report(phone: str, session_id: str, fmt: str = "html"):
     anything but "md" reads as the default html, the caller never
     needs a third branch."""
     session = research_store.load_session(session_id)
-    if session is None or session["phone"] != phone:
+    if session is None or session["account"] != account:
         return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
     state = session["state"]
     ensure_state_shape(state)

@@ -35,7 +35,7 @@ cannot feed becomes an honest gap entry, never a hallucinated fill. The
 guided questions and narrations are process speech — they never state
 Book content, so there is nothing for the guard to check and nothing to
 hallucinate. A turn is a job in an in-process registry (the dive's
-shape: 202 + poll, one in-flight turn per phone, three globally,
+shape: 202 + poll, one in-flight turn per Account, three globally,
 cooperative abort on a new ask); the SESSION itself persists in
 ui.research_store's SQLite, so a restart loses only the in-flight turn,
 never the investigation.
@@ -549,7 +549,7 @@ RESEARCH_EVENT_ABORTED = "پاسخ پژوهش لغو شد."
 
 # The registry's Farsi failure details — the poll surface names why a
 # turn did not land, never a bare 500.
-RESEARCH_BUSY_PHONE_DETAIL = (
+RESEARCH_BUSY_ACCOUNT_DETAIL = (
     "یک پیام پژوهش برای این شماره هم‌اکنون در جریان است؛ لطفاً صبور باشید."
 )
 RESEARCH_BUSY_GLOBAL_DETAIL = (
@@ -2369,7 +2369,7 @@ RESEARCH_REGISTRY_LOCK = threading.Lock()
 def find_turn(turn_id: str):
     """One turn by id — the registry's live table first, then the
     recent-settled ring; None past both (an unknown id, a foreign
-    phone's, or one settled beyond the ring: the store is the record)."""
+    Account's, or one settled beyond the ring: the store is the record)."""
     with RESEARCH_REGISTRY_LOCK:
         turn = RESEARCH_REGISTRY.get(turn_id)
         if turn is None:
@@ -2385,9 +2385,9 @@ class ResearchTurn:
     (state + Farsi events), the outcome, and the cooperative cancel
     flag. `done` is set when the worker thread has fully exited."""
 
-    def __init__(self, phone: str, session_id: str, message: str):
+    def __init__(self, account: str, session_id: str, message: str):
         self.id = uuid.uuid4().hex
-        self.phone = phone
+        self.account = account
         self.session_id = session_id
         self.message = message
         self.state = "classifying"
@@ -2435,7 +2435,7 @@ def abort_research_turn(turn: ResearchTurn) -> bool:
 
 
 def ensure_session(
-    phone: str, session_id, text: str, question, sources, datasets=None
+    account: str, session_id, text: str, question, sources, datasets=None
 ):
     """Load or create the session a message belongs to — WITHOUT
     persisting the message (T11): the user's words join the persisted
@@ -2451,7 +2451,7 @@ def ensure_session(
     browser's raw)."""
     if session_id:
         session = research_store.load_session(session_id)
-        if session is None or session["phone"] != phone:
+        if session is None or session["account"] != account:
             return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
         if session["state"].get("closed"):
             return None, (409, RESEARCH_SESSION_CLOSED_DETAIL)
@@ -2466,11 +2466,11 @@ def ensure_session(
     if sources:
         seed_evidence(state, sources, goal)
     session_id = uuid.uuid4().hex
-    research_store.create_session(session_id, phone, state)
+    research_store.create_session(session_id, account, state)
     return (
         {
             "id": session_id,
-            "phone": phone,
+            "account": account,
             "state": state,
             "messages": [{"role": "user", "payload": text}],
         },
@@ -2478,14 +2478,14 @@ def ensure_session(
     )
 
 
-def research_session_state(phone: str, session_id: str):
+def research_session_state(account: str, session_id: str):
     """The state panel's read: the summary projection under
     ``research_state`` plus the chip set under ``suggestions`` — a
     browser refresh re-renders both, so a live guided question's
     options and its skip survive the reload (T10, GitLab #11);
     (payload, None) or (None, (status, Farsi detail))."""
     session = research_store.load_session(session_id)
-    if session is None or session["phone"] != phone:
+    if session is None or session["account"] != account:
         return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
     if session["state"].get("closed"):
         return None, (409, RESEARCH_SESSION_CLOSED_DETAIL)
@@ -2496,14 +2496,14 @@ def research_session_state(phone: str, session_id: str):
     }, None
 
 
-def research_session_messages(phone: str, session_id: str):
+def research_session_messages(account: str, session_id: str):
     """The transcript read (ADR-0011): one session's messages in order,
-    phone matched — a browser refresh re-fetches what was said instead
+    account matched — a browser refresh re-fetches what was said instead
     of showing an empty chat; ({messages}, None) or (None, (status,
     Farsi detail)). The payload rides as-is: strings for user turns,
     block lists for assistant replies."""
     session = research_store.load_session(session_id)
-    if session is None or session["phone"] != phone:
+    if session is None or session["account"] != account:
         return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
     return {"messages": session["messages"]}, None
 
@@ -2576,7 +2576,7 @@ def _apply_decision(state: dict, proposal: dict, accept: bool, choice=None) -> s
 
 
 def decide_proposal(
-    phone: str,
+    account: str,
     session_id: str,
     proposal_id: str,
     accept: bool,
@@ -2597,7 +2597,7 @@ def decide_proposal(
     operator's choice is never clobbered by the turn's save."""
     with research_store.session_save_lock(session_id):
         session = research_store.load_session(session_id)
-        if session is None or session["phone"] != phone:
+        if session is None or session["account"] != account:
             return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
         state = ensure_state_shape(session["state"])
         if state.get("closed"):
@@ -2730,8 +2730,8 @@ def _fold_decision_records(session_id: str, state: dict, records: list) -> dict:
 research_store.on_stale_save = _fold_decision_records
 
 
-def abort_phone_research(phone: str) -> None:
-    """A new ask owns the sheet: the phone's in-flight research turns
+def abort_account_research(account: str) -> None:
+    """A new ask owns the sheet: the Account's in-flight research turns
     abort cooperatively and their sessions close — a later message to a
     closed session answers the closed detail, never resurrects the old
     investigation beside the new ask."""
@@ -2739,7 +2739,7 @@ def abort_phone_research(phone: str) -> None:
         own = [
             turn
             for turn in RESEARCH_REGISTRY.values()
-            if turn.phone == phone and turn.state not in TURN_TERMINAL_STATES
+            if turn.account == account and turn.state not in TURN_TERMINAL_STATES
         ]
     for turn in own:
         if not abort_research_turn(turn):
@@ -2750,15 +2750,15 @@ def abort_phone_research(phone: str) -> None:
             research_store.save_session(turn.session_id, session["state"])
 
 
-def start_research_turn(phone: str, session: dict, message: str):
+def start_research_turn(account: str, session: dict, message: str):
     """Create the registry turn under the caps — at most one
-    non-terminal turn per phone and RESEARCH_MAX_CONCURRENT globally —
+    non-terminal turn per Account and RESEARCH_MAX_CONCURRENT globally —
     or return the Farsi busy detail. The check and the creation are
     atomic under the lock; a rejected start is never queued — and never
     ADMITTED (T11): the user's message joins the persisted transcript
     only after the session accepts the turn, so a busy 429 leaves no
     orphaned, unanswered bubble. A failed admission releases the turn it
-    already took, so the phone is never blocked by a turn that never
+    already took, so the Account is never blocked by a turn that never
     began."""
     with RESEARCH_REGISTRY_LOCK:
         non_terminal = [
@@ -2766,11 +2766,11 @@ def start_research_turn(phone: str, session: dict, message: str):
             for turn in RESEARCH_REGISTRY.values()
             if turn.state not in TURN_TERMINAL_STATES
         ]
-        if any(turn.phone == phone for turn in non_terminal):
-            return None, RESEARCH_BUSY_PHONE_DETAIL
+        if any(turn.account == account for turn in non_terminal):
+            return None, RESEARCH_BUSY_ACCOUNT_DETAIL
         if len(non_terminal) >= RESEARCH_MAX_CONCURRENT:
             return None, RESEARCH_BUSY_GLOBAL_DETAIL
-        turn = ResearchTurn(phone, session["id"], message)
+        turn = ResearchTurn(account, session["id"], message)
         RESEARCH_REGISTRY[turn.id] = turn
     try:
         research_store.append_message(session["id"], "user", message)
@@ -4541,7 +4541,7 @@ def run_research_turn(
     # so the tap never outlives the turn.
     set_meter(
         lambda prompt, reply: record_composer_call(
-            turn.phone, "turn", prompt, reply
+            turn.account, "turn", prompt, reply
         )
     )
     try:
