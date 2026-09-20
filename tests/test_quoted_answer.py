@@ -673,24 +673,28 @@ def test_session_ui_sentences_are_focusable_with_farsi_tooltip():
 def test_session_ui_quotes_carry_a_resting_highlight():
     # PM call, 2026-09-10: an embedded quote must read as Book text at a
     # glance — a clay tint plus solid underline at rest, deepening on
-    # hover/focus — not only the hover tooltip.
+    # hover/focus — not only the hover tooltip. The tint reads the
+    # --clay-soft token (ADR-0014) so it survives both themes.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
-    assert "background: rgba(196, 92, 38, 0.12)" in html
+    assert "background: var(--clay-soft)" in html
     assert "border-bottom: 1px solid var(--clay)" in html
 
 
 def test_session_ui_keeps_citations_in_the_first_phase_section():
-    # One section per phase now (PM brief, 2026-09-11): the Evidence list
-    # stays in phase 1's own tab — the swap no longer needs to hide it,
-    # because the sections themselves separate the phases. A new question
-    # resets the section as before.
+    # One place per phase in the ask's article (ADR-0014's thread shape,
+    # superseding the tabbed brief): the Evidence list stays in phase 1's
+    # own section — the swap no longer needs to hide it, because the
+    # article's sections separate the phases. A new question resets the
+    # section as before.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
-    assert 'id="citations-heading"' in html
-    assert 'id="citations"' in html
-    assert 'id="panel-1"' in html
-    assert 'id="panel-2"' in html
-    # The Evidence markup lives inside phase 1's panel, before phase 2's.
-    assert html.index('id="citations"') < html.index('id="panel-2"')
+    assert 'className = "citations-heading"' in html
+    assert 'className = "citations"' in html
+    assert 'className = "evidence-pool"' in html
+    assert 'className = "quoted-doc"' in html
+    # The Evidence markup builds before the Quoted answer's section.
+    assert html.index('className = "citations"') < html.index(
+        'className = "quoted-doc"'
+    )
     assert "citationsEl.hidden" not in html
 
 
@@ -719,12 +723,11 @@ def test_session_ui_shows_the_composer_phase_and_times_the_whole_pipeline():
     assert "clearInterval(tick)" in html
     # Phase 2 settles and the pipeline clock stops — no phase-3 auto-start.
     assert "renderQuotedAnswer(query, answer, citations, stopTimer)" in html
-    # Per-phase machinery: the running-phase line, and the timer chips on
-    # the phase 2 and 3 tabs.
-    assert 'id="phase-now"' in html
+    # Per-phase machinery: the running-phase line, and the timer on the
+    # phase marks (the tabs' replacement, ADR-0014).
+    assert 'className = "phase-now"' in html
     assert "در حال تولید:" in html
-    assert 'id="timer-2"' in html
-    assert 'id="timer-3"' in html
+    assert 'className = "phase-timer"' in html
     assert "startPhaseTimer(2)" in html
     assert "startPhaseTimer(3)" in html
     assert "stopPhaseTimer(2)" in html
@@ -768,24 +771,26 @@ def test_session_ui_keeps_the_llm_key_off_the_sheet():
 
 
 def test_the_sheet_carries_the_round_two_contract():
-    # ADR-0010: the widen chip, the Book-selection toggles, and the
-    # citation-landing machinery all live on the sheet.
+    # ADR-0010: the widen chip, the citation-landing machinery, and the
+    # Book scoping all live on the sheet. The round-two toggles are
+    # retired by the chat shell (ADR-0014) — the Book scoping rides the
+    # Session's pick into the ask's payloads instead.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
     assert "/recall-more" in html
     assert "جست‌وجوی بیشتر" in html
-    assert "book-toggle" in html
+    assert "book-card" in html
     assert "selectedDatasets" in html
     assert "locatorPassages" in html
 
 
 def test_the_sheet_carries_the_round_three_contract():
-    # ADR-0011: the single-pick Book gate (radio, persisted, ask
-    # disabled until picked), the phase-1 evidence fallback, and the
+    # ADR-0011: the single-pick Book gate (persisted, the ask bound to
+    # one Book — now picked from the empty state's cards at Session
+    # creation, ADR-0014), the phase-1 evidence fallback, and the
     # transcript re-fetch.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
-    assert 'role="radiogroup"' in html
     assert 'localStorage.setItem("selectedBook"' in html
-    assert "اول یک کتاب انتخاب کنید" in html
+    assert "برای نشست تازه، یک کتاب برگزینید" in html
     assert "/evidence-fallback" in html
     assert "استنادی از کتاب‌ها پیدا نشد" in html
     assert "/research/messages" in html
@@ -845,9 +850,10 @@ def test_readme_records_the_quoted_answer_contract():
     # retires the phrase (full-spec review, 2026-09-12).
     assert "streamed answer plus its Evidence list" not in text
     assert "the Quote selection — ten verbatim sentences" in text
-    # The tabbed sheet never swaps: the guarded document lands in phase
-    # 2's own tab or not at all — phase 1's answer stays.
+    # The threaded sheet never swaps (ADR-0014): the guarded document
+    # lands in phase 2's own section or not at all — phase 1's answer
+    # stays.
     assert "the sheet can swap it" not in text
     assert "the streamed answer stays put" not in text
     assert "the streamed answer and the Evidence citations stay" not in text
-    assert "lands in phase 2's tab" in text
+    assert "lands in phase 2's section" in text

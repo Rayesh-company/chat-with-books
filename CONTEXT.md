@@ -17,7 +17,7 @@ The person who sits with the product to complete a Session. For the Phase 2 exit
 _Avoid_: User
 
 **Session**:
-One sitting of Farsi Q&A against the Book set that can meet the Phase 2 exit checks: answers with Citations, a Research Mode conversation, and a first answer that does not feel too slow.
+One sitting of Farsi Q&A against the Book set that can meet the Phase 2 exit checks: answers with Citations, a Research Mode conversation, and a first answer that does not feel too slow. A Session endures under its Account — it is listed and resumable; a new ask opens a new Session instead of erasing the running one.
 _Avoid_: Chat, demo (showing the product at an expo is not automatically a Session)
 
 **Research Mode**:
@@ -73,7 +73,7 @@ The one open question the journey is working now — the oldest pending named qu
 _Avoid_: queue head, current task, focus
 
 **Book pick**:
-The one Book chosen at platform entry for the whole investigation — ask, phases, widen, and Research session all search it. Persisted across refreshes; the ask stays disabled until a pick exists.
+The one Book chosen when a Session is created — ask, phases, widen, and the Research journey all search it. Shown as the Session's Book chip; the ask stays disabled until a pick exists. (Supersedes the per-ask Book selection toggles.)
 _Avoid_: book selection toggles, filter, dataset choice
 
 **Evidence fallback**:
@@ -119,10 +119,6 @@ _Avoid_: citation paragraph (the superseded paragraph-only design), chat, first 
 **Widen**:
 The «جست‌وجوی بیشتر» operation of an ask (ADR-0010): one broaden call picks at most two adjacent facet queries, the pinned searchers run them once, and only the pool's new passages ride back; the sheet merges and re-answers. Part of the same chat; never counts one.
 _Avoid_: search more results, refresh, re-search
-
-**Book selection**:
-The ask's choice of which Books to search (the two toggles above the question; at least one). Validated server-side against the Book set and carried into the ask's Research session. Missing or empty means the whole Book set.
-_Avoid_: corpus picker, source filter, dataset (Cognee's word is not the domain name)
 
 **Quoted paragraph**:
 A paragraph of a Quoted answer: Filler text with verbatim Book sentences embedded inside it, each sentence highlighted and hoverable for its own Citation (the passage's first page), the paragraph ending with the page range of every passage it quoted. May weave several passages.
@@ -195,3 +191,5 @@ The approved plain-Persian naming table (ADR-0012): the single source every Rese
 **Question statuses**: در انتظار، جست‌وجو شد، شکاف. **Claim statuses**: پشتوانهٔ مستقیم، ترکیب شواهد، شواهد ناکافی.
 
 **Platform names (DRAFT — pending PM approval, 2026-09-19, spec2.md)**: Account «حساب» · Login «ورود» · Balance «اعتبار» · Tariff «تعرفه» · Admin «مدیر» · Admin console «میز مدیریت» · Session report «گزارش نشست» · the report chip «دریافت گزارش نشست». One deliberate exception (T19): the report chip already rides the sheet, draft-marked, its text pinned to one server constant (`ui/research.py`'s `RESEARCH_REPORT_CHIP`) so the PM's approval renames it in one line. None of the other rows render until the PM approves them; then the approved rows join the tables above.
+
+**Platform names (DRAFT — pending PM approval, 2026-09-20, chat-shell redesign)**: Session list «فهرست نشست‌ها» · New Session «نشست تازه». The shell's navigation over an Account's Sessions and its new-Session action; neither renders until the PM approves, and both stay pinned to single constants like the report chip.

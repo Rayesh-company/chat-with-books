@@ -10,6 +10,23 @@
       href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
+    <script>
+      // The theme before first paint: no flash of the wrong paper.
+      (function () {
+        var theme = null;
+        try {
+          theme = localStorage.getItem("theme");
+        } catch (e) {}
+        if (theme !== "dark" && theme !== "light") {
+          theme =
+            window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        }
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
     <style>
       /* The Books' non-embedded Iranian fonts, substituted with the
          vendored Vazirmatn under their ORIGINAL family names: pdf.js's
@@ -56,16 +73,61 @@
         src: url("/vendor/fonts/Vazirmatn-Light.woff2") format("woff2");
       }
 
+      /* ===== Tokens: the paper identity, light and dark (ADR-0014).
+         Light = the desk in daylight; dark = the old dark table. The
+         manual toggle only flips data-theme; system preference is the
+         default when no stored choice exists. */
       :root {
-        --table: #1b2a2e;
-        --sheet: #e7eadf;
+        --bg: #dadfd0;
+        --surface: #e7eadf;
+        --raised: #f2f4ea;
         --rule: #c9cfc0;
         --ink: #1a1f1c;
         --mute: #4d5852;
         --clay: #c45c26;
+        --clay-soft: rgba(196, 92, 38, 0.12);
         --ok: #2f6f4e;
         --bad: #8f2d2d;
+        --bad-soft: rgba(143, 45, 45, 0.08);
         --focus: #1f4d63;
+        --shadow: rgba(26, 31, 28, 0.2);
+        --backdrop: rgba(10, 14, 13, 0.45);
+      }
+
+      :root[data-theme="dark"] {
+        --bg: #101c1f;
+        --surface: #18292d;
+        --raised: #20343a;
+        --rule: #3a5054;
+        --ink: #e6eae0;
+        --mute: #9fb2a8;
+        --clay: #d9743a;
+        --clay-soft: rgba(217, 116, 58, 0.16);
+        --ok: #6cb28d;
+        --bad: #d68f8f;
+        --bad-soft: rgba(214, 143, 143, 0.12);
+        --focus: #8ec4de;
+        --shadow: rgba(0, 0, 0, 0.5);
+        --backdrop: rgba(4, 8, 8, 0.55);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --bg: #101c1f;
+          --surface: #18292d;
+          --raised: #20343a;
+          --rule: #3a5054;
+          --ink: #e6eae0;
+          --mute: #9fb2a8;
+          --clay: #d9743a;
+          --clay-soft: rgba(217, 116, 58, 0.16);
+          --ok: #6cb28d;
+          --bad: #d68f8f;
+          --bad-soft: rgba(214, 143, 143, 0.12);
+          --focus: #8ec4de;
+          --shadow: rgba(0, 0, 0, 0.5);
+          --backdrop: rgba(4, 8, 8, 0.55);
+        }
       }
 
       * {
@@ -80,130 +142,32 @@
 
       body {
         font-family: Vazirmatn, Tahoma, "Segoe UI", sans-serif;
-        background: var(--table);
+        background: var(--bg);
         color: var(--ink);
-        display: flex;
-        justify-content: center;
-        align-items: flex-start;
-        padding: 2.5rem 1rem 4rem;
-      }
-
-      main {
-        width: min(42rem, 100%);
-        background: var(--sheet);
-        padding: 2rem 1.75rem 2.25rem;
-        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
-      }
-
-      header {
-        border-bottom: 1px solid var(--rule);
-        padding-bottom: 1rem;
-        margin-bottom: 1.25rem;
-      }
-
-      p.kicker {
-        margin: 0 0 0.35rem;
-        color: var(--clay);
-        font-size: 0.8rem;
-        letter-spacing: 0.08em;
-      }
-
-      h1 {
-        margin: 0;
-        font-size: 1.45rem;
-        font-weight: 700;
-        line-height: 1.7;
-      }
-
-      .status {
-        margin: 0.6rem 0 0;
-        font-size: 0.85rem;
-        color: var(--mute);
-      }
-
-      .status[data-state="up"] {
-        color: var(--ok);
-      }
-
-      .status[data-state="down"] {
-        color: var(--bad);
-      }
-
-      label {
-        display: block;
-        font-size: 0.9rem;
-        margin-bottom: 0.4rem;
-      }
-
-      textarea {
-        width: 100%;
-        min-height: 8.5rem;
-        resize: vertical;
-        border: 0;
-        border-bottom: 1px solid var(--ink);
-        background: repeating-linear-gradient(
-          to bottom,
-          transparent,
-          transparent 1.7rem,
-          var(--rule) 1.7rem,
-          var(--rule) 1.75rem
-        );
-        color: var(--ink);
-        font: inherit;
-        line-height: 1.75rem;
-        padding: 0.15rem 0.1rem 0.6rem;
-      }
-
-      textarea:focus {
-        outline: 2px solid var(--focus);
-        outline-offset: 4px;
-      }
-
-      input[type="tel"] {
-        width: 100%;
-        border: 0;
-        border-bottom: 1px solid var(--ink);
-        background: transparent;
-        color: var(--ink);
-        font: inherit;
-        padding: 0.15rem 0.1rem 0.35rem;
-      }
-
-      input[type="tel"]:focus {
-        outline: 2px solid var(--focus);
-        outline-offset: 4px;
-      }
-
-      .phone-hint {
-        margin: 0.25rem 0 0;
-        font-size: 0.78rem;
-        color: var(--mute);
-      }
-
-      .actions {
-        display: flex;
-        justify-content: flex-start;
-        gap: 0.75rem;
-        margin: 1rem 0 0;
       }
 
       button {
         font: inherit;
         font-weight: 700;
-        color: var(--sheet);
+        color: var(--surface);
         background: var(--ink);
         border: 0;
-        padding: 0.55rem 1.4rem;
+        padding: 0.5rem 1.2rem;
         cursor: pointer;
+        border-radius: 8px;
       }
 
       button:hover:not(:disabled) {
         background: var(--clay);
       }
 
-      button:focus-visible {
+      button:focus-visible,
+      textarea:focus-visible,
+      input:focus-visible,
+      a:focus-visible,
+      summary:focus-visible {
         outline: 2px solid var(--focus);
-        outline-offset: 3px;
+        outline-offset: 2px;
       }
 
       button:disabled {
@@ -211,52 +175,303 @@
         cursor: wait;
       }
 
-      .elapsed {
-        align-self: center;
-        color: var(--mute);
-        font-size: 0.85rem;
+      /* ===== The shell: sidebar + main column (ADR-0014). Below 1024px
+         the «فهرست نشست‌ها» rides off-canvas as a drawer; the names are
+         the DRAFT platform names pinned to constants in the script. */
+      .shell {
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
       }
 
-      /* The three answering phases, one switchable section each (PM
-         brief, 2026-09-11): the tab strip separates them; the running
-         phase's dot pulses and its timer ticks, both frozen at settle. */
-      .phase-tabs {
+      #session-list {
+        position: fixed;
+        z-index: 50;
+        top: 0;
+        bottom: 0;
+        inset-inline-start: 0;
+        width: min(19rem, 85vw);
+        background: var(--surface);
+        border-inline-end: 1px solid var(--rule);
+        transform: translateX(100%);
+        transition: transform 0.22s ease;
+        visibility: hidden;
+        display: flex;
+        flex-direction: column;
+        gap: 0.8rem;
+        padding: 0.9rem 0.8rem;
+      }
+
+      .shell.sl-open #session-list {
+        transform: none;
+        visibility: visible;
+        box-shadow: 0 0 60px var(--shadow);
+      }
+
+      @media (min-width: 1024px) {
+        .shell {
+          display: grid;
+          grid-template-columns: 18.5rem minmax(0, 1fr);
+        }
+
+        #session-list {
+          position: sticky;
+          top: 0;
+          height: 100dvh;
+          transform: none;
+          transition: none;
+          visibility: visible;
+          box-shadow: none;
+        }
+
+        #sl-backdrop {
+          display: none !important;
+        }
+
+        #sl-close,
+        #sl-toggle {
+          display: none;
+        }
+      }
+
+      #sl-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 45;
+        background: var(--backdrop);
+      }
+
+      #sl-backdrop[hidden] {
+        display: none;
+      }
+
+      .sl-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+      }
+
+      .sl-title {
+        margin: 0;
+        font-size: 0.95rem;
+        font-weight: 700;
+      }
+
+      .icon-btn {
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--rule);
+        padding: 0.3rem 0.65rem;
+        font-size: 0.85rem;
+        font-weight: 500;
+      }
+
+      .icon-btn:hover:not(:disabled) {
+        background: var(--clay);
+        border-color: var(--clay);
+        color: var(--surface);
+      }
+
+      .new-session-btn {
+        width: 100%;
+        padding: 0.6rem 1rem;
+      }
+
+      .session-items {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        overflow-y: auto;
+      }
+
+      .session-item {
+        border: 1px solid transparent;
+        border-radius: 8px;
+        padding: 0.5rem 0.7rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+
+      .session-item.active {
+        background: var(--raised);
+        border-color: var(--rule);
+      }
+
+      .session-item-title {
+        font-size: 0.86rem;
+        font-weight: 500;
+        line-height: 1.7;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .session-item-meta {
+        font-size: 0.72rem;
+        color: var(--mute);
+      }
+
+      .main-col {
+        display: flex;
+        flex-direction: column;
+        min-height: 100dvh;
+        flex: 1;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.55rem 0.9rem;
+        background: var(--surface);
+        border-bottom: 1px solid var(--rule);
+      }
+
+      .session-head {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        min-width: 0;
+      }
+
+      h1#session-title {
+        margin: 0;
+        font-size: 0.98rem;
+        font-weight: 700;
+        line-height: 1.7;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 44vw;
+      }
+
+      .book-chip {
+        font-size: 0.72rem;
+        font-weight: 500;
+        border: 1px solid var(--rule);
+        border-radius: 999px;
+        padding: 0.1rem 0.6rem;
+        color: var(--mute);
+        white-space: nowrap;
+      }
+
+      .topbar .spacer,
+      .composer-row .spacer {
+        flex: 1;
+      }
+
+      p.status {
+        margin: 0;
+        font-size: 0.78rem;
+        color: var(--mute);
+        white-space: nowrap;
+      }
+
+      p.status[data-state="up"],
+      p.status[data-state="live"] {
+        color: var(--ok);
+      }
+
+      p.status[data-state="down"] {
+        color: var(--bad);
+      }
+
+      .browse-btn {
+        font-size: 0.8rem;
+        font-weight: 500;
+        padding: 0.4rem 1rem;
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--rule);
+      }
+
+      .browse-btn:hover:not(:disabled) {
+        background: var(--clay);
+        border-color: var(--clay);
+        color: var(--surface);
+      }
+
+      #sl-toggle {
+        flex: none;
+      }
+
+      /* ===== The thread. */
+      .thread {
+        flex: 1;
+        width: 100%;
+        max-width: 46rem;
+        margin-inline: auto;
+        padding: 1.4rem 1.1rem 2.2rem;
+      }
+
+      body.research-open .thread {
+        max-width: 58rem;
+      }
+
+      .thread-list {
+        display: flex;
+        flex-direction: column;
+        gap: 1.2rem;
+      }
+
+      .thread-list[hidden] {
+        display: none;
+      }
+
+      .msg-user-row {
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .msg-user {
+        max-width: 85%;
+        background: var(--clay-soft);
+        border-radius: 12px 12px 12px 3px;
+        padding: 0.5rem 0.95rem;
+      }
+
+      .msg-user p {
+        margin: 0;
+        line-height: 1.85;
+      }
+
+      .msg-assistant {
+        border-inline-start: 3px solid var(--clay);
+        padding-inline-start: 0.95rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
+      /* The phase markers: the tabs' replacement — quiet chips riding
+         the article, the running one pulsing, the settled ones frozen
+         with their completion time. */
+      .phase-row {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.25rem;
-        margin-top: 1.75rem;
-        border-bottom: 2px solid var(--rule);
+        gap: 0.4rem;
       }
 
-      .phase-tab {
+      .phase-mark {
         display: inline-flex;
         align-items: center;
-        gap: 0.45rem;
-        background: transparent;
+        gap: 0.4rem;
+        font-size: 0.76rem;
+        font-weight: 500;
         color: var(--mute);
-        border: 0;
-        border-bottom: 2px solid transparent;
-        margin-bottom: -2px;
-        padding: 0.5rem 0.75rem;
-        font-size: 0.88rem;
+        border: 1px solid var(--rule);
+        border-radius: 999px;
+        padding: 0.14rem 0.65rem;
+        background: transparent;
       }
 
-      .phase-tab:hover:not(:disabled),
-      .phase-tab:focus-visible {
-        background: rgba(0, 0, 0, 0.05);
-      }
-
-      .phase-tab[aria-selected="true"] {
-        color: var(--ink);
-        border-bottom-color: var(--clay);
-      }
-
-      .phase-tab:disabled {
-        opacity: 0.45;
-        cursor: default;
-      }
-
-      .phase-dot {
+      .phase-mark .phase-dot {
         width: 0.5rem;
         height: 0.5rem;
         border-radius: 50%;
@@ -264,68 +479,83 @@
         flex: none;
       }
 
-      .phase-tab[data-state="running"] .phase-dot {
+      .phase-mark[data-state="running"] {
+        color: var(--ink);
+        border-color: var(--clay);
+      }
+
+      .phase-mark[data-state="running"] .phase-dot {
         background: var(--clay);
         animation: composer-pulse 1.2s ease-in-out infinite;
       }
 
-      .phase-tab[data-state="done"] .phase-dot {
+      .phase-mark[data-state="ready"] .phase-dot {
+        background: var(--clay);
+        opacity: 0.55;
+      }
+
+      .phase-mark[data-state="done"] .phase-dot {
         background: var(--ok);
       }
 
-      .phase-tab[data-state="failed"] .phase-dot {
+      .phase-mark[data-state="failed"] .phase-dot {
         background: var(--bad);
       }
 
-      .phase-tab[data-state="skipped"] .phase-dot {
+      .phase-mark[data-state="skipped"] .phase-dot {
         background: var(--mute);
       }
 
       .phase-timer {
         color: var(--mute);
-        font-size: 0.75rem;
+        font-size: 0.72rem;
         font-weight: 500;
         direction: ltr;
         unicode-bidi: isolate;
       }
 
-      .phase-tab[data-state="running"] .phase-timer {
+      .phase-mark[data-state="running"] .phase-timer {
         color: var(--clay);
       }
 
-      .phase-now {
-        margin: 0.7rem 0 0;
+      p.phase-now {
+        margin: 0;
         color: var(--clay);
-        font-size: 0.85rem;
+        font-size: 0.83rem;
       }
 
-      .phase-now::before {
+      p.phase-now::before {
         content: "●";
         margin-left: 0.45rem;
         animation: composer-pulse 1.2s ease-in-out infinite;
       }
 
-      .phase-panel {
-        padding-top: 0.9rem;
+      .ask-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.9rem;
+        color: var(--mute);
+        font-size: 0.76rem;
       }
 
-      .composer-truncated {
-        margin: 0 0 0.85rem;
-        color: var(--clay);
-        font-size: 0.8rem;
-        white-space: pre-wrap;
+      .elapsed {
+        color: var(--mute);
+        font-size: 0.76rem;
       }
 
-      section.out {
-        margin-top: 1.75rem;
+      @keyframes composer-pulse {
+        0%,
+        100% {
+          opacity: 0.25;
+        }
+        50% {
+          opacity: 1;
+        }
       }
 
-      h2 {
-        margin: 0 0 0.5rem;
-        font-size: 0.95rem;
-        font-weight: 700;
-      }
-
+      /* ===== The ask's rendered bodies: Quote selection, Evidence pool,
+         Quoted answer — the guard's clay quotes and the pool stay
+         exactly the contract they were (ADR-0006/0007/0010). */
       .answer,
       .cite,
       .empty,
@@ -334,26 +564,33 @@
         line-height: 1.85;
       }
 
+      .answer {
+        font-size: 0.95rem;
+      }
+
+      .empty {
+        color: var(--mute);
+      }
+
+      .error {
+        color: var(--bad);
+      }
+
       .cite {
-        margin: 0 0 0.85rem;
+        margin: 0 0 0.6rem;
         padding: 0 0.9rem 0 0;
         border-right: 3px solid var(--clay);
         color: var(--mute);
         cursor: pointer;
+        font-size: 0.88rem;
       }
 
       .cite:hover {
         color: var(--ink);
       }
 
-      .doc-heading {
-        margin: 1.1rem 0 0.4rem;
-        font-size: 1.02rem;
-        font-weight: 700;
-      }
-
       .composer-status {
-        margin: 0.6rem 0 0;
+        margin: 0.4rem 0 0;
         color: var(--mute);
         font-size: 0.85rem;
       }
@@ -365,14 +602,17 @@
         animation: composer-pulse 1.2s ease-in-out infinite;
       }
 
-      @keyframes composer-pulse {
-        0%,
-        100% {
-          opacity: 0.25;
-        }
-        50% {
-          opacity: 1;
-        }
+      .composer-truncated {
+        margin: 0 0 0.85rem;
+        color: var(--clay);
+        font-size: 0.8rem;
+        white-space: pre-wrap;
+      }
+
+      .doc-heading {
+        margin: 1.1rem 0 0.4rem;
+        font-size: 1.02rem;
+        font-weight: 700;
       }
 
       .doc-para {
@@ -388,14 +628,14 @@
       .cite-sent {
         position: relative;
         cursor: pointer;
-        background: rgba(196, 92, 38, 0.12);
+        background: var(--clay-soft);
         border-bottom: 1px solid var(--clay);
       }
 
       .cite-sent:hover,
       .cite-sent:focus-visible {
-        background: rgba(196, 92, 38, 0.18);
         outline: none;
+        border-bottom-width: 2px;
       }
 
       .cite-sent:hover::after,
@@ -409,48 +649,428 @@
         max-width: 18rem;
         white-space: pre-line;
         background: var(--ink);
-        color: var(--sheet);
+        color: var(--surface);
         font-size: 0.78rem;
         font-weight: 500;
         line-height: 1.7;
         padding: 0.3rem 0.65rem;
         border-radius: 3px;
-        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+        box-shadow: 0 6px 16px var(--shadow);
         z-index: 1;
       }
 
-      .empty {
+      details summary {
+        cursor: pointer;
+        color: var(--mute);
+        font-size: 0.85rem;
+        margin: 0.75rem 0 0.5rem;
+      }
+
+      #recall-more-row,
+      .recall-more-row {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        margin: 0.6rem 0 0.2rem;
+      }
+
+      .recall-more-row button {
+        font-size: 0.82rem;
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--ink);
+        border-radius: 999px;
+        padding: 0.3rem 0.9rem;
+      }
+
+      .recall-more-row button:hover:not(:disabled) {
+        background: var(--clay);
+        border-color: var(--clay);
+        color: var(--surface);
+      }
+
+      /* ===== Session creation: the empty state's Book cards. The pick
+         binds the whole Session (ADR-0014; the Book pick glossary). */
+      #new-session-view {
+        padding-top: 2.4rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.9rem;
+      }
+
+      #new-session-view[hidden] {
+        display: none;
+      }
+
+      p.kicker {
+        margin: 0;
+        color: var(--clay);
+        font-size: 0.8rem;
+        letter-spacing: 0.08em;
+      }
+
+      .hero-title {
+        margin: 0;
+        font-size: 1.32rem;
+        font-weight: 700;
+        line-height: 1.8;
+      }
+
+      .hero-note {
+        margin: 0;
+        color: var(--mute);
+        font-size: 0.9rem;
+        line-height: 1.9;
+      }
+
+      .book-cards {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1rem;
+        margin-top: 0.5rem;
+      }
+
+      @media (min-width: 760px) {
+        .book-cards {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+
+      .book-card {
+        background: var(--raised);
+        border: 1px solid var(--rule);
+        border-radius: 12px;
+        padding: 1.1rem 1.1rem 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+
+      .book-card.picked {
+        border-color: var(--clay);
+        box-shadow: 0 0 0 1px var(--clay);
+      }
+
+      .book-card-title {
+        margin: 0;
+        font-size: 1.02rem;
+        font-weight: 700;
+        line-height: 1.8;
+      }
+
+      .starter-chips {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+
+      .starter-chip {
+        text-align: start;
+        font-size: 0.82rem;
+        font-weight: 500;
+        line-height: 1.8;
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--rule);
+        padding: 0.42rem 0.75rem;
+      }
+
+      .starter-chip:hover:not(:disabled) {
+        background: transparent;
+        color: var(--clay);
+        border-color: var(--clay);
+      }
+
+      .book-select {
+        align-self: flex-start;
+      }
+
+      /* ===== The composer dock: one input, one send, one honest stop. */
+      .composer-dock {
+        position: sticky;
+        bottom: 0;
+        z-index: 30;
+        background: var(--surface);
+        border-top: 1px solid var(--rule);
+      }
+
+      .composer-dock[hidden] {
+        display: none;
+      }
+
+      .composer {
+        max-width: 46rem;
+        margin-inline: auto;
+        padding: 0.7rem 1.1rem 0.85rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
+      body.research-open .composer {
+        max-width: 58rem;
+      }
+
+      .composer textarea {
+        width: 100%;
+        min-height: 2.7rem;
+        max-height: 9rem;
+        resize: none;
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        background: var(--raised);
+        color: var(--ink);
+        font: inherit;
+        line-height: 1.75;
+        padding: 0.55rem 0.85rem;
+      }
+
+      .composer-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+
+      .char-note {
+        font-size: 0.74rem;
         color: var(--mute);
       }
 
-      /* ===== Book reader (ADR-0007) =====
-         The provenance panel: every quote on the sheet clicks through to
-         the Book's actual PDF page, the quoted letters highlighted. Wide
-         screens split the sheet (chat right, reader left in RTL); below
-         1024px the reader is a full-screen layer. */
-      .status-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
-        margin-top: 0.6rem;
+      #stop-btn {
+        background: transparent;
+        color: var(--bad);
+        border: 1px solid var(--bad);
+        padding: 0.4rem 1rem;
       }
 
-      .status-row .status {
+      #stop-btn:hover:not(:disabled) {
+        background: var(--bad);
+        color: var(--surface);
+      }
+
+      /* ===== Research Mode (ADR-0008/0009): one section per Session,
+         appended to the thread when the ask arms it — the transcript,
+         the chips, and the map rail keep their ids and behavior. */
+      .research-sec {
+        border-top: 1px dashed var(--rule);
+        padding-top: 0.9rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.7rem;
+      }
+
+      .research-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 1.1rem;
+        align-items: start;
+      }
+
+      .research-rail {
+        order: -1;
+        border: 1px solid var(--rule);
+        background: var(--raised);
+        padding: 0.6rem 0.95rem 0.8rem;
+        font-size: 0.85rem;
+      }
+
+      .research-rail-title {
+        margin: 0 0 0.45rem;
+        font-size: 0.85rem;
+        font-weight: 700;
+      }
+
+      @media (min-width: 1024px) {
+        body.research-open .research-layout {
+          grid-template-columns: minmax(0, 1fr) 18.5rem;
+        }
+
+        body.research-open .research-rail {
+          order: 0;
+          position: sticky;
+          top: 4.2rem;
+          max-height: calc(100dvh - 8rem);
+          overflow-y: auto;
+        }
+      }
+
+      .research-state-row {
+        margin: 0.35rem 0 0;
+        line-height: 1.7;
+      }
+
+      .research-state-row .k {
+        color: var(--mute);
+      }
+
+      .research-state-row.frontier {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .research-state-row.fog {
+        font-style: italic;
+      }
+
+      .research-chat {
+        display: flex;
+        flex-direction: column;
+        gap: 0.9rem;
+        margin: 0 0 0.8rem;
+      }
+
+      .research-msg.user {
+        align-self: flex-start;
+        max-width: 85%;
+      }
+
+      .research-msg.user .research-msg-body {
+        background: var(--clay-soft);
+        border-radius: 10px 10px 10px 2px;
+        padding: 0.45rem 0.95rem;
+        margin: 0;
+        line-height: 1.8;
+      }
+
+      .research-msg.user .research-msg-body p {
         margin: 0;
       }
 
-      /* ===== The profile (T24, GitLab #27) =====
-         The Account's own view: the Balance, today's spend, and the
-         Sessions' spend history. Self-contained: it opens below the
-         sheet, refetches /profile/data every time it opens, and its
+      .research-msg.assistant {
+        align-self: stretch;
+        border-right: 3px solid var(--clay);
+        padding-right: 0.9rem;
+      }
+
+      .research-note {
+        margin: 0 0 0.55rem;
+        color: var(--mute);
+        line-height: 1.8;
+      }
+
+      .research-suggest {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin: 0 0 0.9rem;
+      }
+
+      .research-chip {
+        font-size: 0.8rem;
+        font-weight: 500;
+        padding: 0.3rem 0.9rem;
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--ink);
+        border-radius: 999px;
+      }
+
+      .research-chip:hover:not(:disabled) {
+        background: var(--clay);
+        border-color: var(--clay);
+        color: var(--surface);
+      }
+
+      .research-chip.reject {
+        border-style: dashed;
+      }
+
+      .research-journey {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.2rem 1rem;
+        margin: 0.2rem 0 0.9rem;
+        font-size: 0.78rem;
+        color: var(--mute);
+      }
+
+      .research-journey .stage {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        white-space: nowrap;
+      }
+
+      .research-journey .stage .dot {
+        width: 0.55rem;
+        height: 0.55rem;
+        border-radius: 50%;
+        border: 1px solid var(--mute);
+        flex-shrink: 0;
+      }
+
+      .research-journey .stage.done .dot {
+        background: var(--mute);
+      }
+
+      .research-journey .stage.now {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .research-journey .stage.now .dot {
+        border-color: var(--clay);
+        background: var(--clay);
+      }
+
+      .research-question {
+        margin: 0 0 0.55rem;
+        font-weight: 600;
+        color: var(--ink);
+        line-height: 1.9;
+      }
+
+      .research-commentary {
+        margin: 0 0 0.55rem;
+        padding: 0.35rem 0.6rem;
+        border-right: 3px dashed var(--mute);
+        color: var(--mute);
+        font-style: italic;
+        line-height: 1.8;
+      }
+
+      .research-commentary .commentary-tag {
+        font-style: normal;
+        font-weight: 600;
+        margin-left: 0.3rem;
+      }
+
+      .research-form {
+        display: flex;
+        gap: 0.7rem;
+        align-items: flex-end;
+        margin-top: 0.4rem;
+      }
+
+      .research-form textarea {
+        flex: 1;
+        min-height: 2.8rem;
+        max-height: 9rem;
+        resize: none;
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        background: var(--raised);
+        color: var(--ink);
+        font: inherit;
+        line-height: 1.75;
+        padding: 0.55rem 0.85rem;
+      }
+
+      .research-form button {
+        flex-shrink: 0;
+      }
+
+      /* ===== The profile (T24, GitLab #27) — kept self-contained; the
          honesty badges are styled apart — dashed and muted for an
          estimate, so an estimate never looks measured. DRAFT labels,
-         pending PM approval (see the section's comment). */
+         pending PM approval (see the section's comment in the body). */
       #profile {
         border: 1px solid var(--rule);
+        background: var(--raised);
         padding: 1rem 1.25rem;
-        margin-top: 1rem;
+        margin: 0 auto 1.6rem;
+        width: calc(100% - 2.2rem);
+        max-width: 46rem;
       }
 
       #profile h2 {
@@ -493,48 +1113,26 @@
         border-color: var(--mute);
       }
 
-      .browse-btn {
-        font-size: 0.8rem;
-        font-weight: 500;
-        padding: 0.4rem 1rem;
-        background: transparent;
-        color: var(--ink);
-        border: 1px solid var(--ink);
-      }
-
-      .browse-btn:hover:not(:disabled) {
-        background: var(--clay);
-        border-color: var(--clay);
-        color: var(--sheet);
-      }
-
+      /* ===== The Book reader (ADR-0007): a slide-over over the thread
+         on the end side (full-screen below 1024px) — provenance on
+         demand, never a mode that blocks the conversation. */
       #reader {
         flex-direction: column;
-        background: var(--sheet);
+        background: var(--surface);
         border: 1px solid var(--rule);
-        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+        box-shadow: 0 18px 40px var(--shadow);
         min-height: 0;
       }
 
-      @media (min-width: 1024px) {
-        body.reader-open {
-          display: grid;
-          grid-template-columns: minmax(36rem, 46rem) minmax(26rem, 1fr);
-          justify-content: center;
-          column-gap: 1.25rem;
-        }
+      #reader-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 55;
+        background: var(--backdrop);
+      }
 
-        body.reader-open main {
-          grid-column: 1;
-        }
-
-        body.reader-open #reader:not([hidden]) {
-          display: flex;
-          grid-column: 2;
-          position: sticky;
-          top: 2.5rem;
-          height: calc(100vh - 6.5rem);
-        }
+      #reader-backdrop[hidden] {
+        display: none;
       }
 
       @media (max-width: 1023.98px) {
@@ -543,6 +1141,19 @@
           position: fixed;
           inset: 0;
           z-index: 60;
+        }
+      }
+
+      @media (min-width: 1024px) {
+        #reader:not([hidden]) {
+          display: flex;
+          position: fixed;
+          top: 0;
+          bottom: 0;
+          inset-inline-end: 0;
+          width: min(42rem, 44vw);
+          z-index: 60;
+          box-shadow: 0 0 60px var(--shadow);
         }
       }
 
@@ -581,7 +1192,7 @@
       }
 
       .reader-book[aria-pressed="true"] {
-        color: var(--sheet);
+        color: var(--surface);
         background: var(--ink);
         border-color: var(--ink);
       }
@@ -641,7 +1252,7 @@
       a.reader-download:hover {
         background: var(--clay);
         border-color: var(--clay);
-        color: var(--sheet);
+        color: var(--surface);
       }
 
       .reader-pages {
@@ -650,7 +1261,7 @@
         min-height: 0;
         overflow-y: auto;
         padding: 1.1rem;
-        background: var(--table);
+        background: #141d20;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -728,332 +1339,70 @@
         font-size: 0.8rem;
         line-height: 1.7;
         color: var(--ink);
-        background: rgba(196, 92, 38, 0.12);
+        background: var(--clay-soft);
         border-top: 1px solid var(--rule);
       }
 
       .reader-note[data-kind="error"] {
         color: var(--bad);
-        background: rgba(143, 45, 45, 0.1);
+        background: var(--bad-soft);
       }
 
-      /* The collapsed Evidence pool (issue #28): the summary reads as a
-         quiet disclosure under the Quote selection. */
-      details summary {
-        cursor: pointer;
-        color: var(--mute);
-        font-size: 0.85rem;
-        margin: 0.75rem 0 0.5rem;
-      }
-
-      .error {
-        color: var(--bad);
-      }
-
-      @media (max-width: 640px) {
-        body {
-          padding: 0;
+      @media (max-width: 719.98px) {
+        .topbar p.status {
+          display: none;
         }
 
-        main {
-          min-height: 100vh;
-          box-shadow: none;
+        h1#session-title {
+          max-width: 40vw;
         }
       }
 
       @media (prefers-reduced-motion: reduce) {
-        button {
-          transition: none;
-        }
-      }
-      /* ===== Research Mode (ADR-0008) =====
-         The phase-3 chat: a guided research conversation over the
-         Books. The map is the persistent side rail (T10, GitLab
-         #11): the journey strip and the route summarize the
-         investigation beside the transcript — never a collapsible
-         strip the chat scrolls away. The transcript is user bubbles
-         beside full-width assistant documents — headings, quoted
-         paragraphs, notes, and the server-built references; the chips
-         under the latest reply are the next moves and the checkpoint
-         decisions. */
-      .research-layout {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 1.1rem;
-        align-items: start;
-      }
-
-      .research-rail {
-        order: -1;
-        border: 1px solid var(--rule);
-        background: rgba(27, 42, 46, 0.04);
-        padding: 0.6rem 0.95rem 0.8rem;
-        font-size: 0.85rem;
-      }
-
-      .research-rail-title {
-        margin: 0 0 0.45rem;
-        font-size: 0.85rem;
-        font-weight: 700;
-      }
-
-      @media (min-width: 1024px) {
-        /* The research chat is wide enough for its rail: the sheet
-           widens while phase 3 is the active tab, and the rail sticks
-           so the route stays in view however long the chat grows. */
-        body.research-open main {
-          width: min(58rem, 100%);
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
         }
 
-        .research-layout {
-          grid-template-columns: minmax(0, 1fr) 18.5rem;
-        }
-
-        .research-rail {
-          order: 0;
-          position: sticky;
-          top: 1rem;
-          max-height: calc(100vh - 5.5rem);
-          overflow-y: auto;
+        .thread,
+        .reader-pages {
+          scroll-behavior: auto !important;
         }
       }
-
-      .research-state-row {
-        margin: 0.35rem 0 0;
-        line-height: 1.7;
-      }
-
-      .research-state-row .k {
-        color: var(--mute);
-      }
-
-      .research-chat {
-        display: flex;
-        flex-direction: column;
-        gap: 0.9rem;
-        margin: 0 0 0.8rem;
-      }
-
-      .research-msg.user {
-        align-self: flex-start;
-        max-width: 85%;
-      }
-
-      .research-msg.user .research-msg-body {
-        background: rgba(196, 92, 38, 0.12);
-        border-radius: 10px 10px 10px 2px;
-        padding: 0.45rem 0.95rem;
-        margin: 0;
-        line-height: 1.8;
-      }
-
-      .research-msg.user .research-msg-body p {
-        margin: 0;
-      }
-
-      .research-msg.assistant {
-        align-self: stretch;
-        border-right: 3px solid var(--clay);
-        padding-right: 0.9rem;
-      }
-
-      .research-note {
-        margin: 0 0 0.55rem;
-        color: var(--mute);
-        line-height: 1.8;
-      }
-
-      .research-suggest {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.45rem;
-        margin: 0 0 0.9rem;
-      }
-
-      .research-chip {
-        font-size: 0.8rem;
-        font-weight: 500;
-        padding: 0.3rem 0.9rem;
-        background: transparent;
-        color: var(--ink);
-        border: 1px solid var(--ink);
-        border-radius: 999px;
-      }
-
-      .research-chip:hover:not(:disabled) {
-        background: var(--clay);
-        border-color: var(--clay);
-        color: var(--sheet);
-      }
-
-      .research-chip.reject {
-        border-style: dashed;
-      }
-
-      /* The journey strip (ADR-0009): the five stages, the walked ones
-         dimmed, the current one emphasized — the route at a glance. */
-      .research-journey {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.2rem 1rem;
-        margin: 0.2rem 0 0.9rem;
-        font-size: 0.78rem;
-        color: var(--mute);
-      }
-
-      .research-journey .stage {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        white-space: nowrap;
-      }
-
-      .research-journey .stage .dot {
-        width: 0.55rem;
-        height: 0.55rem;
-        border-radius: 50%;
-        border: 1px solid var(--mute);
-        flex-shrink: 0;
-      }
-
-      .research-journey .stage.done .dot {
-        background: var(--mute);
-      }
-
-      .research-journey .stage.now {
-        color: var(--ink);
-        font-weight: 600;
-      }
-
-      .research-journey .stage.now .dot {
-        border-color: var(--clay);
-        background: var(--clay);
-      }
-
-      /* The guided question: the journey asks, the user answers —
-         styled louder than a note. */
-      .research-question {
-        margin: 0 0 0.55rem;
-        font-weight: 600;
-        color: var(--ink);
-        line-height: 1.9;
-      }
-
-      /* The Host's commentary (T5): reasoning the Books cannot support
-         — visibly apart from the quoted answer, never mistaken for a
-         claim. Dashed rule, muted ink, the «برداشت» tag in front. */
-      .research-commentary {
-        margin: 0 0 0.55rem;
-        padding: 0.35rem 0.6rem;
-        border-right: 3px dashed var(--mute);
-        color: var(--mute);
-        font-style: italic;
-        line-height: 1.8;
-      }
-
-      .research-commentary .commentary-tag {
-        font-style: normal;
-        font-weight: 600;
-        margin-left: 0.3rem;
-      }
-
-      /* The map's own rows: the frontier emphasized, the fog muted. */
-      .research-state-row.frontier {
-        color: var(--ink);
-        font-weight: 600;
-      }
-
-      .research-state-row.fog {
-        font-style: italic;
-      }
-
-      .research-form {
-        display: flex;
-        gap: 0.7rem;
-        align-items: flex-end;
-        margin-top: 0.4rem;
-      }
-
-      /* The ask's Book pick (ADR-0011): pill toggles, single-select;
-         the picked one fills like an active chip, none until chosen. */
-      .book-picker {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 0.45rem;
-        margin-top: 0.2rem;
-        font-size: 0.85rem;
-      }
-
-      .book-toggle {
-        font-size: 0.8rem;
-        font-weight: 500;
-        padding: 0.25rem 0.85rem;
-        background: transparent;
-        color: var(--ink);
-        border: 1px solid var(--ink);
-        border-radius: 999px;
-      }
-
-      .book-toggle.on {
-        background: var(--clay);
-        border-color: var(--clay);
-        color: var(--sheet);
-      }
-
-      /* The widen row: the «جست‌وجوی بیشتر» chip and its status, inside
-         the collapsed pool. */
-      #recall-more-row {
-        display: flex;
-        align-items: center;
-        gap: 0.7rem;
-        margin: 0.6rem 0 0.2rem;
-      }
-
-      #recall-more {
-        font-size: 0.85rem;
-      }
-
-      .research-form textarea {
-        flex: 1;
-        min-height: 2.8rem;
-        max-height: 9rem;
-      }
-
-      .research-form button {
-        flex-shrink: 0;
-      }
-
     </style>
   </head>
   <body>
     <!-- The login overlay (ADR-0013): the Account is the only door — an
          email and a password issued by the Admin, never self-created.
          One self-contained block, deliberately isolated: the rest of the
-         sheet's markup and JS is untouched, and the fetch wrapper below
+         shell's markup and JS is untouched, and the fetch wrapper below
          is what turns any 401 («برای ادامه وارد شوید.») into this door. -->
     <section id="auth-gate" hidden>
       <style>
         #auth-gate {
           position: fixed;
           inset: 0;
-          z-index: 60;
+          z-index: 70;
           display: flex;
           align-items: center;
           justify-content: center;
-          background: rgba(31, 26, 22, 0.72);
+          background: var(--backdrop);
         }
         #auth-gate[hidden] {
           display: none;
         }
         #auth-gate form {
-          background: var(--paper, #fbf7f0);
-          border: 1px solid rgba(31, 26, 22, 0.25);
-          border-radius: 10px;
+          background: var(--raised);
+          border: 1px solid var(--rule);
+          border-radius: 12px;
           padding: 1.5rem 1.75rem;
           min-width: min(22rem, 90vw);
           display: grid;
           gap: 0.6rem;
+          box-shadow: 0 18px 40px var(--shadow);
         }
         #auth-gate h2 {
           margin: 0;
@@ -1061,7 +1410,7 @@
         }
         #auth-error {
           margin: 0;
-          color: #a13226;
+          color: var(--bad);
           font-size: 0.85rem;
         }
       </style>
@@ -1091,11 +1440,11 @@
       <script>
         (function () {
           "use strict";
-          // The gate flip (ADR-0013): the sheet authenticates with the
+          // The gate flip (ADR-0013): the shell authenticates with the
           // HttpOnly cwb_auth cookie the server sets; no client header
           // authenticates anything any more. This block wraps window.fetch
           // so ANY response 401 — the ask, the picker, a research poll —
-          // opens this overlay, without touching the sheet's own JS. A
+          // opens this overlay, without touching the shell's own JS. A
           // successful login hides the overlay and reloads, so every
           // reader refetches with the cookie.
           var gate = document.getElementById("auth-gate");
@@ -1157,213 +1506,127 @@
         })();
       </script>
     </section>
-    <main>
-      <header>
-        <p class="kicker">نشست · سه مرحلهٔ پاسخ</p>
-        <h1>طرح کلی اندیشۀ اسلامی در قرآن · انسان ۲۵۰ ساله</h1>
-        <div class="status-row">
+
+    <div class="shell" id="shell">
+      <div id="sl-backdrop" hidden></div>
+      <!-- «فهرست نشست‌ها» (DRAFT name, pending PM approval — CONTEXT.md's
+           2026-09-20 draft roster): the Account's Sessions. Stage 3 of
+           T27 swaps this local list for the server's Session store. -->
+      <aside id="session-list" aria-label="فهرست نشست‌ها">
+        <div class="sl-head">
+          <h2 class="sl-title">فهرست نشست‌ها</h2>
+          <button type="button" id="sl-close" class="icon-btn" aria-label="بستن فهرست">✕</button>
+        </div>
+        <button type="button" id="new-session" class="new-session-btn">نشست تازه</button>
+        <nav id="session-items" class="session-items" aria-label="نشست‌ها"></nav>
+      </aside>
+
+      <div class="main-col">
+        <header class="topbar">
+          <button type="button" id="sl-toggle" class="icon-btn" aria-label="فهرست نشست‌ها" aria-controls="session-list" aria-expanded="false">☰</button>
+          <div class="session-head">
+            <h1 id="session-title">نشست</h1>
+            <span id="session-book" class="book-chip" hidden></span>
+          </div>
+          <span class="spacer"></span>
           <p class="status" id="status" data-state="unknown">در حال بررسی سرویس…</p>
           <!-- The live session price (T22, GitLab #24): the tariff is config's business; this chip only reads the ledger. -->
           <p class="status" id="usage-live" data-state="idle" title="هزینۀ این نشست از آغاز آخرین پرسش">هزینۀ نشست: —</p>
+          <button type="button" id="reader-browse" class="browse-btn">کتاب‌ها</button>
           <!-- The profile toggle (T24, GitLab #27): «پروفایل» is the
                Account's own view of its Balance and its Sessions' spend
                (the Account glossary row names it so). DRAFT label,
                pending PM approval — CONTEXT.md's draft roster,
                2026-09-19. -->
           <button type="button" id="profile-toggle" class="browse-btn" aria-expanded="false" aria-controls="profile">پروفایل</button>
-          <button type="button" id="reader-browse" class="browse-btn">کتاب‌ها</button>
-        </div>
-      </header>
+          <button type="button" id="theme-toggle" class="browse-btn" aria-label="تغییر پوسته">شب</button>
+        </header>
 
-      <form id="ask">
-        <label for="phone">شمارهٔ تلفن</label>
-        <input
-          type="tel"
-          id="phone"
-          name="phone"
-          inputmode="tel"
-          autocomplete="tel"
-          maxlength="16"
-          placeholder="۰۹۱۲۳۴۵۶۷۸۹"
-        />
-        <p class="phone-hint">هر شماره در روز پنج گفتگو دارد.</p>
-        <!-- The ask's Book pick (ADR-0011): exactly ONE Book per
-             investigation, chosen at platform entry; the ask stays
-             disabled until one is picked. The choice persists in
-             localStorage and survives refreshes. -->
-        <div class="book-picker" role="radiogroup" aria-label="انتخاب کتاب">
-          <span class="k">کتاب پژوهش:</span>
-          <button type="button" class="book-toggle" data-doc="tarhe-kolli" role="radio" aria-checked="false">
-            طرح کلی اندیشۀ اسلامی در قرآن
-          </button>
-          <button type="button" class="book-toggle" data-doc="70143-336" role="radio" aria-checked="false">
-            انسان ۲۵۰ ساله
-          </button>
-          <span id="book-hint" class="phone-hint">اول یک کتاب انتخاب کنید.</span>
-        </div>
-        <label for="question" style="margin-top: 1rem">پرسش</label>
-        <textarea
-          id="question"
-          name="question"
-          required
-          maxlength="2000"
-          placeholder="پرسش خود را بنویسید"
-        ></textarea>
-        <div class="actions">
-          <button type="submit" id="ask-btn">بپرس</button>
-          <span class="elapsed" id="elapsed" hidden></span>
-          <span class="elapsed" id="ttft" hidden></span>
-        </div>
-      </form>
-
-      <section class="out" aria-live="polite">
-        <div class="phase-tabs" role="tablist" aria-label="مراحل پاسخ">
-          <button
-            type="button"
-            class="phase-tab"
-            id="tab-1"
-            role="tab"
-            aria-selected="true"
-            aria-controls="panel-1"
-            data-state="idle"
-          >
-            <span class="phase-dot" aria-hidden="true"></span>
-            <span class="phase-name">پاسخ اول</span>
-          </button>
-          <button
-            type="button"
-            class="phase-tab"
-            id="tab-2"
-            role="tab"
-            aria-selected="false"
-            aria-controls="panel-2"
-            data-state="idle"
-            disabled
-          >
-            <span class="phase-dot" aria-hidden="true"></span>
-            <span class="phase-name">پاسخ استنادی</span>
-            <span class="phase-timer" id="timer-2" hidden></span>
-          </button>
-          <button
-            type="button"
-            class="phase-tab"
-            id="tab-3"
-            role="tab"
-            aria-selected="false"
-            aria-controls="panel-3"
-            data-state="idle"
-            disabled
-          >
-            <span class="phase-dot" aria-hidden="true"></span>
-            <span class="phase-name">حالت پژوهش</span>
-            <span class="phase-timer" id="timer-3" hidden></span>
-          </button>
-        </div>
-        <p class="phase-now" id="phase-now" hidden></p>
-
-        <div class="phase-panel" id="panel-1" role="tabpanel" aria-labelledby="tab-1">
-          <div id="answer" class="answer">
-            <p class="empty">هنوز پرسشی نپرسیده‌اید.</p>
-          </div>
-          <!-- The Evidence pool stays visible, collapsed (issue #28):
-               the Quote selection renders as the first answer above it
-               and the pool remains phase 2's exact payload. -->
-          <details id="evidence-pool">
-            <summary>همۀ نقل‌قول‌های بازیابی‌شده</summary>
-            <h2 id="citations-heading">استناد</h2>
-            <div id="citations">
-              <p class="empty">پس از پاسخ، استناد اینجا می‌آید: هویت کتاب و عبارت نقل‌شده.</p>
+        <main id="thread" class="thread" aria-live="polite">
+          <!-- Session creation (ADR-0014): the empty state IS the Book
+               pick — exactly one Book binds the whole Session (the Book
+               pick glossary row); the starter questions are static
+               content, they cost nothing and ask nothing. -->
+          <section id="new-session-view">
+            <p class="kicker">نشست · سه مرحلهٔ پاسخ</p>
+            <h2 class="hero-title">برای نشست تازه، یک کتاب برگزینید</h2>
+            <p class="hero-note">
+              پرسش‌های این نشست از همان یک کتاب پاسخ می‌گیرند و استنادها به
+              همان کتاب می‌رسند.
+            </p>
+            <div class="book-cards">
+              <article class="book-card" data-doc="tarhe-kolli">
+                <h3 class="book-card-title">طرح کلی اندیشۀ اسلامی در قرآن</h3>
+                <div class="starter-chips" role="group" aria-label="پرسش‌های آغازین">
+                  <button type="button" class="starter-chip">جهان‌بینی توحیدی در قرآن چه ویژگی‌هایی دارد؟</button>
+                  <button type="button" class="starter-chip">قرآن آزادی انسان را چگونه تبیین می‌کند؟</button>
+                  <button type="button" class="starter-chip">حیات معقول از دید قرآن یعنی چه؟</button>
+                  <button type="button" class="starter-chip">جایگاه عدالت در اندیشۀ قرآنی چیست؟</button>
+                </div>
+                <button type="button" class="book-select">انتخاب کتاب</button>
+              </article>
+              <article class="book-card" data-doc="70143-336">
+                <h3 class="book-card-title">انسان ۲۵۰ ساله</h3>
+                <div class="starter-chips" role="group" aria-label="پرسش‌های آغازین">
+                  <button type="button" class="starter-chip">انسان ۲۵۰ ساله حرکت آزادی‌خواهی در ایران را چگونه توصیف می‌کند؟</button>
+                  <button type="button" class="starter-chip">نقش مشروطه در سرگذشت ۲۵۰ سالۀ ایران چه بود؟</button>
+                  <button type="button" class="starter-chip">چرا حرکت‌های آزادی‌خواهانۀ ایران یک‌به‌یک از مسیر بازماند؟</button>
+                  <button type="button" class="starter-chip">جنگ‌های ایران و روسیه چه نقشی در بیداری ایران داشت؟</button>
+                </div>
+                <button type="button" class="book-select">انتخاب کتاب</button>
+              </article>
             </div>
-            <!-- The widen (ADR-0010): one click broadens the search to
-                 the question's not-yet-covered facets and re-answers
-                 over the merged pool. -->
-            <div id="recall-more-row" hidden>
-              <button type="button" id="recall-more">جست‌وجوی بیشتر</button>
-              <span id="recall-more-status" class="composer-status"></span>
+          </section>
+
+          <div id="thread-list" class="thread-list" hidden></div>
+        </main>
+
+        <!-- The composer: the ask's one door. «توقف», the theme names and
+             the counter text are DRAFT strings — the shell's draft table
+             in the script below lists them for the PM. -->
+        <div class="composer-dock" id="composer-dock" hidden>
+          <form id="ask" class="composer">
+            <textarea
+              id="question"
+              name="question"
+              rows="1"
+              maxlength="2000"
+              placeholder="پرسش خود را بنویسید"
+            ></textarea>
+            <div class="composer-row">
+              <span id="char-note" class="char-note" aria-live="polite"></span>
+              <span class="spacer"></span>
+              <button type="button" id="stop-btn" hidden>توقف</button>
+              <button type="submit" id="ask-btn">بپرس</button>
             </div>
-          </details>
+          </form>
         </div>
 
-        <div class="phase-panel" id="panel-2" role="tabpanel" aria-labelledby="tab-2" hidden>
-          <div id="quoted-doc" class="answer"></div>
-        </div>
-
-        <div class="phase-panel" id="panel-3" role="tabpanel" aria-labelledby="tab-3" hidden>
-          <!-- Research Mode (ADR-0008 + 0009): the guided research
-               journey. The map rides as the persistent side rail
-               (T10, GitLab #11): the journey strip and the route —
-               destination, research question, frontier, open
-               questions, decisions, fog, out of scope — stay beside
-               the chat, always visible without scrolling. The chips
-               under the latest reply are the journey's own moves
-               (guided answers, per-question gathers, checkpoint
-               decisions, the universal skip); the input arms after the
-               first answer exists, seeded by the ask and its Evidence
-               pool. -->
-          <div class="research-layout">
-            <div class="research-chatcol">
-              <div id="research-chat" class="research-chat" aria-live="polite">
-                <p class="empty">پس از پاسخ اول، گفتگوی پژوهش را اینجا آغاز کنید.</p>
-              </div>
-              <div id="research-suggest" class="research-suggest">
-                <!-- DRAFT label: the report chip «دریافت گزارش نشست»
-                     (the Session report's download, T19) is the draft
-                     platform name pending PM approval — CONTEXT.md's
-                     draft roster, 2026-09-19. The text lives in ONE
-                     server constant, ui/research.py's
-                     RESEARCH_REPORT_CHIP, and rides to the sheet in
-                     the suggestions payload, so a rename never
-                     touches this file. -->
-              </div>
-              <form id="research-form" class="research-form">
-                <textarea
-                  id="research-input"
-                  maxlength="2000"
-                  placeholder="پیام پژوهش خود را بنویسید"
-                  disabled
-                ></textarea>
-                <button type="submit" id="research-send" disabled>فرستادن</button>
-              </form>
-            </div>
-            <aside id="research-rail" class="research-rail" aria-label="نقشۀ پژوهش">
-              <h2 class="research-rail-title">نقشۀ پژوهش</h2>
-              <nav
-                id="research-journey"
-                class="research-journey"
-                aria-label="مراحل سفر پژوهش"
-                hidden
-              ></nav>
-              <div id="research-state-body">
-                <p class="empty">پس از آغاز گفتگو، نقشۀ پژوهش اینجا می‌آید.</p>
-              </div>
-            </aside>
-          </div>
-        </div>
-      </section>
-
-      <!-- The profile (T24, GitLab #27): the Account's own view — the
-           Balance (اعتبار), today's spend, and the Sessions' spend
-           history, newest Session first. The section never computes
-           Toman itself: /profile/data carries the numbers and each
-           entry's honesty badge. DRAFT display vocabulary, pending PM
-           approval (2026-09-19, CONTEXT.md's draft roster discipline) —
-           the two badges «اندازه‌گیری‌شده» (metered) and «تخمینی»
-           (estimated) live in ONE server constant pair, ui/serve.py's
-           PROFILE_METERED_BADGE / PROFILE_ESTIMATED_BADGE, and ride the
-           payload, so the PM's approval renames them in one line and
-           this file's render stays name-blind (the source-lock test
-           pins the strings together on both sides). -->
-      <section id="profile" hidden aria-label="پروفایل">
-        <h2>پروفایل</h2>
-        <p class="profile-numbers" id="profile-numbers">…</p>
-        <div id="profile-sessions"></div>
-      </section>
-    </main>
+        <!-- The profile (T24, GitLab #27): the Account's own view — the
+             Balance (اعتبار), today's spend, and the Sessions' spend
+             history, newest Session first. The section never computes
+             Toman itself: /profile/data carries the numbers and each
+             entry's honesty badge. DRAFT display vocabulary, pending PM
+             approval (2026-09-19, CONTEXT.md's draft roster discipline) —
+             the two badges «اندازه‌گیری‌شده» (metered) and «تخمینی»
+             (estimated) live in ONE server constant pair, ui/serve.py's
+             PROFILE_METERED_BADGE / PROFILE_ESTIMATED_BADGE, and ride the
+             payload, so the PM's approval renames them in one line and
+             this file's render stays name-blind (the source-lock test
+             pins the strings together on both sides). -->
+        <section id="profile" hidden aria-label="پروفایل">
+          <h2>پروفایل</h2>
+          <p class="profile-numbers" id="profile-numbers">…</p>
+          <div id="profile-sessions"></div>
+        </section>
+      </div>
+    </div>
 
     <!-- The Book reader (ADR-0007): the original PDFs, page-provenance
-         target of every quote on the sheet. Served from /books (see
+         target of every quote in the shell. Served from /books (see
          serve.py's routes); rendered client-side with the vendored
          pdf.js in ./vendor. -->
+    <div id="reader-backdrop" hidden></div>
     <aside id="reader" hidden aria-label="کتاب‌خوان">
       <header class="reader-head">
         <h2 class="reader-title" id="reader-title">کتاب</h2>
@@ -1392,28 +1655,207 @@
     </aside>
 
     <script>
+      // ===== The chat shell (ADR-0014, T27 stage 1) =====
+      // DRAFT display strings pending PM approval (CONTEXT.md's naming
+      // discipline, 2026-09-20) — everything new this shell shows that
+      // the roster does not already name, pinned here in ONE place so
+      // the PM's approval renames each in one line:
+      //   «فهرست نشست‌ها» (the sidebar) · «نشست تازه» (its button) ·
+      //   «توقف» (the stop button) · «تغییر پوسته»/«شب»/«روز» (theme) ·
+      //   the hero title and note, the starter questions, «پرسش متوقف
+      //   شد.» + the stop's charge note, «اکنون», the character note.
+
+      const SESSION_LIST_TITLE = "فهرست نشست‌ها";
+      const NEW_SESSION_LABEL = "نشست تازه";
+
+      const BOOK_TITLES = {
+        "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
+        "70143-336": "انسان ۲۵۰ ساله",
+      };
+
+      const toPersianDigits = (value) =>
+        String(value).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[d]);
+
+      const shellEl = document.getElementById("shell");
+      const sidebarEl = document.getElementById("session-list");
+      const slToggleEl = document.getElementById("sl-toggle");
+      const slCloseEl = document.getElementById("sl-close");
+      const slBackdropEl = document.getElementById("sl-backdrop");
+      const newSessionBtn = document.getElementById("new-session");
+      const sessionItemsEl = document.getElementById("session-items");
+      const sessionTitleEl = document.getElementById("session-title");
+      const bookChipEl = document.getElementById("session-book");
+      const newSessionView = document.getElementById("new-session-view");
+      const threadListEl = document.getElementById("thread-list");
+      const composerDock = document.getElementById("composer-dock");
       const form = document.getElementById("ask");
-      const phoneEl = document.getElementById("phone");
       const questionEl = document.getElementById("question");
       const buttonEl = document.getElementById("ask-btn");
-      const elapsedEl = document.getElementById("elapsed");
-      const ttftEl = document.getElementById("ttft");
-      const answerEl = document.getElementById("answer");
-      const citationsEl = document.getElementById("citations");
-      const citationsHeadingEl = document.getElementById("citations-heading");
-      const evidencePoolEl = document.getElementById("evidence-pool");
+      const stopBtn = document.getElementById("stop-btn");
+      const charNoteEl = document.getElementById("char-note");
       const statusEl = document.getElementById("status");
-      const quotedDocEl = document.getElementById("quoted-doc");
-      const researchChatEl = document.getElementById("research-chat");
-      const researchSuggestEl = document.getElementById("research-suggest");
-      const researchFormEl = document.getElementById("research-form");
-      const researchInputEl = document.getElementById("research-input");
-      const researchSendEl = document.getElementById("research-send");
-      const researchStateBodyEl = document.getElementById("research-state-body");
-      const researchJourneyEl = document.getElementById("research-journey");
-      const phaseNowEl = document.getElementById("phase-now");
-      // Bumped on every ask so a slow composer reply for an older question
-      // is dropped instead of swapping the newer answer or its citations.
+
+      // The Session: one sitting, one Book, resumable once the store
+      // lands (T27 stage 3). Stage 1 keeps it browser-local and honest:
+      // a refresh returns to the empty state with the last Book
+      // pre-highlighted, never a fake history.
+      const sessionState = { active: false, book: null, titled: false };
+
+      const truncateTitle = (text) => {
+        const t = String(text).replace(/\s+/g, " ").trim();
+        return t.length > 42 ? t.slice(0, 42) + "…" : t;
+      };
+
+      function renderSessionList() {
+        sessionItemsEl.replaceChildren();
+        if (!sessionState.active) return;
+        const item = document.createElement("div");
+        item.className = "session-item active";
+        const title = document.createElement("div");
+        title.className = "session-item-title";
+        title.textContent = sessionTitleEl.textContent;
+        const meta = document.createElement("div");
+        meta.className = "session-item-meta";
+        meta.textContent = `${BOOK_TITLES[sessionState.book] || ""} · اکنون`;
+        item.append(title, meta);
+        sessionItemsEl.append(item);
+      }
+
+      function setSidebar(open) {
+        shellEl.classList.toggle("sl-open", open);
+        slBackdropEl.hidden = !open;
+        slToggleEl.setAttribute("aria-expanded", String(open));
+      }
+      slToggleEl.addEventListener("click", () => setSidebar(true));
+      slCloseEl.addEventListener("click", () => setSidebar(false));
+      slBackdropEl.addEventListener("click", () => setSidebar(false));
+
+      // The theme: system preference by default, the toggle persists an
+      // explicit choice; the head script set data-theme before paint.
+      const themeToggle = document.getElementById("theme-toggle");
+      function syncThemeButton() {
+        themeToggle.textContent =
+          document.documentElement.dataset.theme === "dark" ? "روز" : "شب";
+      }
+      themeToggle.addEventListener("click", () => {
+        const next =
+          document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+        document.documentElement.dataset.theme = next;
+        try {
+          localStorage.setItem("theme", next);
+        } catch {}
+        syncThemeButton();
+      });
+      syncThemeButton();
+
+      function markPickedCard(doc) {
+        document.querySelectorAll(".book-card").forEach((card) => {
+          card.classList.toggle("picked", card.dataset.doc === doc);
+        });
+      }
+      try {
+        markPickedCard(localStorage.getItem("selectedBook"));
+      } catch {}
+
+      function startSession(bookDoc, seedQuestion) {
+        sessionState.active = true;
+        sessionState.book = bookDoc;
+        sessionState.titled = false;
+        try {
+          localStorage.setItem("selectedBook", bookDoc);
+        } catch {}
+        markPickedCard(bookDoc);
+        newSessionView.hidden = true;
+        threadListEl.hidden = false;
+        composerDock.hidden = false;
+        sessionTitleEl.textContent = BOOK_TITLES[bookDoc] || bookDoc;
+        bookChipEl.textContent = "کتاب";
+        bookChipEl.hidden = false;
+        if (seedQuestion) {
+          questionEl.value = seedQuestion;
+          autosizeComposer();
+          updateCharNote();
+        }
+        renderSessionList();
+        if (!window.matchMedia("(pointer: coarse)").matches) {
+          questionEl.focus();
+        }
+      }
+
+      newSessionBtn.addEventListener("click", () => {
+        setSidebar(false);
+        if (!sessionState.active) return;
+        if (quotedAbort) quotedAbort.abort();
+        resetResearch();
+        citationRun += 1;
+        askState = null;
+        quotedAbort = null;
+        sessionState.active = false;
+        sessionState.book = null;
+        sessionState.titled = false;
+        threadListEl.replaceChildren();
+        threadListEl.hidden = true;
+        newSessionView.hidden = false;
+        composerDock.hidden = true;
+        stopBtn.hidden = true;
+        sessionTitleEl.textContent = "نشست";
+        bookChipEl.hidden = true;
+        renderSessionList();
+      });
+
+      // ===== The composer: autosize, the counter near the ceiling, the
+      // per-Session draft, Enter-to-send on a pointer device only.
+      function autosizeComposer() {
+        questionEl.style.height = "auto";
+        // border-box: hide the scrollbar until the ceiling clips the
+        // content, or the measured height runs two border-pixels short
+        // and a dead scrollbar appears on a single line.
+        questionEl.style.overflowY = "hidden";
+        const h = Math.min(questionEl.scrollHeight, 144);
+        questionEl.style.height = h + "px";
+        if (questionEl.scrollHeight > 144) {
+          questionEl.style.overflowY = "auto";
+        }
+      }
+      function updateCharNote() {
+        const left = 2000 - questionEl.value.length;
+        charNoteEl.textContent =
+          left <= 200 ? `${toPersianDigits(left)} نویسه باقی مانده` : "";
+      }
+      questionEl.addEventListener("input", () => {
+        autosizeComposer();
+        updateCharNote();
+        try {
+          localStorage.setItem("composerDraft", questionEl.value);
+        } catch {}
+      });
+      try {
+        questionEl.value = localStorage.getItem("composerDraft") || "";
+      } catch {}
+      questionEl.addEventListener("keydown", (event) => {
+        if (
+          event.key === "Enter" &&
+          !event.shiftKey &&
+          !window.matchMedia("(pointer: coarse)").matches
+        ) {
+          event.preventDefault();
+          if (!buttonEl.disabled) form.requestSubmit();
+        }
+      });
+
+      // ===== Per-ask surface: one assistant article per ask. The
+      // element bindings below are `let` — a new ask rebuilds them and
+      // every downstream function keeps operating on the live ask.
+      let answerEl = null;
+      let citationsEl = null;
+      let evidencePoolEl = null;
+      let quotedDocEl = null;
+      let elapsedEl = null;
+      let ttftEl = null;
+      let phaseNowEl = null;
+      let recallMoreRow = null;
+      let recallMoreBtn = null;
+      let recallMoreStatus = null;
       let citationRun = 0; // In-flight phase 2 fetches; aborted when a new ask starts.
       let quotedAbort = null;
       // The current ask's own state for «جست‌وجوی بیشتر» (ADR-0010):
@@ -1428,41 +1870,141 @@
       let researchSources = [];
       let researchSessionId = null;
 
-      // The three answering phases (PM brief, 2026-09-11): one switchable
-      // section each, a pulsing dot on the phase being generated, a
-      // "now generating" line that stays truthful even from another tab,
-      // and a per-phase timer for phases 2 and 3 that freezes at settle.
+      // The three answering phases (ADR-0014's thread shape): a quiet
+      // marker per phase riding the ask's article, a pulsing dot on the
+      // phase being generated, a "now generating" line, and a per-phase
+      // timer for phases 2 and 3 that freezes at settle.
       const PHASE_NAMES = {
         1: "پاسخ اول",
         2: "پاسخ استنادی",
         3: "حالت پژوهش",
       };
-      const phaseEls = {
-        1: { tab: document.getElementById("tab-1"), timer: null, interval: null, startedAt: null },
-        2: { tab: document.getElementById("tab-2"), timer: document.getElementById("timer-2"), interval: null, startedAt: null },
-        3: { tab: document.getElementById("tab-3"), timer: document.getElementById("timer-3"), interval: null, startedAt: null },
+      let phaseEls = {
+        1: { mark: null, timer: null, interval: null, startedAt: null },
+        2: { mark: null, timer: null, interval: null, startedAt: null },
+        3: { mark: null, timer: null, interval: null, startedAt: null },
       };
 
-      function selectPhase(n) {
-        for (const p of [1, 2, 3]) {
-          phaseEls[p].tab.setAttribute("aria-selected", p === n ? "true" : "false");
-          document.getElementById(`panel-${p}`).hidden = p !== n;
+      function buildPhaseMark(name, withTimer) {
+        const mark = document.createElement("span");
+        mark.className = "phase-mark";
+        mark.dataset.state = "idle";
+        const dot = document.createElement("span");
+        dot.className = "phase-dot";
+        dot.setAttribute("aria-hidden", "true");
+        mark.append(dot, document.createTextNode(name));
+        let timer = null;
+        if (withTimer) {
+          timer = document.createElement("span");
+          timer.className = "phase-timer";
+          timer.hidden = true;
+          mark.append(timer);
         }
-        // The map's side rail needs the room (T10, GitLab #11): phase 3
-        // widens the sheet so chat and rail sit beside each other; the
-        // other phases keep the narrow sheet.
-        document.body.classList.toggle("research-open", n === 3);
-      }
-      for (const n of [1, 2, 3]) {
-        phaseEls[n].tab.addEventListener("click", () => selectPhase(n));
+        return { mark, timer };
       }
 
-      // idle = not started yet (tab disabled); ready = waiting for the
-      // operator; running = being generated; done / failed / skipped =
-      // settled. Only idle tabs stay unclickable.
+      function newAskSurface(question) {
+        const row = document.createElement("div");
+        row.className = "msg-user-row";
+        const bubble = document.createElement("div");
+        bubble.className = "msg-user";
+        const p = document.createElement("p");
+        p.textContent = question;
+        bubble.append(p);
+        row.append(bubble);
+
+        const article = document.createElement("article");
+        article.className = "msg-assistant";
+
+        const phaseRow = document.createElement("div");
+        phaseRow.className = "phase-row";
+        const one = buildPhaseMark(PHASE_NAMES[1], false);
+        const two = buildPhaseMark(PHASE_NAMES[2], true);
+        phaseRow.append(one.mark, two.mark);
+
+        phaseNowEl = document.createElement("p");
+        phaseNowEl.className = "phase-now";
+        phaseNowEl.hidden = true;
+
+        answerEl = document.createElement("div");
+        answerEl.className = "answer";
+
+        // The Evidence pool stays visible, collapsed (issue #28):
+        // the Quote selection renders as the first answer above it
+        // and the pool remains phase 2's exact payload.
+        evidencePoolEl = document.createElement("details");
+        evidencePoolEl.className = "evidence-pool";
+        const summary = document.createElement("summary");
+        summary.textContent = "همۀ نقل‌قول‌های بازیابی‌شده";
+        const poolHeading = document.createElement("h2");
+        poolHeading.className = "citations-heading";
+        poolHeading.textContent = "استناد";
+        citationsEl = document.createElement("div");
+        citationsEl.className = "citations";
+        const recallRow = document.createElement("div");
+        recallRow.className = "recall-more-row";
+        recallRow.hidden = true;
+        recallMoreBtn = document.createElement("button");
+        recallMoreBtn.type = "button";
+        recallMoreBtn.textContent = "جست‌وجوی بیشتر";
+        recallMoreStatus = document.createElement("span");
+        recallMoreStatus.className = "composer-status";
+        recallRow.append(recallMoreBtn, recallMoreStatus);
+        evidencePoolEl.append(summary, poolHeading, citationsEl, recallRow);
+
+        quotedDocEl = document.createElement("div");
+        quotedDocEl.className = "quoted-doc";
+
+        const meta = document.createElement("div");
+        meta.className = "ask-meta";
+        ttftEl = document.createElement("span");
+        ttftEl.className = "ttft";
+        ttftEl.hidden = true;
+        elapsedEl = document.createElement("span");
+        elapsedEl.className = "elapsed";
+        elapsedEl.hidden = true;
+        meta.append(ttftEl, elapsedEl);
+
+        article.append(
+          phaseRow,
+          phaseNowEl,
+          answerEl,
+          evidencePoolEl,
+          quotedDocEl,
+          meta
+        );
+        threadListEl.append(row, article);
+
+        phaseEls = {
+          1: { mark: one.mark, timer: null, interval: null, startedAt: null },
+          2: { mark: two.mark, timer: two.timer, interval: null, startedAt: null },
+          3: { mark: null, timer: null, interval: null, startedAt: null },
+        };
+
+        recallMoreRow = recallRow;
+        recallMoreBtn.addEventListener("click", onRecallMoreClick);
+      }
+
+      // The map's side rail needs the room (T10, GitLab #11): an active
+      // research conversation widens the thread so chat and rail sit
+      // beside each other; selectPhase also scrolls the phase's landing
+      // spot into view.
+      function selectPhase(n, scroll = true) {
+        document.body.classList.toggle("research-open", n === 3);
+        if (!scroll) return;
+        if (n === 3) {
+          researchSectionEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+        } else {
+          phaseEls[n]?.mark?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }
+
+      // ready = waiting for the operator; running = being generated;
+      // done / failed / skipped = settled.
       function setPhaseState(n, state) {
-        phaseEls[n].tab.dataset.state = state;
-        phaseEls[n].tab.disabled = state === "idle";
+        if (phaseEls[n]?.mark) {
+          phaseEls[n].mark.dataset.state = state;
+        }
       }
 
       function clockText(ms) {
@@ -1498,6 +2040,7 @@
       }
 
       function setRunningPhase(n) {
+        if (!phaseNowEl) return;
         if (n === null) {
           phaseNowEl.hidden = true;
           return;
@@ -1505,21 +2048,6 @@
         phaseNowEl.hidden = false;
         phaseNowEl.textContent = `در حال تولید: ${PHASE_NAMES[n]}…`;
       }
-
-      // The phone gates the sheet: each number gets five chats a day,
-      // counted server-side. It rides in a header, remembered between
-      // visits; the server never forwards it to Cognee. Headers are
-      // latin-1, so Farsi digits are normalized before they ride.
-      const toAsciiDigits = (value) =>
-        String(value).replace(/[۰-۹٠-٩]/g, (ch) =>
-          String.fromCharCode(ch.charCodeAt(0) & 0xf)
-        );
-      phoneEl.value = toAsciiDigits(localStorage.getItem("sessionPhone") || "");
-      phoneEl.addEventListener("change", () => {
-        phoneEl.value = toAsciiDigits(phoneEl.value.trim());
-        localStorage.setItem("sessionPhone", phoneEl.value);
-      });
-      const phoneHeader = () => ({ "X-Session-Phone": phoneEl.value.trim() });
 
       function setText(el, text, className) {
         el.className = className;
@@ -1614,7 +2142,7 @@
       }
 
       // ===== Citation → Book-page targets (ADR-0007) =====
-      // Every quote on the sheet is clickable: its span carries the
+      // Every quote in the shell is clickable: its span carries the
       // Evidence locator's dataset name and page range, and clicking
       // opens the reader on that page with the quote highlighted.
       const BOOK_DATASET_BY_TITLE = {
@@ -1737,13 +2265,14 @@
         return para;
       }
 
-      // Phase 2 runs in its own section: the streamed answer stays put in
-      // phase 1's, and the guarded document lands in phase 2's only on
-      // success — non-empty blocks mean the server's swap threshold passed
-      // (at least two quoting paragraphs, or one plus a heading). On
-      // failure, timeout, or an empty document the section says so and
-      // phase 1's answer remains the answer (AC-4). The stream path is
-      // untouched — this runs after the streamed answer has rendered (AC-5).
+      // Phase 2 runs in its own section of the ask's article: the first
+      // answer stays put, and the guarded document lands beneath phase
+      // 2's marker only on success — non-empty blocks mean the server's
+      // swap threshold passed (at least two quoting paragraphs, or one
+      // plus a heading). On failure, timeout, or an empty document the
+      // section says so and phase 1's answer remains the answer (AC-4).
+      // The stream path is untouched — this runs after the streamed
+      // answer has rendered (AC-5).
       function failQuotedPhase() {
         setPhaseState(2, "failed");
         stopPhaseTimer(2);
@@ -1792,10 +2321,7 @@
         try {
           const res = await fetch("/quoted-answer", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json; charset=utf-8",
-              ...phoneHeader(),
-            },
+            headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ question, answer, sources }),
             signal: quotedAbort.signal,
           });
@@ -1838,8 +2364,8 @@
           setPhaseState(2, "done");
           stopPhaseTimer(2);
           setRunningPhase(null);
-          // Bring the fresh document forward: each phase shows itself
-          // when it lands.
+          // Bring the fresh document forward: each phase scrolls its
+          // landing spot into view when it lands.
           selectPhase(2);
           onSettled();
         } catch {
@@ -1859,8 +2385,8 @@
       // still feeds the Quoted answer's framing), and an empty or
       // failed selection falls back to the prose render: the sheet is
       // never left empty. This runs in parallel with phase 2, which
-      // receives the same pool as its payload; each lands in its own
-      // tab. A new ask aborts this fetch with the rest (quotedAbort).
+      // receives the same pool as its payload. A new ask aborts this
+      // fetch with the rest (quotedAbort).
       async function renderQuoteSelection(question, prose, citations) {
         const run = citationRun;
         const sources = evidenceSources(citations);
@@ -1880,10 +2406,7 @@
         try {
           const res = await fetch("/quote-selection", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json; charset=utf-8",
-              ...phoneHeader(),
-            },
+            headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ question, sources }),
             signal: quotedAbort.signal,
           });
@@ -1928,6 +2451,7 @@
           }
           answerEl.className = "answer";
           answerEl.replaceChildren(doc);
+          scrollThreadEnd();
         } catch {
           if (run !== citationRun) {
             return;
@@ -1936,18 +2460,26 @@
         }
       }
 
-      // The Research Mode client (ADR-0008): the phase-3 tab's guided
-      // research conversation. A message POST answers a turn identity
-      // immediately (202) and the sheet polls /research/turn on a
-      // chained setTimeout — the dive's job surface, per turn.
+      // The Research Mode client (ADR-0008): the guided research
+      // conversation of the Session. A message POST answers a turn
+      // identity immediately (202) and the shell polls /research/turn on
+      // a chained setTimeout — the dive's job surface, per turn.
       // sessionStorage keeps the session (and any in-flight turn) so a
       // browser refresh reconnects instead of throwing the conversation
-      // away. The search shapes stay pinned server-side: the sheet
-      // sends only text, the phone, and — on the creating call — the
-      // ask's question with its Evidence pool.
+      // away. The search shapes stay pinned server-side: the shell
+      // sends only text and — on the creating call — the ask's question
+      // with its Evidence pool.
       const RESEARCH_POLL_MS = 2000;
       let researchPollTimer = null;
       let researchStatusEl = null;
+      let researchSectionEl = null;
+      let researchChatEl = null;
+      let researchSuggestEl = null;
+      let researchFormEl = null;
+      let researchInputEl = null;
+      let researchSendEl = null;
+      let researchStateBodyEl = null;
+      let researchJourneyEl = null;
 
       const storedResearch = () => {
         try {
@@ -1969,7 +2501,99 @@
       }
 
       function scrollResearch() {
-        researchChatEl.scrollIntoView({ block: "end", behavior: "smooth" });
+        researchChatEl?.scrollIntoView({ block: "end", behavior: "smooth" });
+      }
+
+      function scrollThreadEnd() {
+        window.scrollTo({
+          top: document.documentElement.scrollHeight,
+          behavior: "smooth",
+        });
+      }
+
+      // One research section per Session, appended to the thread when
+      // the ask arms it; a new ask closes it (the server aborts the
+      // in-flight turn and closes the session on the ask's recall POST).
+      function createResearchSection() {
+        if (researchSectionEl) return;
+        researchSectionEl = document.createElement("section");
+        researchSectionEl.className = "research-sec";
+        researchSectionEl.innerHTML = `
+          <div class="phase-row">
+            <span class="phase-mark" data-phase="3" data-state="idle"><span class="phase-dot" aria-hidden="true"></span>${PHASE_NAMES[3]}<span class="phase-timer" hidden></span></span>
+          </div>
+          <!-- Research Mode (ADR-0008 + 0009): the guided research
+               journey. The map rides as the persistent side rail
+               (T10, GitLab #11): the journey strip and the route —
+               destination, research question, frontier, open
+               questions, decisions, fog, out of scope — stay beside
+               the chat, always visible without scrolling. The chips
+               under the latest reply are the journey's own moves
+               (guided answers, per-question gathers, checkpoint
+               decisions, the universal skip); the input arms after the
+               first answer exists, seeded by the ask and its Evidence
+               pool. -->
+          <div class="research-layout">
+            <div class="research-chatcol">
+              <div id="research-chat" class="research-chat" aria-live="polite"></div>
+              <!-- DRAFT label: the report chip «دریافت گزارش نشست»
+                   (the Session report's download, T19) is the draft
+                   platform name pending PM approval — CONTEXT.md's
+                   draft roster, 2026-09-19. The text lives in ONE
+                   server constant, ui/research.py's
+                   RESEARCH_REPORT_CHIP, and rides to the shell in
+                   the suggestions payload, so a rename never
+                   touches this file. -->
+              <div id="research-suggest" class="research-suggest"></div>
+              <form id="research-form" class="research-form">
+                <textarea
+                  id="research-input"
+                  maxlength="2000"
+                  placeholder="پیام پژوهش خود را بنویسید"
+                  disabled
+                ></textarea>
+                <button type="submit" id="research-send" disabled>فرستادن</button>
+              </form>
+            </div>
+            <aside id="research-rail" class="research-rail" aria-label="نقشۀ پژوهش">
+              <h2 class="research-rail-title">نقشۀ پژوهش</h2>
+              <nav
+                id="research-journey"
+                class="research-journey"
+                aria-label="مراحل سفر پژوهش"
+                hidden
+              ></nav>
+              <div id="research-state-body">
+                <p class="empty">پس از آغاز گفتگو، نقشۀ پژوهش اینجا می‌آید.</p>
+              </div>
+            </aside>
+          </div>`;
+        threadListEl.append(researchSectionEl);
+        researchChatEl = researchSectionEl.querySelector("#research-chat");
+        researchSuggestEl = researchSectionEl.querySelector("#research-suggest");
+        researchFormEl = researchSectionEl.querySelector("#research-form");
+        researchInputEl = researchSectionEl.querySelector("#research-input");
+        researchSendEl = researchSectionEl.querySelector("#research-send");
+        researchStateBodyEl = researchSectionEl.querySelector("#research-state-body");
+        researchJourneyEl = researchSectionEl.querySelector("#research-journey");
+        const three = researchSectionEl.querySelector('.phase-mark[data-phase="3"]');
+        phaseEls[3].mark = three;
+        phaseEls[3].timer = three.querySelector(".phase-timer");
+        researchChatEl.replaceChildren(
+          researchText("پس از پاسخ اول، گفتگوی پژوهش را اینجا آغاز کنید.", "empty")
+        );
+        researchFormEl.addEventListener("submit", (event) => {
+          event.preventDefault();
+          sendResearchMessage();
+        });
+        // Enter sends (Shift+Enter breaks a line) — a chat box, not a
+        // document editor.
+        researchInputEl.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            researchFormEl.requestSubmit();
+          }
+        });
       }
 
       // One assistant or user bubble; the body is a rendered blocks
@@ -2168,7 +2792,7 @@
       // and saved as a blob, no message sent, no turn spent. The label
       // rides in from the server's ONE constant (ui/research.py's
       // RESEARCH_REPORT_CHIP) and is DRAFT, pending PM approval — the
-      // sheet renames nothing (see the draft marker on #research-suggest).
+      // shell renames nothing (see the draft marker on #research-suggest).
       // The live session price (T22, GitLab #24): one read after each
       // phase lands — the ledger holds the truth, this only renders it.
       async function refreshUsageLive() {
@@ -2190,7 +2814,7 @@
         try {
           const res = await fetch(
             `/research/report?session=${encodeURIComponent(researchSessionId)}`,
-            { headers: phoneHeader(), cache: "no-store" }
+            { cache: "no-store" }
           );
           if (!res.ok) {
             const payload = await res.json().catch(() => ({}));
@@ -2279,10 +2903,7 @@
         try {
           const res = await fetch("/research/decide", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json; charset=utf-8",
-              ...phoneHeader(),
-            },
+            headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({
               session_id: researchSessionId,
               proposal_id: proposalId,
@@ -2315,7 +2936,7 @@
           try {
             const res = await fetch(
               `/research/turn?turn=${encodeURIComponent(turnId)}`,
-              { headers: phoneHeader(), cache: "no-store" }
+              { cache: "no-store" }
             );
             if (res.status === 404) {
               // Unknown turn: the server restarted and took the registry
@@ -2348,10 +2969,7 @@
             renderResearchReply(payload);
             clearResearch();
             if (researchSessionId) {
-              storeResearch({
-                session_id: researchSessionId,
-                phone: phoneEl.value.trim(),
-              });
+              storeResearch({ session_id: researchSessionId });
             }
             setPhaseState(3, "done");
             stopPhaseTimer(3);
@@ -2408,19 +3026,16 @@
         } else {
           // The creating call seeds the session with the ask and its
           // Evidence pool (ADR 0008) — after this, text alone. The
-          // ask's Book selection rides along (ADR-0010): the session's
-          // gathers search the selected Books only.
+          // Session's Book pick rides along (ADR-0014): the session's
+          // gathers search that Book only.
           body.question = researchQuery;
           body.sources = researchSources;
-          if (askState) body.datasets = askState.datasets;
+          if (sessionState.book) body.datasets = [sessionState.book];
         }
         try {
           const res = await fetch("/research/message", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json; charset=utf-8",
-              ...phoneHeader(),
-            },
+            headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify(body),
           });
           const payload = await res.json().catch(() => ({}));
@@ -2443,7 +3058,6 @@
           storeResearch({
             session_id: researchSessionId,
             turn_id: payload.turn_id,
-            phone: phoneEl.value.trim(),
           });
           startPhaseTimer(3);
           pollResearchTurn(payload.turn_id);
@@ -2454,32 +3068,21 @@
           armResearchInput();
         }
       }
-      researchFormEl.addEventListener("submit", (event) => {
-        event.preventDefault();
-        sendResearchMessage();
-      });
-      // Enter sends (Shift+Enter breaks a line) — a chat box, not a
-      // document editor.
-      researchInputEl.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" && !event.shiftKey) {
-          event.preventDefault();
-          researchFormEl.requestSubmit();
-        }
-      });
 
-      // The ask arms the tab: once the first answer exists, Research
-      // Mode is ready — seeded with the ask and its pool, never
-      // automatic (the dive's operator-start rule, kept).
+      // The ask arms the Session's research section: once the first
+      // answer exists, Research Mode is ready — seeded with the ask and
+      // its pool, never automatic (the dive's operator-start rule, kept).
       function armResearch(query, sources) {
         researchQuery = query;
         researchSources = sources;
+        createResearchSection();
         armResearchInput();
       }
 
-      // A new ask owns the sheet: stop polling, drop the stored
-      // identities, and reset the conversation surface — the server
-      // aborts the phone's in-flight turn and closes its session on the
-      // ask's own recall POST (ADR 0008).
+      // A new ask owns the thread: stop polling, drop the stored
+      // identities, and close the research section — the server
+      // aborts the Account's in-flight turn and closes its session on
+      // the ask's own recall POST (ADR 0008).
       function resetResearch() {
         stopResearchPolling();
         clearResearch();
@@ -2487,45 +3090,56 @@
         researchQuery = null;
         researchSources = [];
         researchStatusEl = null;
-        researchChatEl.replaceChildren(
-          researchText("پس از پاسخ اول، گفتگوی پژوهش را اینجا آغاز کنید.", "empty")
-        );
-        researchSuggestEl.replaceChildren();
-        researchJourneyEl.hidden = true;
-        researchJourneyEl.replaceChildren();
-        researchStateBodyEl.replaceChildren(
-          researchText("پس از آغاز گفتگو، نقشۀ پژوهش اینجا می‌آید.", "empty")
-        );
-        researchInputEl.value = "";
-        researchInputEl.disabled = true;
-        researchSendEl.disabled = true;
+        if (researchSectionEl) {
+          researchSectionEl.remove();
+          researchSectionEl = null;
+        }
+        researchChatEl = null;
+        researchSuggestEl = null;
+        researchFormEl = null;
+        researchInputEl = null;
+        researchSendEl = null;
+        researchStateBodyEl = null;
+        researchJourneyEl = null;
+        if (phaseEls) {
+          stopPhaseTimer(3);
+          phaseEls[3].mark = null;
+          phaseEls[3].timer = null;
+          phaseEls[3].startedAt = null;
+        }
+        document.body.classList.remove("research-open");
       }
 
-      // Refresh reconnect: a stored session means this phone has a
+      // Refresh reconnect: a stored identity means this Account has a
       // research conversation the reload must not throw away. The
       // transcript is RE-FETCHED (ADR-0011 — what was said stays
       // visible across a refresh), the map re-renders from
       // /research/state, and any in-flight turn is polled to its
-      // settle.
+      // settle. Until the Session store lands (T27 stage 3) the resumed
+      // conversation hangs in a bare thread; the store restores its ask
+      // beside it.
       (function reconnectResearch() {
         const stored = storedResearch();
         if (!stored || !stored.session_id) return;
-        if (stored.phone && stored.phone !== phoneEl.value.trim()) {
-          clearResearch();
-          return;
-        }
         researchSessionId = stored.session_id;
-        selectPhase(3);
+        sessionState.active = true;
+        newSessionView.hidden = true;
+        threadListEl.hidden = false;
+        composerDock.hidden = false;
+        sessionTitleEl.textContent = PHASE_NAMES[3];
+        renderSessionList();
+        createResearchSection();
+        selectPhase(3, false);
         (async () => {
           try {
             const [msgRes, stateRes] = await Promise.all([
               fetch(
                 `/research/messages?session=${encodeURIComponent(researchSessionId)}`,
-                { headers: phoneHeader(), cache: "no-store" }
+                { cache: "no-store" }
               ),
               fetch(
                 `/research/state?session=${encodeURIComponent(researchSessionId)}`,
-                { headers: phoneHeader(), cache: "no-store" }
+                { cache: "no-store" }
               ),
             ]);
             if (msgRes.ok) {
@@ -2605,60 +3219,12 @@
         }
       }
 
-      // ===== The ask's Book pick + the «جست‌وجوی بیشتر» widen
-      // (ADR-0010/0011) =====
-      const bookToggles = Array.from(
-        document.querySelectorAll(".book-toggle")
-      );
-      const bookHintEl = document.getElementById("book-hint");
-      const recallMoreRow = document.getElementById("recall-more-row");
-      const recallMoreBtn = document.getElementById("recall-more");
-      const recallMoreStatus = document.getElementById("recall-more-status");
-
-      // The picked Book — EXACTLY ONE per investigation (ADR-0011),
-      // persisted; an ask without a pick never fires.
+      // The Session's Book pick (ADR-0014): EXACTLY ONE per Session,
+      // bound at creation from the empty state's cards; the ask runs
+      // only inside an active Session.
       function selectedDatasets() {
-        const picked = bookToggles.find((b) => b.classList.contains("on"));
-        return picked ? [picked.dataset.doc] : [];
+        return sessionState.book ? [sessionState.book] : [];
       }
-
-      function askBlockedByBook() {
-        return !bookToggles.some((b) => b.classList.contains("on"));
-      }
-
-      function syncAskGate() {
-        const blocked = askBlockedByBook();
-        buttonEl.disabled = blocked;
-        bookHintEl.hidden = !blocked;
-      }
-
-      function pickBook(toggle) {
-        bookToggles.forEach((b) => {
-          const on = b === toggle;
-          b.classList.toggle("on", on);
-          b.setAttribute("aria-checked", on ? "true" : "false");
-        });
-        try {
-          localStorage.setItem("selectedBook", toggle.dataset.doc);
-        } catch {}
-        syncAskGate();
-      }
-
-      // A stored pick survives the refresh (the recorded complaint: a
-      // reload silently reset the sheet to searching both Books).
-      (function restoreBookPick() {
-        let stored = null;
-        try {
-          stored = localStorage.getItem("selectedBook");
-        } catch {}
-        const match = bookToggles.find((b) => b.dataset.doc === stored);
-        if (match) pickBook(match);
-        syncAskGate();
-      })();
-
-      bookToggles.forEach((toggle) => {
-        toggle.addEventListener("click", () => pickBook(toggle));
-      });
 
       function showRecallMore() {
         recallMoreRow.hidden = false;
@@ -2671,7 +3237,7 @@
         recallMoreStatus.textContent = "";
       }
 
-      recallMoreBtn.addEventListener("click", async () => {
+      async function onRecallMoreClick() {
         if (recallMoreBusy || !askState) return;
         recallMoreBusy = true;
         recallMoreBtn.disabled = true;
@@ -2679,10 +3245,7 @@
         try {
           const res = await fetch("/recall-more", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json; charset=utf-8",
-              ...phoneHeader(),
-            },
+            headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({
               question: askState.question,
               sources: evidenceSources(askState.lines),
@@ -2719,21 +3282,48 @@
           recallMoreBusy = false;
           recallMoreBtn.disabled = false;
         }
+      }
+
+      // The honest stop (ADR-0014): stopping keeps the charge for what
+      // already streamed — the ledger has no refund path; the note says
+      // so in plain Farsi.
+      stopBtn.addEventListener("click", () => {
+        if (quotedAbort) quotedAbort.abort();
       });
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const query = questionEl.value.trim();
-        if (!phoneEl.value.trim()) {
-          phoneEl.focus();
-          return;
-        }
+        if (!sessionState.active) return;
+        if (buttonEl.disabled) return; // a run is live
         if (!query) {
           questionEl.focus();
           return;
         }
 
+        // A new ask opens a new thread entry: abort any in-flight phase
+        // 2 of the previous one, stop the research poll loop, close the
+        // previous research section, then rebuild the surface. The
+        // research turn's server-side abort rides this ask's own recall
+        // POST (ADR 0008).
+        if (quotedAbort) quotedAbort.abort();
+        quotedAbort = new AbortController();
+        resetResearch();
+        for (const n of [1, 2, 3]) {
+          stopPhaseTimer(n);
+          phaseEls[n].startedAt = null;
+          if (phaseEls[n].timer) phaseEls[n].timer.hidden = true;
+        }
+        newAskSurface(query);
+        if (!sessionState.titled) {
+          sessionState.titled = true;
+          sessionTitleEl.textContent = truncateTitle(query);
+        }
+        renderSessionList();
+        scrollThreadEnd();
+
         buttonEl.disabled = true;
+        stopBtn.hidden = false;
         elapsedEl.hidden = false;
         ttftEl.hidden = false;
         ttftEl.textContent = "نخستین توکن: …";
@@ -2756,25 +3346,11 @@
           clearInterval(tick);
           const seconds = Math.round((Date.now() - started) / 1000);
           elapsedEl.textContent = `${seconds} ثانیه`;
+          stopBtn.hidden = true;
         };
 
-        // A new ask owns the sheet: abort any in-flight phase 2 of the
-        // previous one and reset all three sections to idle. The
-        // research turn's server-side abort rides this ask's own recall
-        // POST (ADR 0008) — here the client only stops polling and
-        // drops the stored session identity.
-        if (quotedAbort) quotedAbort.abort();
-        quotedAbort = new AbortController();
-        resetResearch();
-        for (const n of [1, 2, 3]) {
-          stopPhaseTimer(n);
-          phaseEls[n].startedAt = null;
-          if (phaseEls[n].timer) phaseEls[n].timer.hidden = true;
-          setPhaseState(n, "idle");
-        }
         setPhaseState(1, "running");
         setRunningPhase(1);
-        selectPhase(1);
         quotedDocEl.replaceChildren();
         setText(answerEl, "در حال پرسیدن…", "empty");
         citationRun += 1;
@@ -2789,6 +3365,9 @@
         waiting.className = "empty";
         waiting.textContent = "استناد پس از پاسخ می‌آید.";
         citationsEl.append(waiting);
+        try {
+          localStorage.removeItem("composerDraft");
+        } catch {}
 
         const textOf = (payload) =>
           Array.isArray(payload) ? payload[0]?.text || "" : payload.text || "";
@@ -2796,17 +3375,14 @@
         // The phase-1 citation fallback (ADR-0011): the first message's
         // role is to FIND CITATIONS. When the streamed reply carries no
         // Evidence block, ONE pinned reference-on search over the
-        // question (the ask's selected Books) fetches the pool so the
-        // Quote selection and phase 2 still run; nothing found lands
+        // question (the Session's Book) fetches the pool so the Quote
+        // selection and phase 2 still run; nothing found lands
         // the honest no-citation note, never a generic answer.
         async function fetchFallbackPool() {
           try {
             const res = await fetch("/evidence-fallback", {
               method: "POST",
-              headers: {
-                "Content-Type": "application/json; charset=utf-8",
-                ...phoneHeader(),
-              },
+              headers: { "Content-Type": "application/json; charset=utf-8" },
               body: JSON.stringify({
                 question: query,
                 datasets: selectedDatasets(),
@@ -2837,7 +3413,7 @@
           citationsEl.replaceChildren();
           if (!citations.length) {
             // No Evidence block in the stream: the pinned searcher gets
-            // ONE chance to fetch the citation pool before the sheet
+            // ONE chance to fetch the citation pool before the shell
             // concedes (ADR-0011).
             const status = document.createElement("p");
             status.className = "composer-status";
@@ -2909,8 +3485,7 @@
             };
             showRecallMore();
             // Phase 2 starts right here on the same pool (its exact
-            // payload) and runs in PARALLEL with the picker (issue #28):
-            // each lands in its own tab.
+            // payload) and runs in PARALLEL with the picker (issue #28).
             renderQuotedAnswer(query, answer, citations, stopTimer);
             // The Quote selection replaces the prose as the first
             // answer (issue #28).
@@ -2924,7 +3499,6 @@
             method: "POST",
             headers: {
               "Content-Type": "application/json; charset=utf-8",
-              ...phoneHeader(),
             },
             body: JSON.stringify({
               searchType: "HYBRID_COMPLETION",
@@ -2948,9 +3522,9 @@
                   "empty"
                 );
               } else if (name === "delta") {
-                // The prose is no longer painted (issue #28): deltas
-                // still arrive and still drive the TTFT readout —
-                // «نخستین توکن» is first token ARRIVAL.
+                // The prose is not painted (issue #28): deltas still
+                // arrive and still drive the TTFT readout — «نخستین
+                // توکن» is first token ARRIVAL.
                 markFirstToken();
               } else if (name === "reset") {
                 setText(answerEl, "در حال تولید پاسخ…", "empty");
@@ -2975,13 +3549,23 @@
             renderFinal(textOf(payload));
           }
         } catch (err) {
-          setText(
-            answerEl,
-            err.message === "Failed to fetch"
-              ? "ارتباط با سرویس پاسخ قطع شد."
-              : String(err.message || err),
-            "error"
-          );
+          if (quotedAbort && quotedAbort.signal.aborted) {
+            // The honest stop: what streamed stays charged — the note
+            // says where the cost shows up (the profile's badges).
+            setText(answerEl, "پرسش متوقف شد.", "empty");
+            const note = document.createElement("p");
+            note.className = "empty";
+            note.textContent = "هزینۀ بخش روان‌شده در پروفایل می‌ماند.";
+            answerEl.append(note);
+          } else {
+            setText(
+              answerEl,
+              err.message === "Failed to fetch"
+                ? "ارتباط با سرویس پاسخ قطع شد."
+                : String(err.message || err),
+              "error"
+            );
+          }
           setPhaseState(1, "failed");
           setRunningPhase(null);
           citationsEl.replaceChildren();
@@ -3000,8 +3584,8 @@
 
       // ===== Book reader (ADR-0007) =====
       // The original PDFs, served from serve.py's /books routes and
-      // rendered here with the vendored pdf.js. A click on any quote on
-      // the sheet opens this panel on the passage's first page and
+      // rendered here with the vendored pdf.js. A click on any quote in
+      // the shell opens this panel on the passage's first page and
       // highlights the quoted letters: the verbatim guard guarantees
       // the quote exists letter-for-letter in its passage, and the
       // pages come from the Evidence locator, so the position is found
@@ -3011,17 +3595,18 @@
       // layer (which spans to paint).
 
       const readerEl = document.getElementById("reader");
+      const readerBackdrop = document.getElementById("reader-backdrop");
       const readerPagesEl = document.getElementById("reader-pages");
       const readerTitleEl = document.getElementById("reader-title");
       const readerNoteEl = document.getElementById("reader-note");
       const pageNumEl = document.getElementById("page-num");
       const pageCountEl = document.getElementById("page-count");
-      const READER_BOOK_TITLES = {
-        "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
-        "70143-336": "انسان ۲۵۰ ساله",
-      };
-      const toPersianDigits = (value) =>
-        String(value).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[d]);
+      const READER_BOOK_TITLES = BOOK_TITLES;
+
+      const toAsciiDigits = (value) =>
+        String(value).replace(/[۰-۹٠-٩]/g, (ch) =>
+          String.fromCharCode(ch.charCodeAt(0) & 0xf)
+        );
 
       const reader = {
         gen: 0, // bumped on every book switch; stale async work drops out
@@ -3222,11 +3807,13 @@
       // ---- Panel + toolbar wiring.
       function openReaderPanel() {
         readerEl.hidden = false;
+        readerBackdrop.hidden = false;
         document.body.classList.add("reader-open");
       }
 
       function closeReaderPanel() {
         readerEl.hidden = true;
+        readerBackdrop.hidden = true;
         document.body.classList.remove("reader-open");
       }
 
@@ -3246,6 +3833,7 @@
       document
         .getElementById("reader-close")
         .addEventListener("click", closeReaderPanel);
+      readerBackdrop.addEventListener("click", closeReaderPanel);
       document.addEventListener("keydown", (event) => {
         if (
           event.key === "Escape" &&
@@ -3253,6 +3841,10 @@
           event.target !== pageNumEl
         ) {
           closeReaderPanel();
+          return;
+        }
+        if (event.key === "Escape" && shellEl.classList.contains("sl-open")) {
+          setSidebar(false);
         }
       });
       document.querySelectorAll(".reader-book").forEach((button) => {
@@ -3884,12 +4476,26 @@
         reader.pending = null;
       }
 
+      // ===== The empty state's wiring: Book cards + starter chips. =====
+      document.querySelectorAll(".book-card").forEach((card) => {
+        card
+          .querySelector(".book-select")
+          .addEventListener("click", () => startSession(card.dataset.doc));
+      });
+      document.querySelectorAll(".starter-chip").forEach((chip) => {
+        chip.addEventListener("click", () => {
+          const card = chip.closest(".book-card");
+          startSession(card.dataset.doc, chip.textContent.trim());
+        });
+      });
+
       ping();
+      refreshUsageLive();
     </script>
     <script>
       // The profile (T24, GitLab #27): one self-contained block. The
       // toggle refetches /profile/data every time the section opens —
-      // the Balance and the open Session move while the sheet sits
+      // the Balance and the open Session move while the shell sits
       // open — and the render computes no Toman of its own: the
       // numbers, the Session grouping, and each entry's honesty badge
       // (اندازه‌گیری‌شده / تخمینی, the DRAFT server constants) all

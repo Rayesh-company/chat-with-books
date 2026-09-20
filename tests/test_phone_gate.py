@@ -484,14 +484,20 @@ def test_serve_pins_the_next_tier_relay():
     assert "/next-tier-recall" in text
 
 
-def test_sheet_sends_the_phone_and_shows_the_gate():
+def test_sheet_retires_the_phone_gate():
+    # ADR-0013 retired the header's authority (the Account's cookie is
+    # the only identity); the chat shell (ADR-0014, T27 stage 1) retires
+    # the field itself — the phone is legacy display data now. The
+    # sheet keeps toAsciiDigits for the reader's page input and
+    # localStorage for the Book pick, the composer draft, and the theme.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
-    assert 'id="phone"' in html
-    assert "X-Session-Phone" in html
-    assert "localStorage" in html
-    assert 'inputmode="tel"' in html
-    # Headers are latin-1: the sheet must normalize Farsi digits itself.
+    assert 'id="phone"' not in html
+    assert "X-Session-Phone" not in html
+    assert "شمارهٔ تلفن" not in html
+    assert "هر شماره در روز پنج گفتگو دارد" not in html
+    assert 'id="auth-gate"' in html
     assert "toAsciiDigits" in html
+    assert "localStorage" in html
 
 
 def test_serve_pins_the_gate_shape():

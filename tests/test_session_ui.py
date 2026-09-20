@@ -32,16 +32,16 @@ def test_session_ui_shows_citation_not_a_second_summary():
     assert "دقیقه‌سازی" not in html
 
 
-def test_session_ui_splits_answers_into_three_switchable_sections():
-    # PM brief, 2026-09-11: each phase generates into its own section
-    # with a distinct separation and tabs to switch between them, while
-    # a line names the phase being generated.
+def test_session_ui_threads_the_three_phases():
+    # ADR-0014 (supersedes the tabbed PM brief of 2026-09-11): the ask
+    # becomes a user bubble and one assistant article carries the
+    # phases in place — quiet phase markers, no tab strip anywhere,
+    # while a line names the phase being generated.
     html = UI.read_text(encoding="utf-8")
-    assert 'role="tablist"' in html
-    for tab in ("tab-1", "tab-2", "tab-3"):
-        assert f'id="{tab}"' in html
-    for panel in ("panel-1", "panel-2", "panel-3"):
-        assert f'id="{panel}"' in html
+    assert 'role="tablist"' not in html
+    assert "msg-user" in html
+    assert "msg-assistant" in html
+    assert "phase-mark" in html
     assert "پاسخ اول" in html
     assert "پاسخ استنادی" in html
     # Phase 3 is Research Mode now (ADR-0008): the guided research
@@ -50,7 +50,34 @@ def test_session_ui_splits_answers_into_three_switchable_sections():
     assert "مطالعۀ عمیق" not in html
     assert "جست‌وجوی سطح بعدی" not in html
     assert "selectPhase(" in html
-    assert 'id="phase-now"' in html
+    assert 'className = "phase-now"' in html
+
+
+def test_session_ui_is_a_chat_shell():
+    # ADR-0014, T27 stage 1: the document sheet becomes the chat shell —
+    # the «فهرست نشست‌ها» sidebar (DRAFT names, PM-gated constants), the
+    # thread, the composer with its honest stop, and the theme toggle.
+    html = UI.read_text(encoding="utf-8")
+    assert 'id="session-list"' in html
+    assert "فهرست نشست‌ها" in html
+    assert 'id="new-session"' in html
+    assert "نشست تازه" in html
+    assert 'id="thread-list"' in html
+    assert 'id="ask"' in html
+    assert 'id="stop-btn"' in html
+    assert 'id="theme-toggle"' in html
+    # The empty state binds one Book per Session (the Book pick
+    # glossary row): two Book cards with starter questions.
+    assert html.count('class="book-card"') == 2
+    assert 'data-doc="tarhe-kolli"' in html
+    assert 'data-doc="70143-336"' in html
+    assert "starter-chip" in html
+    assert "انتخاب کتاب" in html
+    # The legacy phone field is finished off (ADR-0013 retired its
+    # authority; the shell retired the field — the header is gone too).
+    assert 'id="phone"' not in html
+    assert "شمارهٔ تلفن" not in html
+    assert "X-Session-Phone" not in html
 
 
 def test_session_ui_server_proxies_recall_to_cognee():
@@ -79,7 +106,9 @@ def test_session_ui_streams_the_first_answer():
 
 def test_session_ui_shows_ttft_readout():
     html = UI.read_text(encoding="utf-8")
-    assert 'id="ttft"' in html
+    # The readout rides the ask's meta row now (a per-ask element, no
+    # shared id since ADR-0014) — the pin is the wiring, not an id.
+    assert "markFirstToken" in html
     assert "نخستین توکن" in html
 
 
@@ -109,10 +138,10 @@ def test_readme_records_the_missing_key_fallbacks_truthfully():
     # back to the Evidence list" was false on both ends — the Evidence
     # pool is never rendered as an answer (CONTEXT.md retires the name
     # too), and the live contract is the picker's prose fallback in
-    # phase 1 (its recorded note) and an empty phase 2 whose tab lands
-    # nothing while phase 1's answer stands. The sentence's true half —
-    # start-ui.ps1 reads the key into the process env, serve.py takes it
-    # from the host env — stays locked.
+    # phase 1 (its recorded note) and an empty phase 2 whose section
+    # lands nothing while phase 1's answer stands. The sentence's true
+    # half — start-ui.ps1 reads the key into the process env, serve.py
+    # takes it from the host env — stays locked.
     text = README.read_text(encoding="utf-8")
     assert (
         "`start-ui.ps1` reads `LLM_API_KEY` from `.env` into the process env"
@@ -124,7 +153,7 @@ def test_readme_records_the_missing_key_fallbacks_truthfully():
     )
     assert "neither the Quote-selection picker nor the phase-2 composer can run" in text
     assert "falls back to the streamed prose with its recorded note" in text
-    assert "land nothing in phase 2's tab" in text
+    assert "land nothing in phase 2's section" in text
     assert "The Evidence pool is never rendered as a fallback" in text
     # The retired false claim never returns.
     assert "falls back to the Evidence list" not in text

@@ -96,17 +96,19 @@ def test_sheet_no_longer_paints_the_streamed_prose_as_the_phase1_answer():
     assert "renderQuoteSelection(query, prose, citations)" in html
 
 
-def test_sheet_keeps_the_evidence_pool_collapsed_in_the_first_tab():
-    # Issue #28: the «استناد» heading and list stay visible inside a
-    # collapsed <details> under the selection — inspectable, and still
-    # phase 2's input.
+def test_sheet_keeps_the_evidence_pool_collapsed_in_the_ask_article():
+    # Issue #28, re-homed by ADR-0014: the «استناد» heading and list
+    # stay visible inside a collapsed <details> under the selection —
+    # inspectable, and still phase 2's input. The pool builds per ask
+    # inside the ask's article, before the Quoted answer's section.
     html = UI.read_text(encoding="utf-8")
-    assert '<details id="evidence-pool">' in html
+    assert 'className = "evidence-pool"' in html
     assert "همۀ نقل‌قول‌های بازیابی‌شده" in html
-    assert 'id="citations-heading"' in html
-    assert 'id="citations"' in html
-    # The pool lives inside phase 1's panel, before phase 2's.
-    assert html.index('id="evidence-pool"') < html.index('id="panel-2"')
+    assert 'className = "citations-heading"' in html
+    assert 'className = "citations"' in html
+    assert html.index('className = "evidence-pool"') < html.index(
+        'className = "quoted-doc"'
+    )
 
 
 def test_sheet_falls_back_to_the_prose_when_the_selection_cannot_be_prepared():
