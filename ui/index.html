@@ -74,41 +74,48 @@
       }
 
       /* ===== Tokens: the paper identity, light and dark (ADR-0014).
-         Light = the desk in daylight; dark = the old dark table. The
-         manual toggle only flips data-theme; system preference is the
-         default when no stored choice exists. */
+         v2 «دفترِ نسخ» — the operator-approved journey-prototype
+         palette (#39, 2026-09-21): parchment sheets on a walnut desk,
+         lapis actions, gold illumination; dark = the night manuscript.
+         Variable names unchanged (--clay now holds the lapis); --gold
+         is new. The manual toggle only flips data-theme; system
+         preference is the default when no stored choice exists. */
       :root {
-        --bg: #dadfd0;
-        --surface: #e7eadf;
-        --raised: #f2f4ea;
-        --rule: #c9cfc0;
-        --ink: #1a1f1c;
-        --mute: #4d5852;
-        --clay: #c45c26;
-        --clay-soft: rgba(196, 92, 38, 0.12);
-        --ok: #2f6f4e;
-        --bad: #8f2d2d;
-        --bad-soft: rgba(143, 45, 45, 0.08);
-        --focus: #1f4d63;
-        --shadow: rgba(26, 31, 28, 0.2);
-        --backdrop: rgba(10, 14, 13, 0.45);
+        --bg: #d8cbae;
+        --surface: #f3ead6;
+        --raised: #faf4e6;
+        --rule: #cdbf9f;
+        --ink: #2e2417;
+        --mute: #6d5e48;
+        --clay: #1f4a78;
+        --clay-soft: rgba(31, 74, 120, 0.1);
+        --gold: #a67c2e;
+        --gold-soft: rgba(166, 124, 46, 0.16);
+        --ok: #3e6b4f;
+        --bad: #9c3529;
+        --bad-soft: rgba(156, 53, 41, 0.08);
+        --focus: #8a6a2a;
+        --shadow: rgba(46, 36, 24, 0.22);
+        --backdrop: rgba(28, 20, 10, 0.5);
       }
 
       :root[data-theme="dark"] {
-        --bg: #101c1f;
-        --surface: #18292d;
-        --raised: #20343a;
-        --rule: #3a5054;
-        --ink: #e6eae0;
-        --mute: #9fb2a8;
-        --clay: #d9743a;
-        --clay-soft: rgba(217, 116, 58, 0.16);
-        --ok: #6cb28d;
-        --bad: #d68f8f;
-        --bad-soft: rgba(214, 143, 143, 0.12);
-        --focus: #8ec4de;
-        --shadow: rgba(0, 0, 0, 0.5);
-        --backdrop: rgba(4, 8, 8, 0.55);
+        --bg: #141821;
+        --surface: #1e242e;
+        --raised: #273040;
+        --rule: #3e4757;
+        --ink: #eae1c9;
+        --mute: #a9997c;
+        --clay: #7ea6d6;
+        --clay-soft: rgba(126, 166, 214, 0.13);
+        --gold: #c9a355;
+        --gold-soft: rgba(201, 163, 85, 0.18);
+        --ok: #7fb091;
+        --bad: #d98a7c;
+        --bad-soft: rgba(217, 138, 124, 0.12);
+        --focus: #c9a355;
+        --shadow: rgba(0, 0, 0, 0.55);
+        --backdrop: rgba(4, 7, 12, 0.62);
       }
 
       @media (prefers-color-scheme: dark) {
@@ -142,7 +149,18 @@
 
       body {
         font-family: Vazirmatn, Tahoma, "Segoe UI", sans-serif;
-        background: var(--bg);
+        /* the paper-grain wash, layered over the desk color */
+        background: repeating-linear-gradient(
+            0deg,
+            transparent 0 2px,
+            rgba(110, 80, 30, 0.02) 2px 3px
+          ),
+          repeating-linear-gradient(
+            90deg,
+            transparent 0 3px,
+            rgba(110, 80, 30, 0.015) 3px 4px
+          ),
+          var(--bg);
         color: var(--ink);
       }
 
@@ -442,11 +460,25 @@
       }
 
       .msg-assistant {
-        border-inline-start: 3px solid var(--clay);
+        border-inline-start: 3px solid var(--gold);
         padding-inline-start: 0.95rem;
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
+        position: relative;
+      }
+      .msg-assistant::after {
+        /* the stacked sheet peeking under the assistant's paper */
+        content: "";
+        position: absolute;
+        inset-inline: 0.75rem;
+        bottom: -0.4rem;
+        height: 0.4rem;
+        background: var(--surface);
+        border: 1px solid var(--rule);
+        border-top: none;
+        border-radius: 0 0 10px 10px;
+        z-index: -1;
       }
 
       /* The phase markers: the tabs' replacement — quiet chips riding
@@ -744,6 +776,13 @@
         display: flex;
         flex-direction: column;
         gap: 0.75rem;
+        /* the manuscript's gold inner frame */
+        outline: 1px solid var(--gold-soft);
+        outline-offset: -6px;
+      }
+
+      .book-card:hover {
+        outline-color: var(--gold);
       }
 
       .book-card.picked {
