@@ -199,6 +199,10 @@ services:
       LEDGER_DB: /data/usage_ledger.sqlite3
       TARIFF_INPUT_TOMAN_PER_MTOK: ${TARIFF_INPUT_TOMAN_PER_MTOK:-2000}
       TARIFF_OUTPUT_TOMAN_PER_MTOK: ${TARIFF_OUTPUT_TOMAN_PER_MTOK:-8000}
+      # The Session store (T27 stage 3, GitLab #40) persists beside the
+      # other stores on the same volume — a container rebuild must not
+      # throw the Accounts' نشست history away.
+      SESSIONS_DB: /data/sessions.sqlite3
     volumes:
       - session_quota:/data
       # The Book set's PDFs + page indexes (ADR-0007), served by
