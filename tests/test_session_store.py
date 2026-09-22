@@ -200,3 +200,9 @@ def test_the_sheet_boots_the_list_and_reopens_the_sitting():
     # The boot fetches the list and reopens: newest as the fallback.
     assert 'fetch("/sessions", { cache: "no-store" })' in html
     assert "openStoreSession(target.id)" in html
+    # The unanswered tail: a resumed sitting whose last turn is the
+    # operator's question shows the honest note and the explicit re-ask
+    # — never an automatic re-billing.
+    assert "UNANSWERED_NOTE" in html and "REASK_LABEL" in html
+    assert 'again.textContent = REASK_LABEL' in html
+    assert 'last.role === "user"' in html

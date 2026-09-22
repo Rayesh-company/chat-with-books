@@ -346,6 +346,25 @@
         border-color: var(--bad);
       }
 
+      /* The unanswered tail's card on a resumed sitting */
+      .unanswered {
+        border: 1px dashed var(--gold);
+        border-radius: 12px;
+        background: var(--gold-soft);
+        padding: 0.7rem 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+
+      .unanswered-note {
+        margin: 0;
+        font-size: 0.82rem;
+        color: var(--mute);
+        flex: 1;
+      }
+
       .session-item-title {
         font-size: 0.86rem;
         font-weight: 500;
@@ -1763,6 +1782,12 @@
 
       const SESSION_LIST_TITLE = "فهرست نشست‌ها";
       const NEW_SESSION_LABEL = "نشست تازه";
+      // The unanswered tail's card (T27 stage 3, the refresh-continuity
+      // follow-up): the sitting died before the answer settled — the
+      // note says so plainly and the re-ask is one explicit click.
+      const UNANSWERED_NOTE =
+        "این پرسش بی‌پاسخ ماند — نشست پیش از رسیدن پاسخ قطع شد. هزینهٔ بخش روان‌شده به‌همان صادقانگی ثبت شده است.";
+      const REASK_LABEL = "پرسیدن دوباره";
 
       const BOOK_TITLES = {
         "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
@@ -1934,8 +1959,10 @@
         threadListEl.hidden = false;
         composerDock.hidden = false;
         stopBtn.hidden = true;
-        elapsedEl.hidden = true;
-        ttftEl.hidden = true;
+        // The per-ask clock spans exist only once an ask has built its
+        // phase row — null on a resumed sitting, so guard them.
+        if (elapsedEl) elapsedEl.hidden = true;
+        if (ttftEl) ttftEl.hidden = true;
         sessionTitleEl.textContent = session.title || "نشست";
         bookChipEl.textContent = "کتاب";
         bookChipEl.hidden = false;
@@ -1985,6 +2012,35 @@
         }
         renderSessionList();
         setSidebar(false);
+        // The unanswered tail (T27 stage 3): a sitting whose last stored
+        // turn is the operator's question died before its answer settled
+        // — a refresh or a new sitting kills the in-flight pipeline, and
+        // the honest charge for the streamed part already stands. The
+        // resume shows it plainly and offers the re-ask as ONE click
+        // that refills the composer; re-asking is the operator's act,
+        // never an automatic re-billing.
+        const messages = session.messages || [];
+        const last = messages[messages.length - 1];
+        if (last && last.role === "user") {
+          const card = document.createElement("div");
+          card.className = "unanswered";
+          const note = document.createElement("p");
+          note.className = "unanswered-note";
+          note.textContent = UNANSWERED_NOTE;
+          const again = document.createElement("button");
+          again.type = "button";
+          again.className = "primary";
+          again.textContent = REASK_LABEL;
+          again.addEventListener("click", () => {
+            questionEl.value = (last.payload && last.payload.text) || "";
+            autosizeComposer();
+            updateCharNote();
+            questionEl.focus();
+            card.remove();
+          });
+          card.append(note, again);
+          threadListEl.append(card);
+        }
         scrollThreadEnd();
       }
 
