@@ -211,6 +211,10 @@ services:
       # console and issuance path until the PM plants one.
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # The Session store (T27 stage 3, GitLab #40): the Accounts' نشست
+      # history on the same persisted volume — a container rebuild must
+      # not throw a sitting's transcript away.
+      SESSIONS_DB: /data/sessions.sqlite3
     volumes:
       - session_quota:/data
       # The Book set's PDFs + page indexes (ADR-0007), served by

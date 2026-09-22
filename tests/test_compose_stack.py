@@ -230,6 +230,9 @@ def test_compose_runs_the_session_sheet_in_a_container():
     # The Account store persists on the same volume (ADR-0013), and the
     # token-signing secret rides .env like the other keys.
     assert env["ACCOUNTS_DB"] == "/data/accounts.sqlite3"
+    # The Session store persists beside them (T27 stage 3) — a rebuild
+    # must not throw the Accounts' نشست history away.
+    assert env["SESSIONS_DB"] == "/data/sessions.sqlite3"
     assert env["AUTH_SECRET"] == "${AUTH_SECRET:-}"
     # The composer key rides as compose interpolation from .env, never
     # baked into the image (the Dockerfile copies only the two files).

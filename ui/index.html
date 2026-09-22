@@ -1803,6 +1803,17 @@
         storeId: null,
       };
 
+      // The sitting's continuity (T27 stage 3): sessionStorage keeps the
+      // open Session's row per tab — a refresh reopens the sitting it
+      // held, a new tab falls to the newest one, «نشست تازه» clears it.
+      const rememberStoreSession = () => {
+        try {
+          if (sessionState.storeId)
+            sessionStorage.setItem("storeSessionId", String(sessionState.storeId));
+          else sessionStorage.removeItem("storeSessionId");
+        } catch {}
+      };
+
       const truncateTitle = (text) => {
         const t = String(text).replace(/\s+/g, " ").trim();
         return t.length > 42 ? t.slice(0, 42) + "…" : t;
@@ -1824,6 +1835,7 @@
           if (res.ok) {
             const data = await res.json();
             sessionState.storeId = data.id || null;
+            rememberStoreSession();
           }
         } catch {}
         return sessionState.storeId;
@@ -1911,6 +1923,7 @@
         sessionState.book = session.book || null;
         sessionState.titled = true;
         sessionState.storeId = session.id;
+        rememberStoreSession();
         if (sessionState.book) {
           try {
             localStorage.setItem("selectedBook", sessionState.book);
@@ -2064,6 +2077,7 @@
         sessionState.book = null;
         sessionState.titled = false;
         sessionState.storeId = null;
+        rememberStoreSession();
         threadListEl.replaceChildren();
         threadListEl.hidden = true;
         newSessionView.hidden = false;
@@ -4807,6 +4821,28 @@
 
       ping();
       refreshUsageLive();
+
+      // The boot (T27 stage 3, GitLab #40): the sidebar lists the
+      // Account's Sessions on load — without this a refresh showed an
+      // empty list — and the sitting reopens: the tab's own sitting if
+      // sessionStorage holds one, else the newest. A refresh returns to
+      // the conversation, never to an empty sheet.
+      renderSessionList();
+      (async () => {
+        try {
+          const res = await fetch("/sessions", { cache: "no-store" });
+          if (!res.ok) return;
+          const rows = (await res.json()).sessions || [];
+          if (!rows.length) return;
+          let stored = null;
+          try {
+            stored = sessionStorage.getItem("storeSessionId");
+          } catch {}
+          const target =
+            rows.find((row) => String(row.id) === stored) || rows[0];
+          if (!sessionState.active) openStoreSession(target.id);
+        } catch {}
+      })();
     </script>
     <script>
       // The profile (T24, GitLab #27): one self-contained block. The

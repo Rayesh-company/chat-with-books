@@ -7,6 +7,8 @@ foreign Session is a 404 (never a leak), an anonymous caller is a 401,
 and deleting a Session never touches the ledger — the money truth is
 not the transcript's to erase."""
 
+from pathlib import Path
+
 from tests.helpers import (
     delete,
     get,
@@ -179,3 +181,22 @@ def test_deleting_a_session_leaves_the_ledger_untouched(tmp_path):
         assert history and history[0]["cost_toman"] > 0
     finally:
         stop_gate(server, originals)
+
+
+def test_the_sheet_boots_the_list_and_reopens_the_sitting():
+    """The refresh continuity (the operator's report, 2026-09-22): the
+    sidebar lists on page load and the sitting reopens — the light
+    source-lock holds the sheet's boot to the store's shape (the JS the
+    tests cannot execute)."""
+    html = (Path(session_store.__file__).parent / "index.html").read_text(
+        encoding="utf-8"
+    )
+    # The boot block exists and lists before anything else can.
+    assert 'sessionStorage.getItem("storeSessionId")' in html
+    assert "rememberStoreSession" in html
+    # The continuity writes ride the three state changes (create, open,
+    # clear) — the boot reads what they wrote.
+    assert html.count("rememberStoreSession();") >= 3
+    # The boot fetches the list and reopens: newest as the fallback.
+    assert 'fetch("/sessions", { cache: "no-store" })' in html
+    assert "openStoreSession(target.id)" in html
