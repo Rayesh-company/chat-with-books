@@ -322,13 +322,17 @@ def test_the_readme_records_the_fetch_on_load_truth():
 # --- the sheet's wiring (the light source lock) --------------------------------
 
 
-def test_the_sheet_wires_the_report_chip_as_a_download():
+def test_the_sheet_wires_the_report_chip_as_a_popup():
     html = INDEX.read_text(encoding="utf-8")
-    # The render branch and the one download action exist.
+    # The render branch and the one open action exist.
     assert 'item.kind === "report"' in html
     assert "downloadResearchReport" in html
-    # The blob saves under the artifact's own name.
-    assert "gonzarsh-seshat-${researchSessionId}.html" in html
+    # The chip opens the report as a popup ON the sheet (the operator's
+    # call, 2026-09-22): the artifact inline in an iframe modal, the
+    # download one click beside it — never a forced file drop.
+    assert 'backdrop.id = "report-modal"' in html
+    assert 'document.createElement("iframe")' in html
+    assert "/research/report?session=" in html
     # The DRAFT marker stands in the sheet, naming the approval it
     # awaits and the one constant a rename touches.
     assert "DRAFT" in html and "RESEARCH_REPORT_CHIP" in html

@@ -27,7 +27,22 @@ from ui import (  # noqa: E402
     research,
     research_store,
     serve,
+    session_store,
 )
+
+
+def delete(base, path, phone=None):
+    """One DELETE; (status, payload) — the Session store's verb (T27
+    stage 3). The cookie translation is post()'s exactly."""
+    headers = {}
+    if phone is not None:
+        headers["Cookie"] = _login_cookie(base, phone)
+    request = urllib.request.Request(base + path, headers=headers, method="DELETE")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.load(exc)
 
 
 def post(base, path, payload, phone=None):
@@ -368,6 +383,7 @@ def with_gate(tmp_path, upstream):
     server restart is what empties it in production."""
     quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
     research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
+    session_store.SESSIONS_DB = tmp_path / "sessions.sqlite3"
     patch_accounts(tmp_path)
     research.RESEARCH_REGISTRY.clear()
     originals = [

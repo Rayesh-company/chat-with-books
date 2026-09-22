@@ -317,6 +317,35 @@
         border-color: var(--rule);
       }
 
+      .session-item:not(.active) {
+        cursor: pointer;
+      }
+
+      .session-item:hover {
+        border-color: var(--rule);
+      }
+
+      .session-item-del {
+        align-self: flex-start;
+        font-size: 0.68rem;
+        padding: 0 0.45rem;
+        border-color: transparent;
+        background: transparent;
+        color: var(--mute);
+        opacity: 0;
+      }
+
+      .session-item:hover .session-item-del,
+      .session-item-del:focus-visible {
+        opacity: 1;
+        border-color: var(--rule);
+      }
+
+      .session-item-del:hover {
+        color: var(--bad);
+        border-color: var(--bad);
+      }
+
       .session-item-title {
         font-size: 0.86rem;
         font-weight: 500;
@@ -1149,72 +1178,22 @@
         line-height: 1.5;
       }
 
-      .profile-today {
-        margin-inline-start: auto;
-        font-size: 0.85rem;
-        color: var(--mute);
-        border: 1px solid var(--rule);
-        border-radius: 4px;
-        padding: 0.1rem 0.6rem;
-        background: var(--surface);
-      }
-
-      .profile-session {
-        background: var(--raised);
-        border: 1px solid var(--rule);
-        border-radius: 12px;
-        padding: 0.75rem 1rem;
-        margin: 0 0 0.7rem;
-      }
-
-      .profile-session-head {
+      .profile-ongoing {
         display: flex;
         align-items: baseline;
         gap: 0.75rem;
-        margin: 0 0 0.4rem;
-        font-size: 0.85rem;
-        color: var(--mute);
-      }
-
-      .profile-session-total {
-        margin-inline-start: auto;
-        color: var(--ink);
-        font-weight: 700;
-        font-size: 0.95rem;
-      }
-
-      .profile-entry {
-        display: flex;
-        align-items: baseline;
-        gap: 0.5rem;
+        border: 1px solid var(--rule);
+        border-radius: 12px;
+        background: var(--raised);
+        padding: 0.7rem 1rem;
         margin: 0;
-        padding: 0.3rem 0;
-        border-top: 1px dashed var(--rule);
-        font-size: 0.85rem;
+        font-size: 0.9rem;
       }
 
-      .profile-entry .kind {
-        font-weight: 600;
-      }
-
-      .profile-entry .tokens {
-        color: var(--mute);
-        font-size: 0.78rem;
-      }
-
-      .profile-entry .cost {
+      .profile-ongoing-detail {
         margin-inline-start: auto;
-        font-weight: 600;
-      }
-
-      .profile-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.3rem;
-        font-size: 0.72rem;
         color: var(--mute);
-        padding: 0;
-        border: none;
+        font-size: 0.85rem;
       }
 
       .profile-badge::before {
@@ -1224,10 +1203,6 @@
         border-radius: 50%;
         background: var(--ok);
         flex: none;
-      }
-
-      .profile-badge[data-state="estimated"]::before {
-        background: var(--gold);
       }
 
       /* ===== The Book reader (ADR-0007): a slide-over over the thread
@@ -1816,30 +1791,203 @@
       const charNoteEl = document.getElementById("char-note");
       const statusEl = document.getElementById("status");
 
-      // The Session: one sitting, one Book, resumable once the store
-      // lands (T27 stage 3). Stage 1 keeps it browser-local and honest:
-      // a refresh returns to the empty state with the last Book
-      // pre-highlighted, never a fake history.
-      const sessionState = { active: false, book: null, titled: false };
+      // The Session: one sitting, one Book, resumable (T27 stage 3,
+      // GitLab #40) — the server's Session store is the history now:
+      // create on the sitting's first ask, the settled turns appended,
+      // the sidebar listed from it, a click resumes it read-only.
+      // storeId is the sitting's row; null means the next ask opens one.
+      const sessionState = {
+        active: false,
+        book: null,
+        titled: false,
+        storeId: null,
+      };
 
       const truncateTitle = (text) => {
         const t = String(text).replace(/\s+/g, " ").trim();
         return t.length > 42 ? t.slice(0, 42) + "…" : t;
       };
 
+      // The store helpers (T27 stage 3): fire-and-forget — a store miss
+      // never blocks an ask, and the ledger stays the money truth.
+      async function ensureStoreSession(firstQuestion) {
+        if (sessionState.storeId) return sessionState.storeId;
+        try {
+          const res = await fetch("/sessions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({
+              book: sessionState.book || "",
+              title: truncateTitle(firstQuestion || ""),
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            sessionState.storeId = data.id || null;
+          }
+        } catch {}
+        return sessionState.storeId;
+      }
+
+      function storeAppend(role, payload) {
+        if (!sessionState.storeId) return;
+        fetch(`/sessions/${sessionState.storeId}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ role, payload }),
+        })
+          .then((res) => {
+            if (res.ok) renderSessionList();
+          })
+          .catch(() => {});
+      }
+
       function renderSessionList() {
-        sessionItemsEl.replaceChildren();
-        if (!sessionState.active) return;
-        const item = document.createElement("div");
-        item.className = "session-item active";
-        const title = document.createElement("div");
-        title.className = "session-item-title";
-        title.textContent = sessionTitleEl.textContent;
-        const meta = document.createElement("div");
-        meta.className = "session-item-meta";
-        meta.textContent = `${BOOK_TITLES[sessionState.book] || ""} · اکنون`;
-        item.append(title, meta);
-        sessionItemsEl.append(item);
+        // Server-backed: one fetch, newest activity first, the open
+        // Session active. Delete is the list-v1's only management act;
+        // a click resumes the Session read-only.
+        fetch("/sessions", { cache: "no-store" })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            const rows =
+              data && Array.isArray(data.sessions) ? data.sessions : [];
+            sessionItemsEl.replaceChildren();
+            for (const row of rows) {
+              const item = document.createElement("div");
+              item.className =
+                "session-item" +
+                (row.id === sessionState.storeId ? " active" : "");
+              item.setAttribute("role", "button");
+              item.tabIndex = 0;
+              const title = document.createElement("div");
+              title.className = "session-item-title";
+              title.textContent = row.title || "نشست";
+              const meta = document.createElement("div");
+              meta.className = "session-item-meta";
+              meta.textContent = BOOK_TITLES[row.book] || "";
+              const del = document.createElement("button");
+              del.type = "button";
+              del.className = "session-item-del";
+              del.textContent = "حذف";
+              del.setAttribute("aria-label", "حذف نشست");
+              del.addEventListener("click", (event) => {
+                event.stopPropagation();
+                fetch(`/sessions/${row.id}`, { method: "DELETE" })
+                  .catch(() => {})
+                  .finally(() => {
+                    if (row.id === sessionState.storeId) {
+                      newSessionBtn.click();
+                    } else {
+                      renderSessionList();
+                    }
+                  });
+              });
+              const open = () => openStoreSession(row.id);
+              item.addEventListener("click", open);
+              item.addEventListener("keydown", (event) => {
+                if (event.key === "Enter" || event.key === " ") open();
+              });
+              item.append(title, meta, del);
+              sessionItemsEl.append(item);
+            }
+          })
+          .catch(() => {});
+      }
+
+      async function openStoreSession(id) {
+        let session = null;
+        try {
+          const res = await fetch(`/sessions/${id}`, { cache: "no-store" });
+          session = res.ok ? await res.json() : null;
+        } catch {}
+        if (!session) return;
+        if (quotedAbort) quotedAbort.abort();
+        resetResearch();
+        citationRun += 1;
+        askState = null;
+        quotedAbort = null;
+        stopPhaseTimersForResume();
+        sessionState.active = true;
+        sessionState.book = session.book || null;
+        sessionState.titled = true;
+        sessionState.storeId = session.id;
+        if (sessionState.book) {
+          try {
+            localStorage.setItem("selectedBook", sessionState.book);
+          } catch {}
+          markPickedCard(sessionState.book);
+        }
+        newSessionView.hidden = true;
+        threadListEl.hidden = false;
+        composerDock.hidden = false;
+        stopBtn.hidden = true;
+        elapsedEl.hidden = true;
+        ttftEl.hidden = true;
+        sessionTitleEl.textContent = session.title || "نشست";
+        bookChipEl.textContent = "کتاب";
+        bookChipEl.hidden = false;
+        threadListEl.replaceChildren();
+        for (const message of session.messages || []) {
+          if (message.role === "user") {
+            const rowEl = document.createElement("div");
+            rowEl.className = "msg-user-row";
+            const bubble = document.createElement("div");
+            bubble.className = "msg-user";
+            const p = document.createElement("p");
+            p.textContent = (message.payload && message.payload.text) || "";
+            bubble.append(p);
+            rowEl.append(bubble);
+            threadListEl.append(rowEl);
+          } else {
+            const article = document.createElement("div");
+            article.className = "msg-assistant";
+            const blocks =
+              message.payload && Array.isArray(message.payload.blocks)
+                ? message.payload.blocks
+                : [];
+            if (blocks.length) {
+              for (const block of blocks) {
+                if (block.type === "heading") {
+                  const h = document.createElement("h3");
+                  h.className = "doc-heading";
+                  h.textContent = block.text || "";
+                  article.append(h);
+                } else if (block.type === "paragraph") {
+                  const p = document.createElement("p");
+                  p.className = "doc-para";
+                  p.textContent = block.text || "";
+                  article.append(p);
+                }
+              }
+            } else if (message.payload && message.payload.text) {
+              const p = document.createElement("p");
+              p.className = "doc-para";
+              p.textContent = message.payload.text;
+              article.append(p);
+            } else {
+              continue;
+            }
+            threadListEl.append(article);
+          }
+        }
+        renderSessionList();
+        setSidebar(false);
+        scrollThreadEnd();
+      }
+
+      // Multi-device: the sidebar refetches when the tab regains focus —
+      // last-write-wins; the open thread stays as the sitting left it
+      // until the Session is reopened from the list.
+      window.addEventListener("focus", () => {
+        if (sessionState.active) renderSessionList();
+      });
+
+      function stopPhaseTimersForResume() {
+        for (const n of [1, 2, 3]) {
+          stopPhaseTimer(n);
+          phaseEls[n].startedAt = null;
+          if (phaseEls[n].timer) phaseEls[n].timer.hidden = true;
+        }
       }
 
       function setSidebar(open) {
@@ -1882,6 +2030,7 @@
         sessionState.active = true;
         sessionState.book = bookDoc;
         sessionState.titled = false;
+        sessionState.storeId = null;
         try {
           localStorage.setItem("selectedBook", bookDoc);
         } catch {}
@@ -1914,6 +2063,7 @@
         sessionState.active = false;
         sessionState.book = null;
         sessionState.titled = false;
+        sessionState.storeId = null;
         threadListEl.replaceChildren();
         threadListEl.hidden = true;
         newSessionView.hidden = false;
@@ -2482,6 +2632,13 @@
             }
           }
           quotedDocEl.replaceChildren(doc);
+          // The settled article rides the store (T27 stage 3): the
+          // resume read renders exactly these blocks, read-only.
+          storeAppend("assistant", {
+            question,
+            blocks,
+            citations: evidenceSources(citations).slice(0, 10),
+          });
           setPhaseState(2, "done");
           stopPhaseTimer(2);
           setRunningPhase(null);
@@ -2930,13 +3087,18 @@
         }
       }
 
+      // The report opens as a popup on the sheet itself (the operator's
+      // call, 2026-09-22): the artifact inline in the conversation's
+      // surface, the download one click beside it — never a forced file
+      // drop. The server's Farsi refusal renders in the research chat
+      // as before when the read fails.
       async function downloadResearchReport() {
         if (!researchSessionId) return;
+        const reportUrl = `/research/report?session=${encodeURIComponent(
+          researchSessionId
+        )}`;
         try {
-          const res = await fetch(
-            `/research/report?session=${encodeURIComponent(researchSessionId)}`,
-            { cache: "no-store" }
-          );
+          const res = await fetch(reportUrl, { cache: "no-store" });
           if (!res.ok) {
             const payload = await res.json().catch(() => ({}));
             appendResearchError(
@@ -2944,18 +3106,46 @@
             );
             return;
           }
-          const blob = await res.blob();
-          const url = URL.createObjectURL(blob);
-          const anchor = document.createElement("a");
-          anchor.href = url;
-          anchor.download = `gonzarsh-seshat-${researchSessionId}.html`;
-          document.body.appendChild(anchor);
-          anchor.click();
-          anchor.remove();
-          URL.revokeObjectURL(url);
         } catch {
           appendResearchError("ارتباط با سرویس پژوهش قطع شد.");
+          return;
         }
+        const existing = document.getElementById("report-modal");
+        if (existing) existing.remove();
+        const backdrop = document.createElement("div");
+        backdrop.id = "report-modal";
+        backdrop.style.cssText =
+          "position:fixed;inset:0;background:var(--backdrop);z-index:70;display:flex;align-items:center;justify-content:center;padding:2rem";
+        const panel = document.createElement("div");
+        panel.style.cssText =
+          "background:var(--surface);border:1px solid var(--rule);border-radius:14px;width:min(880px,94vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px var(--shadow)";
+        const head = document.createElement("div");
+        head.style.cssText =
+          "display:flex;align-items:center;gap:.6rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule)";
+        const title = document.createElement("strong");
+        title.textContent = "گزارش نشست";
+        const dl = document.createElement("a");
+        dl.href = reportUrl;
+        dl.setAttribute("download", "");
+        dl.className = "browse-btn";
+        dl.textContent = "دانلود";
+        dl.style.textDecoration = "none";
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "browse-btn";
+        close.textContent = "بستن";
+        close.addEventListener("click", () => backdrop.remove());
+        head.append(title, dl, close);
+        const frame = document.createElement("iframe");
+        frame.src = reportUrl;
+        frame.style.cssText = "flex:1;border:none;width:100%";
+        frame.title = "گزارش نشست";
+        panel.append(head, frame);
+        backdrop.append(panel);
+        backdrop.addEventListener("click", (event) => {
+          if (event.target === backdrop) backdrop.remove();
+        });
+        document.body.append(backdrop);
       }
 
       // The chips: the journey's own moves. Move and answer chips send
@@ -3440,6 +3630,11 @@
           sessionState.titled = true;
           sessionTitleEl.textContent = truncateTitle(query);
         }
+        // The store (T27 stage 3): the sitting opens on its first ask,
+        // the operator's turn appends — fire-and-forget, never a gate.
+        ensureStoreSession(query).then((id) => {
+          if (id) storeAppend("user", { text: query });
+        });
         renderSessionList();
         scrollThreadEnd();
 
@@ -4643,62 +4838,50 @@
           String(ts || "").replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[d]);
 
         function renderProfile(data) {
-          // The hero: the Balance as the page's number, today's spend as
-          // its chip — the journey prototype #39's profile shape.
+          // The simplified profile (the operator's call, 2026-09-22):
+          // credit remaining and the ongoing session — nothing else.
+          // The spend history stays in the ledger where the console
+          // reads it; the sheet never re-dumps it.
           const heroLabel = document.createElement("span");
           heroLabel.className = "profile-hero-label";
           heroLabel.textContent = "اعتبار";
           const balance = document.createElement("span");
           balance.className = "profile-balance";
           balance.textContent = toman(data.balance_toman) + " تومان";
-          const today = document.createElement("span");
-          today.className = "profile-today";
-          today.textContent = "هزینۀ امروز: " + toman(data.today_toman) + " تومان";
-          numbersEl.replaceChildren(heroLabel, balance, today);
+          numbersEl.replaceChildren(heroLabel, balance);
           const sessions = Array.isArray(data.sessions) ? data.sessions : [];
-          if (!sessions.length) {
+          sessionsEl.replaceChildren();
+          const open = sessions.length ? sessions[0] : null;
+          if (!open) {
             const empty = document.createElement("p");
             empty.className = "empty";
-            empty.textContent = "هنوز نشستی ثبت نشده است.";
-            sessionsEl.replaceChildren(empty);
+            empty.textContent = "نشست جاری باز نیست.";
+            sessionsEl.append(empty);
             return;
           }
-          const frag = document.createDocumentFragment();
-          for (const session of sessions) {
-            const box = document.createElement("div");
-            box.className = "profile-session";
-            const head = document.createElement("p");
-            head.className = "profile-session-head";
-            const started = document.createElement("span");
-            started.textContent = "نشست " + faTs(session.started);
-            const total = document.createElement("span");
-            total.className = "profile-session-total";
-            total.textContent = toman(session.cost_toman) + " تومان";
-            head.append(started, total);
-            box.appendChild(head);
-            for (const entry of Array.isArray(session.entries) ? session.entries : []) {
-              const line = document.createElement("p");
-              line.className = "profile-entry";
-              const badge = document.createElement("span");
-              badge.className = "profile-badge";
-              badge.dataset.state = entry.metered ? "metered" : "estimated";
-              badge.textContent = entry.badge || "";
-              const kind = document.createElement("span");
-              kind.className = "kind";
-              kind.textContent = KIND_LABELS[entry.kind] || entry.kind;
-              const tokens = document.createElement("span");
-              tokens.className = "tokens";
-              tokens.textContent =
-                toman(entry.input_tokens) + " + " + toman(entry.output_tokens) + " توکن";
-              const cost = document.createElement("span");
-              cost.className = "cost";
-              cost.textContent = toman(entry.cost_toman) + " تومان";
-              line.append(badge, kind, tokens, cost);
-              box.appendChild(line);
-            }
-            frag.appendChild(box);
+          const row = document.createElement("div");
+          row.className = "profile-ongoing";
+          const label = document.createElement("span");
+          label.textContent = "نشست جاری";
+          const startedMs = Date.parse(String(open.started || ""));
+          let elapsed = "";
+          if (Number.isFinite(startedMs)) {
+            const minutes = Math.max(
+              0,
+              Math.round((Date.now() - startedMs) / 60000)
+            );
+            elapsed =
+              (minutes >= 60
+                ? Math.floor(minutes / 60).toLocaleString("fa-IR") +
+                  " ساعت و " +
+                  (minutes % 60).toLocaleString("fa-IR")
+                : minutes.toLocaleString("fa-IR")) + " دقیقه · ";
           }
-          sessionsEl.replaceChildren(frag);
+          const detail = document.createElement("span");
+          detail.className = "profile-ongoing-detail";
+          detail.textContent = elapsed + toman(open.cost_toman) + " تومان";
+          row.append(label, detail);
+          sessionsEl.append(row);
         }
 
         async function refreshProfile() {

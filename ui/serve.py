@@ -87,6 +87,7 @@ try:
         day_total,
     )
     from ui import ledger
+    from ui import session_store
     from ui.picker import (
         build_picker_prompt,
         parse_picker_reply,
@@ -217,6 +218,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         day_total,
     )
     import ledger
+    import session_store
     from picker import (
         build_picker_prompt,
         parse_picker_reply,
@@ -637,6 +639,16 @@ class SessionHandler(SimpleHTTPRequestHandler):
         if path == "/profile/data":
             self._profile_data()
             return
+        if path == "/sessions":
+            # The Session store's list (T27 stage 3, GitLab #40): the
+            # sidebar's read, the caller's own Sessions only.
+            self._sessions_list()
+            return
+        if path.startswith("/sessions/"):
+            rest = path[len("/sessions/"):]
+            if rest.isdigit():
+                self._session_get(int(rest))
+                return
         if path.startswith("/books/"):
             self._book_file(path)
             return
@@ -1065,6 +1077,18 @@ class SessionHandler(SimpleHTTPRequestHandler):
             },
         )
 
+    def do_DELETE(self):
+        """DELETE: the Session store's one destructive verb (T27 stage
+        3, the list-v1 shape — delete only). A Session that is not the
+        caller's is a 404, never an erase."""
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/sessions/"):
+            rest = path[len("/sessions/"):]
+            if rest.isdigit():
+                self._session_delete(int(rest))
+                return
+        self.send_error(404, "Not found")
+
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         if path == "/auth/login":
@@ -1117,6 +1141,16 @@ class SessionHandler(SimpleHTTPRequestHandler):
             )
             self._proxy("POST")
             return
+        if path == "/sessions":
+            # The Session store's create (T27 stage 3): the sheet opens
+            # the sitting on its first ask.
+            self._session_create()
+            return
+        if path.startswith("/sessions/"):
+            rest = path[len("/sessions/"):]
+            if rest.endswith("/messages") and rest[: -len("/messages")].isdigit():
+                self._session_append(int(rest[: -len("/messages")]))
+                return
         if path == "/quoted-answer":
             account = self._quoted_account()
             if account is None:
@@ -1665,6 +1699,91 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 "sessions": sessions,
             },
         )
+
+    def _sessions_list(self) -> None:
+        """The sidebar's read (T27 stage 3, GitLab #40): the caller's
+        Sessions, newest activity first. The cookie IS the address, so
+        the list is only ever the caller's own; the store caps the
+        payload, not the history (the accepted list-v1 shape)."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        self._send_json(200, {"sessions": session_store.list_sessions(account)})
+
+    def _session_get(self, session_id: int) -> None:
+        """One Session with its stored messages oldest→newest — the
+        resume read. Another Account's Session answers 404, the same
+        silence the store gives; the sheet renders the transcript
+        read-only."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        session = session_store.get_session(account, session_id)
+        if session is None:
+            self._json_error(404, "نشست پیدا نشد.")
+            return
+        self._send_json(200, session)
+
+    def _session_create(self) -> None:
+        """Open one Session (T27 stage 3): the sheet creates it on the
+        sitting's first ask, sending the Book and the truncated title.
+        The store judges neither — the ledger stays the money truth."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            book = payload.get("book")
+            title = payload.get("title")
+            if book is not None and not isinstance(book, str):
+                raise ValueError
+            if title is not None and not isinstance(title, str):
+                raise ValueError
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json(400, {"detail": "درخواست نادرست است."})
+            return
+        session = session_store.create_session(account, book or "", title or "")
+        self._send_json(200, session)
+
+    def _session_append(self, session_id: int) -> None:
+        """Append one turn to the caller's Session (T27 stage 3): the
+        sheet reports its settled turns — the operator's ask, the
+        assistant's article — as {role, payload}; the store renders
+        nothing and judges nothing. A foreign Session is 404."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            role = payload["role"]
+            body = payload["payload"]
+            if role not in ("user", "assistant") or not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            self._send_json(400, {"detail": "درخواست نادرست است."})
+            return
+        session = session_store.append_message(account, session_id, role, body)
+        if session is None:
+            # The body is already read above, so _send_json is safe —
+            # _json_error would drain again and block on taken bytes
+            # (the _evidence_fallback rule).
+            self._send_json(404, {"detail": "نشست پیدا نشد."})
+            return
+        self._send_json(200, session)
+
+    def _session_delete(self, session_id: int) -> None:
+        """Delete the caller's Session whole (list-v1: delete only). The
+        transcript goes; the ledger's spend rows stay — the profile's
+        and the console's numbers never falsify."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        if not session_store.delete_session(account, session_id):
+            self._json_error(404, "نشست پیدا نشد.")
+            return
+        self._send_json(200, {"deleted": True})
 
     def _research_report(self) -> None:
         """The Session report's read (T18, GitLab #19): one session's
