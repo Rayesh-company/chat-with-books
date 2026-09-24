@@ -81,6 +81,18 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    # The per-ask settle key (the vanishing-content fix, 2026-09-24):
+    # the phase endpoints settle the ask's assistant turn SERVER-SIDE —
+    # one row per ask, upgraded in place from the first answer's
+    # snapshot to the settled article, so a reload mid-pipeline never
+    # leaves a sitting without its answer. A store written before the
+    # fix has no column — top it up in place.
+    columns = {
+        row[1] for row in con.execute("PRAGMA table_info(session_messages)")
+    }
+    if "ask_key" not in columns:
+        con.execute("ALTER TABLE session_messages ADD COLUMN ask_key TEXT")
+        con.commit()
     con.execute(
         "CREATE INDEX IF NOT EXISTS idx_messages_session"
         " ON session_messages(session_id)"
@@ -130,6 +142,72 @@ def append_message(
                 " VALUES (?, ?, ?, ?)",
                 (session_id, role, json.dumps(payload, ensure_ascii=False), now),
             )
+            con.execute(
+                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
+            con.commit()
+            return get_session(account, session_id, _con=con)
+        finally:
+            con.close()
+
+
+def settle_ask(
+    account: str, session_id: int, ask_key: str, payload: dict
+) -> dict | None:
+    """Settle one ask's assistant turn SERVER-SIDE and idempotently
+    (the vanishing-content fix, 2026-09-24).
+
+    The phase endpoints (/quote-selection, /quoted-answer) call this
+    after they have computed their output, so the sitting's answer is
+    durable even when the browser is gone by then — a reload during the
+    streamed ask or during phase 2 used to lose everything the client
+    had not yet reported. The first settle (the picker's Quote-selection
+    snapshot) INSERTS the assistant row; a later settle for the SAME
+    ask_key (the phase-2 article) UPDATES that row in place — the
+    resumed transcript shows the same single answer per ask the live
+    sheet always did, now guaranteed to exist. A Session that is not
+    the caller's answers None; an empty ask_key is refused the same
+    way (nothing to be idempotent about)."""
+    if not isinstance(ask_key, str) or not ask_key.strip():
+        return None
+    with _LOCK:
+        con = _connect()
+        try:
+            row = con.execute(
+                "SELECT id FROM sessions WHERE id = ? AND account = ?",
+                (session_id, account),
+            ).fetchone()
+            if row is None:
+                return None
+            now = _now()
+            existing = con.execute(
+                "SELECT id FROM session_messages"
+                " WHERE session_id = ? AND role = 'assistant' AND ask_key = ?"
+                " ORDER BY id LIMIT 1",
+                (session_id, ask_key),
+            ).fetchone()
+            if existing is not None:
+                con.execute(
+                    "UPDATE session_messages SET payload = ?, ts = ?"
+                    " WHERE id = ?",
+                    (
+                        json.dumps(payload, ensure_ascii=False),
+                        now,
+                        existing[0],
+                    ),
+                )
+            else:
+                con.execute(
+                    "INSERT INTO session_messages (session_id, role,"
+                    " payload, ts, ask_key) VALUES (?, 'assistant', ?, ?, ?)",
+                    (
+                        session_id,
+                        json.dumps(payload, ensure_ascii=False),
+                        now,
+                        ask_key,
+                    ),
+                )
             con.execute(
                 "UPDATE sessions SET updated_at = ? WHERE id = ?",
                 (now, session_id),

@@ -1163,7 +1163,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 )
             )
             try:
-                self._quoted_answer()
+                self._quoted_answer(account)
             finally:
                 set_meter(None)
             return
@@ -1177,7 +1177,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 )
             )
             try:
-                self._quote_selection()
+                self._quote_selection(account)
             finally:
                 set_meter(None)
             return
@@ -1220,8 +1220,18 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self._drain_request_body()
         self.send_error(404, "Not found")
 
-    def _quoted_answer(self) -> None:
-        """Compose the Quoted answer; empty blocks = fallback."""
+    def _quoted_answer(self, account: str) -> None:
+        """Compose the Quoted answer; empty blocks = fallback.
+
+        The settled article is also the Account's Session record
+        (vanishing-content fix, 2026-09-24): when the body carries the
+        sitting's ``session_id`` and this ask's ``ask_key``, the server
+        settles the assistant turn ITSELF, before the reply is written —
+        a browser that reloads mid-compose leaves the sitting with its
+        answer, because the store write no longer waits for the client
+        to report it. A re-settle of the same ask_key upgrades the row
+        in place, so the transcript keeps ONE answer per ask. A store
+        failure never fails the phase reply."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -1237,6 +1247,8 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 and isinstance(source.get("reference"), str)
                 and isinstance(source.get("passage"), str)
             ]
+            session_id = payload.get("session_id")
+            ask_key = payload.get("ask_key")
             if not isinstance(question, str) or not question.strip() or not sources:
                 raise ValueError("question and sources are required")
             if not isinstance(answer, str):
@@ -1245,6 +1257,25 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self.send_error(400, "Bad request")
             return
         blocks, truncated = compose_quoted_answer(question, answer, sources)
+        if (
+            isinstance(session_id, int)
+            and isinstance(ask_key, str)
+            and ask_key.strip()
+        ):
+            try:
+                session_store.settle_ask(
+                    account,
+                    session_id,
+                    ask_key,
+                    {
+                        "question": question,
+                        "blocks": blocks,
+                        "truncated": truncated,
+                        "citations": sources[:10],
+                    },
+                )
+            except Exception:
+                sys.stderr.write("session settle failed (quoted-answer)\n")
         body = json.dumps(
             {"blocks": blocks, "truncated": truncated}, ensure_ascii=False
         ).encode("utf-8")
@@ -1324,7 +1355,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _quote_selection(self) -> None:
+    def _quote_selection(self, account: str) -> None:
         """Pick the Quote selection (ADR-0006, issue #28): the pool
         exactly as the sheet parsed it, one picker call, the guarded
         selections back. The gate is phase 2's shape — the picker
@@ -1334,7 +1365,17 @@ class SessionHandler(SimpleHTTPRequestHandler):
         gate's shape) before any upstream call; a picker failure or a
         below-floor selection answers 200 {"selections": []} — the one
         uniform empty shape the sheet's prose fallback consumes, never
-        a 5xx."""
+        a 5xx.
+
+        With the sitting's ``session_id`` and this ask's ``ask_key`` in
+        the body, the kept selections also settle the ask's assistant
+        turn SERVER-SIDE (the vanishing-content fix, 2026-09-24): the
+        first-answer snapshot rides the same idempotent row the phase-2
+        article later upgrades, so a reload after the picker — even
+        hours before phase 2 lands — leaves the sitting with the answer
+        the operator actually received. The snapshot's blocks are the
+        selections rendered as quoting paragraphs, the exact shape the
+        resume read draws."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -1349,6 +1390,8 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 and isinstance(source.get("reference"), str)
                 and isinstance(source.get("passage"), str)
             ]
+            session_id = payload.get("session_id")
+            ask_key = payload.get("ask_key")
             if not isinstance(question, str) or not question.strip() or not sources:
                 raise ValueError("question and sources are required")
         except (ValueError, KeyError, TypeError):
@@ -1359,6 +1402,40 @@ class SessionHandler(SimpleHTTPRequestHandler):
             )
             return
         selections = pick_quote_selection(question, sources)
+        if (
+            selections
+            and isinstance(session_id, int)
+            and isinstance(ask_key, str)
+            and ask_key.strip()
+        ):
+            snapshot = {
+                "question": question,
+                "blocks": [
+                    {
+                        "type": "paragraph",
+                        "parts": [
+                            {
+                                "quote": item["text"],
+                                "reference": item["reference"],
+                                "pages_label": item.get("pages_label", ""),
+                                "first_page_label": item.get(
+                                    "first_page_label", ""
+                                ),
+                                "book_label": item.get("book_label", ""),
+                            }
+                        ],
+                    }
+                    for item in selections
+                ],
+                "citations": sources[:10],
+                "selection_snapshot": True,
+            }
+            try:
+                session_store.settle_ask(
+                    account, session_id, ask_key, snapshot
+                )
+            except Exception:
+                sys.stderr.write("session settle failed (quote-selection)\n")
         self._send_json(200, {"selections": selections, "pool_size": len(sources)})
 
     def _research_turn_status(self) -> None:

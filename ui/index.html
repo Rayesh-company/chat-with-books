@@ -1993,10 +1993,12 @@
                   h.textContent = block.text || "";
                   article.append(h);
                 } else if (block.type === "paragraph") {
-                  const p = document.createElement("p");
-                  p.className = "doc-para";
-                  p.textContent = block.text || "";
-                  article.append(p);
+                  // The same renderer the live article uses: a stored
+                  // paragraph's parts interleave AI text with verbatim
+                  // quote spans ({quote, reference, labels}) - reading
+                  // block.text here drew every paragraph empty (the
+                  // vanishing-content fix, 2026-09-24).
+                  article.append(paragraphNode(block));
                 }
               }
             } else if (message.payload && message.payload.text) {
@@ -2205,6 +2207,11 @@
       // passages, then both answers re-run over the merged pool.
       let askState = null;
       let recallMoreBusy = false;
+      // This ask's settle key (vanishing-content fix, 2026-09-24): one
+      // opaque key per ask, shared by the picker and phase 2 so the
+      // server settles BOTH into the SAME assistant row — the snapshot
+      // upgrading to the article. New ask, new key.
+      let currentAskKey = null;
       // The current ask's question and Evidence pool — the seed of the
       // Research Mode session the first message creates (ADR 0008).
       let researchQuery = null;
@@ -2663,7 +2670,17 @@
           const res = await fetch("/quoted-answer", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ question, answer, sources }),
+            // The sitting's id and this ask's key let the SERVER settle
+            // the assistant turn (vanishing-content fix, 2026-09-24):
+            // the store write no longer waits for this page to report
+            // it, so a reload mid-compose keeps the answer.
+            body: JSON.stringify({
+              question,
+              answer,
+              sources,
+              session_id: sessionState.storeId || undefined,
+              ask_key: currentAskKey || undefined,
+            }),
             signal: quotedAbort.signal,
           });
           refreshUsageLive();
@@ -2702,13 +2719,11 @@
             }
           }
           quotedDocEl.replaceChildren(doc);
-          // The settled article rides the store (T27 stage 3): the
-          // resume read renders exactly these blocks, read-only.
-          storeAppend("assistant", {
-            question,
-            blocks,
-            citations: evidenceSources(citations).slice(0, 10),
-          });
+          // The settled article rides the store SERVER-SIDE now
+          // (vanishing-content fix, 2026-09-24): /quoted-answer settles
+          // the ask's assistant row itself, before this reply was even
+          // written — a reload mid-compose can no longer orphan it. The
+          // client-side append this replaces would double the row.
           setPhaseState(2, "done");
           stopPhaseTimer(2);
           setRunningPhase(null);
@@ -2755,7 +2770,15 @@
           const res = await fetch("/quote-selection", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ question, sources }),
+            // Same server-side settle: the FIRST answer's snapshot rides
+            // the ask's row the moment the picker lands, so a reload any
+            // time later shows the answer the operator received.
+            body: JSON.stringify({
+              question,
+              sources,
+              session_id: sessionState.storeId || undefined,
+              ask_key: currentAskKey || undefined,
+            }),
             signal: quotedAbort.signal,
           });
           refreshUsageLive();
@@ -3702,6 +3725,7 @@
         }
         // The store (T27 stage 3): the sitting opens on its first ask,
         // the operator's turn appends — fire-and-forget, never a gate.
+        currentAskKey = "ask-" + Date.now();
         ensureStoreSession(query).then((id) => {
           if (id) storeAppend("user", { text: query });
         });
@@ -3847,6 +3871,7 @@
                 answer,
                 lines,
                 datasets: selectedDatasets(),
+                askKey: currentAskKey,
               };
               showRecallMore();
               renderQuotedAnswer(query, answer, lines, stopTimer);
@@ -3868,6 +3893,7 @@
               answer,
               lines: citations.slice(),
               datasets: selectedDatasets(),
+              askKey: currentAskKey,
             };
             showRecallMore();
             // Phase 2 starts right here on the same pool (its exact

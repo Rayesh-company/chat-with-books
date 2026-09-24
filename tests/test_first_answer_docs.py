@@ -71,11 +71,14 @@ def test_readme_records_the_quote_selection_as_the_first_answer():
 
 def test_sheet_calls_the_quote_selection_picker_with_the_pool():
     # Issue #28: with citations present the sheet POSTs the pool exactly
-    # as it parsed it to the picker, under a pulsing Farsi status.
+    # as it parsed it to the picker, under a pulsing Farsi status. The
+    # vanishing-content fix (2026-09-24) rides the sitting's id and the
+    # ask's key along, so the picker's snapshot settles SERVER-SIDE.
     html = UI.read_text(encoding="utf-8")
     assert "function renderQuoteSelection" in html
     assert 'fetch("/quote-selection"' in html
-    assert "body: JSON.stringify({ question, sources })" in html
+    assert "session_id: sessionState.storeId || undefined" in html
+    assert "ask_key: currentAskKey || undefined" in html
     assert "در حال انتخاب نقل‌قول‌ها" in html
 
 
