@@ -41,7 +41,9 @@ try:
     # The deep modules behind this facade; the re-exports below keep the
     # tests' single `from ui import serve` import seam.
     from ui.guard import (
+        _stream_with_offsets,
         book_label,
+        display_text,
         first_page_label,
         guard_blocks,
         guard_sentences,
@@ -171,7 +173,9 @@ try:
     )
 except ImportError:  # the container runs this file as a script beside the modules
     from guard import (
+        _stream_with_offsets,
         book_label,
+        display_text,
         first_page_label,
         guard_blocks,
         guard_sentences,

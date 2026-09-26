@@ -2136,7 +2136,7 @@
                 if (block.type === "heading") {
                   const h = document.createElement("h3");
                   h.className = "doc-heading";
-                  h.textContent = block.text || "";
+                  h.textContent = cleanFarsi(block.text || "");
                   article.append(h);
                 } else if (block.type === "paragraph") {
                   // The same renderer the live article uses: a stored
@@ -2150,7 +2150,7 @@
             } else if (message.payload && message.payload.text) {
               const p = document.createElement("p");
               p.className = "doc-para";
-              p.textContent = message.payload.text;
+              p.textContent = cleanFarsi(message.payload.text);
               article.append(p);
             } else {
               continue;
@@ -2614,7 +2614,9 @@
             continue;
           }
           const reference = item.slice(0, at).trim();
-          const passage = item.slice(at + 3).replace(/"$/, "").trim();
+          const passage = cleanFarsi(
+            item.slice(at + 3).replace(/"$/, "").trim()
+          );
           if (reference && passage) {
             sources.push({ reference, passage });
           }
@@ -2730,12 +2732,12 @@
         const labels = [];
         parts.forEach((part) => {
           if (part.text) {
-            appendPart(part.text);
+            appendPart(cleanFarsi(part.text));
           } else if (part.quote !== undefined) {
             const span = document.createElement("span");
             span.className = "cite-sent";
             span.tabIndex = 0;
-            span.textContent = part.quote;
+            span.textContent = cleanFarsi(part.quote);
             // Book identity arrives per quote from the server (resolved
             // from the Evidence locator's document name) — with two
             // Books the attribution can no longer be implied.
@@ -2949,7 +2951,7 @@
             const span = document.createElement("span");
             span.className = "cite-sent";
             span.tabIndex = 0;
-            span.textContent = item.text;
+            span.textContent = cleanFarsi(item.text);
             // Same tooltip contract as the Quoted paragraph's quotes:
             // Book identity plus the passage's first page.
             span.dataset.ref = citationRef(item);
@@ -3816,7 +3818,7 @@
             askState.lines.push(`${source.reference}: "${source.passage}"`);
             const p = document.createElement("p");
             p.className = "cite";
-            p.textContent = `${source.reference}: "${source.passage}"`;
+            p.textContent = `${source.reference}: "${cleanFarsi(source.passage)}"`;
             citationsEl.append(p);
           }
           recallMoreStatus.textContent = "پاسخ‌ها روی شواهد گسترش‌یافته دوباره ساخته می‌شوند…";
@@ -4007,7 +4009,7 @@
               for (const item of lines) {
                 const p = document.createElement("p");
                 p.className = "cite";
-                p.textContent = item;
+                p.textContent = cleanFarsi(item);
                 citationsEl.append(p);
               }
               armResearch(query, evidenceSources(lines));
@@ -4027,7 +4029,7 @@
             for (const item of citations) {
               const p = document.createElement("p");
               p.className = "cite";
-              p.textContent = item;
+              p.textContent = cleanFarsi(item);
               citationsEl.append(p);
             }
             armResearch(query, evidenceSources(citations));
@@ -4252,6 +4254,22 @@
       // deleted (the PDF's backspace noise and ZWNJ among them). JS's
       // \w is ASCII-only, so the word-character keep is spelled with
       // Unicode property classes.
+      // The client twin of guard.py's _display_clean: the Book text
+      // layer's \b backspace word separators render as nothing in the
+      // browser, fusing the words. Any non-whitespace control character
+      // becomes the space the layer meant, and every whitespace run
+      // becomes one space. ZWNJ is not whitespace, so می‌تواند keeps its
+      // join. Applied where layer text reaches the sheet: quote spans,
+      // the Evidence pool lines, and the passages sent back upstream —
+      // including quotes restored from a stored sitting, which repair
+      // visually without a store rewrite.
+      function cleanFarsi(text) {
+        return String(text)
+          .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+
       function normParts(text) {
         let stream = "";
         const map = []; // norm char index -> raw UTF-16 index

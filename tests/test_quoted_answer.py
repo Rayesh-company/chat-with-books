@@ -69,6 +69,56 @@ def test_guard_matches_when_the_composer_rejoins_backspace_split_words():
     assert kept == [{"text": sentence, "reference": "chunk 1 of document tarhe-kolli"}]
 
 
+def test_stream_with_offsets_mirrors_normalize_for_match():
+    # display_text locates a kept quote inside the RAW passage by walking
+    # the letter stream with per-letter offsets; the mirror must agree
+    # with the guard's own stream exactly, or the verbatim slice would
+    # mis-cut. The noisy layer text and clean proper Farsi both hold.
+    for text in (NOISY_PASSAGE, OTHER_PASSAGE, "انسان می‌تواند ـ باشـد؛"):
+        stream, _ = serve._stream_with_offsets(text)
+        assert stream == serve.normalize_for_match(text)
+
+
+def test_display_text_repairs_a_noisy_copy():
+    # The composer copied the passage's \b separators into the quote: the
+    # guard passes (letter streams compare equal) and the display text
+    # carries the separators as spaces — no control character may reach
+    # the sheet fused inside a quoted sentence.
+    noisy_copy = "قرآن\bکتابی\bاسـت\bبرای\bزندگی\bجمعی\bانسان‌ها"
+    kept = serve.guard_sentences([{"text": noisy_copy, "source": 0}], SOURCES)
+    assert kept and "\b" not in kept[0]["text"]
+    assert kept[0]["text"] == "قرآن کتابی اسـت برای زندگی جمعی انسان‌ها"
+
+
+def test_display_text_repairs_a_fused_copy():
+    # Worse: the composer dropped the separators outright. The passage's
+    # own slice — spacing and trailing punctuation included — is what
+    # the reader gets; the model's fused stream is never shown.
+    fused = "سخندرایناست"
+    kept = serve.guard_sentences([{"text": fused, "source": 0}], SOURCES)
+    assert kept and kept[0]["text"] == "سـخن در این اسـت؛"
+
+
+def test_guard_blocks_repairs_a_noisy_quote_end_to_end():
+    # The paragraph path repairs exactly like the sentence path: a quote
+    # part copied with the layer's backspaces renders spaced, while the
+    # proper-Farsi quotes and AI text around it are untouched.
+    blocks = [
+        {"type": "heading", "text": "۱. مفهوم‌شناسی"},
+        {
+            "type": "paragraph",
+            "parts": [
+                {"text": "پیش از هر چیز باید معنای واژه را روشن کرد: "},
+                {"quote": "قرآن\bکتابی\bاسـت\bبرای\bزندگی\bجمعی\bانسان‌ها", "source": 0},
+                {"text": " بر این اساس، ادامه می‌دهیم."},
+            ],
+        },
+    ]
+    kept = serve.guard_blocks(blocks, SOURCES)
+    assert kept[1]["parts"][1]["quote"] == "قرآن کتابی اسـت برای زندگی جمعی انسان‌ها"
+    assert kept[1]["parts"][0]["text"] == "پیش از هر چیز باید معنای واژه را روشن کرد:"
+
+
 def test_guard_drops_paraphrased_sentence():
     paraphrase = "قرآن برنامه‌ای برای زندگی شخصی انسان‌ها ارائه می‌دهد"
     assert serve.guard_sentences([{"text": paraphrase, "source": 0}], SOURCES) == []

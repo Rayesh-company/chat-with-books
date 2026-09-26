@@ -41,6 +41,98 @@ def normalize_for_match(text: str) -> str:
     return _NON_WORD.sub("", text).lower()
 
 
+# The Book text layer's backspace word separators (\b, recorded live
+# 2026-09-09) render as nothing in the browser, fusing the words. Any
+# non-whitespace C0 control gets the space the layer meant; \t\n\r ride
+# the whitespace collapse instead. ZWNJ is not whitespace, so it
+# survives — the composer's می‌تواند keeps its join.
+_CONTROL_MARKS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _display_clean(text: str) -> str:
+    """Make text layer noise readable: controls become spaces, every
+    whitespace run becomes one space."""
+    return " ".join(_CONTROL_MARKS.sub(" ", text).split())
+
+
+def _stream_with_offsets(text: str) -> tuple:
+    """normalize_for_match's letter stream over the RAW text, with each
+    kept letter's raw index beside it — the bridge from a matched stream
+    position back to the passage's own characters (display_text's
+    verbatim slice)."""
+    stream = []
+    offsets = []
+    for index, char in enumerate(text):
+        char = _ARABIC_TO_FARSI.get(ord(char), char)
+        if _STRIPPED_MARKS.match(char):
+            continue
+        if _NON_WORD.fullmatch(char):
+            continue
+        lowered = char.lower()
+        # A lowering that changes length cannot ride a 1:1 offset map;
+        # Farsi is caseless, so keeping the char changes nothing real.
+        if len(lowered) != 1:
+            lowered = char
+        stream.append(lowered)
+        offsets.append(index)
+    return "".join(stream), offsets
+
+
+def _honors_word_gaps(model: str, source: str) -> bool:
+    """Whether the model's text puts a separator wherever the passage
+    slice has one. Both already display-cleaned, letter streams equal
+    (the guard proved containment); a gap holding only ZWNJ is still a
+    join the layer cannot distinguish from a word space, so any
+    separator in the model's gap — space or ZWNJ — honors it. Tashkeel
+    and kashida are intra-word decoration, never gaps."""
+    def gaps(text):
+        runs = []
+        gap = ""
+        for char in text:
+            if _STRIPPED_MARKS.match(char):
+                continue
+            if _NON_WORD.fullmatch(char):
+                gap += char
+            else:
+                runs.append(gap)
+                gap = ""
+        return runs
+
+    model_gaps, source_gaps = gaps(model), gaps(source)
+    if len(model_gaps) != len(source_gaps):
+        return False
+    return all(
+        not source_gap or model_gap
+        for source_gap, model_gap in zip(source_gaps, model_gaps)
+    )
+
+
+def display_text(text: str, passage: str) -> str:
+    """The text to SHOW for a guard-kept quote: the model's own writing
+    when it honors every word gap of the passage, else the passage's
+    verbatim slice — both display-cleaned. The composer is told to write
+    proper Farsi over the \b noise and usually does; when it copies the
+    noise (or deletes the separators outright) the guard still passes —
+    letter streams compare equal — so the passage itself is the spacing
+    the reader gets."""
+    cleaned = _display_clean(text)
+    if not cleaned or not isinstance(passage, str) or not passage:
+        return cleaned or text.strip()
+    stream, offsets = _stream_with_offsets(passage)
+    needle = normalize_for_match(text)
+    at = stream.find(needle)
+    if at < 0 or at + len(needle) > len(offsets):
+        return cleaned
+    end = offsets[at + len(needle) - 1] + 1
+    # The model may also have dropped the sentence's trailing
+    # punctuation; the slice takes the passage's own, stopping at the
+    # next word's first letter.
+    while end < len(passage) and _NON_WORD.fullmatch(passage[end]):
+        end += 1
+    source = _display_clean(passage[offsets[at] : end])
+    return cleaned if _honors_word_gaps(cleaned, source) else source
+
+
 def guard_sentences(selections, sources):
     """Keep only sentences that occur verbatim in their claimed source passage.
 
@@ -63,7 +155,12 @@ def guard_sentences(selections, sources):
             continue
         needle = normalize_for_match(text)
         if needle and needle in normalized[index]:
-            kept.append({"text": text.strip(), "reference": sources[index]["reference"]})
+            kept.append(
+                {
+                    "text": display_text(text, sources[index]["passage"]),
+                    "reference": sources[index]["reference"],
+                }
+            )
     return kept
 
 
@@ -105,12 +202,12 @@ def guard_blocks(blocks, sources, commentary=False):
         elif kind == "heading":
             text = block.get("text")
             if isinstance(text, str) and text.strip():
-                kept.append({"type": "heading", "text": text.strip()})
+                kept.append({"type": "heading", "text": _display_clean(text)})
         elif kind == "commentary":
             if commentary:
                 text = block.get("text")
                 if isinstance(text, str) and text.strip():
-                    kept.append({"type": "commentary", "text": text.strip()})
+                    kept.append({"type": "commentary", "text": _display_clean(text)})
         elif kind == "paragraph":
             parts = block.get("parts")
             if not isinstance(parts, list):
@@ -123,7 +220,7 @@ def guard_blocks(blocks, sources, commentary=False):
                     continue
                 text = part.get("text")
                 if isinstance(text, str) and text.strip():
-                    kept_parts.append({"text": text.strip()})
+                    kept_parts.append({"text": _display_clean(text)})
                     has_text = True
                     continue
                 quote = part.get("quote")
@@ -141,7 +238,7 @@ def guard_blocks(blocks, sources, commentary=False):
                     continue
                 kept_parts.append(
                     {
-                        "quote": quote.strip(),
+                        "quote": display_text(quote, sources[index]["passage"]),
                         "source": index,
                         **_citation_labels(
                             sources[index]["reference"], sources[index]["passage"]
