@@ -104,7 +104,13 @@ def _table(headers, rows_html) -> str:
         body = f'<tr><td colspan="{len(headers)}" class="empty">—</td></tr>'
     else:
         body = "".join(rows_html)
-    return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+    # The scroll wrapper is the phone's answer to a seven-column mirror:
+    # the table keeps its readable width and swipes instead of crushing
+    # (the mobile audit).
+    return (
+        '<div class="tablewrap"><table><thead><tr>'
+        f"{head}</tr></thead><tbody>{body}</tbody></table></div>"
+    )
 
 
 def _accounts_table(rows) -> str:
@@ -330,6 +336,7 @@ _STYLE = """
   * { box-sizing: border-box; }
   body { font-family: Vazirmatn, Tahoma, "Segoe UI", sans-serif; margin: 0;
          background: #f2f0eb; color: #26211d; line-height: 1.9; }
+  :focus-visible { outline: 2px solid #8a3d20; outline-offset: 2px; }
   .page { max-width: 1080px; margin: 0 auto; padding: 28px 32px 56px; }
   header.console { border-bottom: 3px solid #8a3d20; padding-bottom: 10px;
                    margin-bottom: 18px; }
@@ -342,6 +349,8 @@ _STYLE = """
        padding-right: 10px; margin: 26px 0 8px; }
   .append-only { font-size: 12px; background: #e8efe6; color: #2f5d3a;
                  border-radius: 8px; padding: 1px 8px; }
+  .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch;
+               border-radius: 8px; }
   table { width: 100%; border-collapse: collapse; background: #fff;
           border: 1px solid #e0d8ca; border-radius: 8px; font-size: 14px; }
   th { background: #efe8dc; color: #5c4a3d; font-weight: 600;
@@ -378,4 +387,18 @@ _STYLE = """
                       font-size: 14px; font-family: inherit; cursor: pointer; }
   footer.note { margin-top: 30px; font-size: 12.5px; color: #75695f;
                 border-top: 1px solid #e0d8ca; padding-top: 10px; }
+  /* The phone: the page's gutter narrows and the tables keep a
+     readable width inside their swipe wrapper, never crushed into
+     illegibility (the mobile audit). */
+  @media (max-width: 719.98px) {
+    .page { padding: 18px 14px 40px; }
+    table { font-size: 13px; min-width: 640px; }
+    th, td { padding: 5px 8px; }
+  }
+  /* A finger, not a mouse: roomier targets, and a 16px field font so
+     iOS never zooms the form on focus. */
+  @media (pointer: coarse) {
+    form.write input, form.write select { font-size: 16px; padding: 8px 10px; }
+    form.write button { padding: 9px 20px; }
+  }
 """

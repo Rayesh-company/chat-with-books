@@ -2,7 +2,9 @@
 <html lang="fa" dir="rtl">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#d8cbae" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#141821" media="(prefers-color-scheme: dark)" />
     <title>نشست · طرح کلی اندیشۀ اسلامی در قرآن · انسان ۲۵۰ ساله</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -139,6 +141,15 @@
 
       * {
         box-sizing: border-box;
+      }
+
+      /* A stray wide child never drags the whole sheet sideways again —
+         clip is not a scroll container, so the sticky topbar keeps
+         working (the 320px audit's cut-off page). */
+      @supports (overflow: clip) {
+        html {
+          overflow-x: clip;
+        }
       }
 
       html,
@@ -301,6 +312,7 @@
         flex-direction: column;
         gap: 0.25rem;
         overflow-y: auto;
+        overscroll-behavior: contain;
       }
 
       .session-item {
@@ -339,6 +351,15 @@
       .session-item-del:focus-visible {
         opacity: 1;
         border-color: var(--rule);
+      }
+
+      /* A finger has no hover: the delete never hides on a touch
+         surface — an invisible control is undiscoverable and an
+         accident waiting (the touch audit). */
+      @media (pointer: coarse) {
+        .session-item-del {
+          opacity: 1;
+        }
       }
 
       .session-item-del:hover {
@@ -394,9 +415,21 @@
         display: flex;
         align-items: center;
         gap: 0.55rem;
-        padding: 0.55rem 0.9rem;
+        padding-block: max(0.55rem, env(safe-area-inset-top)) 0.55rem;
+        padding-inline: max(0.9rem, env(safe-area-inset-right))
+          max(0.9rem, env(safe-area-inset-left));
         background: var(--surface);
         border-bottom: 1px solid var(--rule);
+      }
+
+      /* The end-side controls ride as one group on the desk grid; below
+         1024px the group dissolves (display: contents) so the buttons
+         wrap under the title as a row instead of dragging the bar
+         sideways (the 320px audit's overflow). */
+      .topbar-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
       }
 
       .session-head {
@@ -890,7 +923,7 @@
       .composer {
         max-width: 46rem;
         margin-inline: auto;
-        padding: 0.7rem 1.1rem 0.85rem;
+        padding: 0.7rem 1.1rem max(0.85rem, env(safe-area-inset-bottom));
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
@@ -918,6 +951,7 @@
         display: flex;
         align-items: center;
         gap: 0.6rem;
+        flex-wrap: wrap;
       }
 
       .char-note {
@@ -1133,6 +1167,7 @@
 
       .research-form textarea {
         flex: 1;
+        min-width: 0;
         min-height: 2.8rem;
         max-height: 9rem;
         resize: none;
@@ -1233,6 +1268,7 @@
         border: 1px solid var(--rule);
         box-shadow: 0 18px 40px var(--shadow);
         min-height: 0;
+        padding-bottom: env(safe-area-inset-bottom);
       }
 
       #reader-backdrop {
@@ -1272,7 +1308,7 @@
         display: flex;
         align-items: center;
         gap: 0.6rem;
-        padding: 0.7rem 1rem;
+        padding: max(0.7rem, env(safe-area-inset-top)) 1rem 0.7rem;
         border-bottom: 1px solid var(--rule);
       }
 
@@ -1378,6 +1414,7 @@
         align-items: center;
         gap: 1.1rem;
         scroll-behavior: smooth;
+        overscroll-behavior: contain;
       }
 
       .reader-page {
@@ -1459,6 +1496,40 @@
         background: var(--bad-soft);
       }
 
+      /* ===== Small screens. The bar and the reader head wrap instead of
+         overflowing: below 1024px the sidebar is a drawer and the
+         reader is full-screen, so their tooling gets the room it needs
+         row by row (the 320px audit's cut-off page). */
+      @media (max-width: 1023.98px) {
+        .topbar {
+          flex-wrap: wrap;
+          row-gap: 0.45rem;
+        }
+
+        .topbar-actions {
+          display: contents;
+        }
+
+        .session-head {
+          flex: 1 1 auto;
+        }
+
+        .reader-head {
+          flex-wrap: wrap;
+          row-gap: 0.45rem;
+        }
+
+        .reader-books {
+          order: 3;
+          flex: 1 1 100%;
+        }
+
+        .reader-book {
+          flex: 1 1 0;
+          min-width: 0;
+        }
+      }
+
       @media (max-width: 719.98px) {
         .topbar p.status {
           display: none;
@@ -1466,6 +1537,66 @@
 
         h1#session-title {
           max-width: 40vw;
+        }
+      }
+
+      /* Touch surfaces: every control reaches a comfortable target
+         (the 44px habit) — paddings, not sizes, so the desk look is
+         untouched on a mouse. */
+      @media (pointer: coarse) {
+        .icon-btn {
+          padding: 0.55rem 0.95rem;
+        }
+
+        .browse-btn {
+          padding: 0.5rem 1rem;
+        }
+
+        .reader-tools button {
+          padding: 0.5rem 0.9rem;
+        }
+
+        .reader-book {
+          padding: 0.55rem 0.8rem;
+        }
+
+        .reader-close {
+          padding: 0.55rem 1rem;
+        }
+
+        a.reader-download {
+          padding: 0.5rem 0.9rem;
+        }
+
+        .research-chip {
+          padding: 0.5rem 1.1rem;
+        }
+
+        .recall-more-row button {
+          padding: 0.5rem 1.1rem;
+        }
+
+        .starter-chip {
+          padding: 0.6rem 0.85rem;
+        }
+
+        .session-item-del {
+          padding: 0.4rem 0.7rem;
+          font-size: 0.75rem;
+        }
+      }
+
+      /* The narrowest phones: the wrapped action row must fit beside
+         its own gaps — compact controls, never a second sideways
+         scroll. Last so it outbids the touch paddings at 320px. */
+      @media (max-width: 359.98px) {
+        .browse-btn {
+          font-size: 0.78rem;
+          padding: 0.38rem 0.6rem;
+        }
+
+        h1#session-title {
+          font-size: 0.9rem;
         }
       }
 
@@ -1518,6 +1649,19 @@
         #auth-gate h2 {
           margin: 0;
           font-size: 1.05rem;
+        }
+        #auth-gate input {
+          width: 100%;
+          font: inherit;
+          color: var(--ink);
+          background: var(--raised);
+          border: 1px solid var(--rule);
+          border-radius: 8px;
+          padding: 0.55rem 0.75rem;
+        }
+        #auth-gate input:focus-visible {
+          outline: 2px solid var(--focus);
+          outline-offset: 2px;
         }
         #auth-error {
           margin: 0;
@@ -1640,21 +1784,23 @@
             <span id="session-book" class="book-chip" hidden></span>
           </div>
           <span class="spacer"></span>
-          <p class="status" id="status" data-state="unknown">در حال بررسی سرویس…</p>
-          <!-- The live session price (T22, GitLab #24): the tariff is config's business; this chip only reads the ledger. -->
-          <p class="status" id="usage-live" data-state="idle" title="هزینۀ این نشست از آغاز آخرین پرسش">هزینۀ نشست: —</p>
-          <button type="button" id="reader-browse" class="browse-btn">کتاب‌ها</button>
-          <!-- The profile toggle (T24, GitLab #27): «پروفایل» is the
-               Account's own view of its Balance and its Sessions' spend
-               (the Account glossary row names it so). DRAFT label,
-               pending PM approval — CONTEXT.md's draft roster,
-               2026-09-19. -->
-          <button type="button" id="profile-toggle" class="browse-btn" aria-expanded="false" aria-controls="profile">پروفایل</button>
-          <!-- The Admin's door (ADR-0013): «میز مدیریت» shows only to the
-               role that owns it — /auth/me's role decides on load; every
-               operator sees nothing here. DRAFT name (2026-09-19). -->
-          <a id="admin-link" class="browse-btn" href="/admin" hidden>میز مدیریت</a>
-          <button type="button" id="theme-toggle" class="browse-btn" aria-label="تغییر پوسته">شب</button>
+          <div class="topbar-actions">
+            <p class="status" id="status" data-state="unknown">در حال بررسی سرویس…</p>
+            <!-- The live session price (T22, GitLab #24): the tariff is config's business; this chip only reads the ledger. -->
+            <p class="status" id="usage-live" data-state="idle" title="هزینۀ این نشست از آغاز آخرین پرسش">هزینۀ نشست: —</p>
+            <button type="button" id="reader-browse" class="browse-btn">کتاب‌ها</button>
+            <!-- The profile toggle (T24, GitLab #27): «پروفایل» is the
+                 Account's own view of its Balance and its Sessions' spend
+                 (the Account glossary row names it so). DRAFT label,
+                 pending PM approval — CONTEXT.md's draft roster,
+                 2026-09-19. -->
+            <button type="button" id="profile-toggle" class="browse-btn" aria-expanded="false" aria-controls="profile">پروفایل</button>
+            <!-- The Admin's door (ADR-0013): «میز مدیریت» shows only to the
+                 role that owns it — /auth/me's role decides on load; every
+                 operator sees nothing here. DRAFT name (2026-09-19). -->
+            <a id="admin-link" class="browse-btn" href="/admin" hidden>میز مدیریت</a>
+            <button type="button" id="theme-toggle" class="browse-btn" aria-label="تغییر پوسته">شب</button>
+          </div>
         </header>
 
         <main id="thread" class="thread" aria-live="polite">
