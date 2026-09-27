@@ -17,11 +17,14 @@ COPY vendor /app/vendor
 # (pypdfium2 bundles the binary; Pillow encodes the PNGs) — pdf.js's
 # canvas cannot faithfully draw these Persian subset fonts (ADR-0007).
 # The wheel fallback (the VPS pip times out on PyPI): the deploy plants
-# the host's pinned wheels into ui/wheels/ before the build when the
-# host carries ~/cwb-wheels; a build without wheels falls through to
-# PyPI. The pins below are identical either way.
+# the host's pinned wheels into ui/wheels/ before the build, and the
+# install tries THEM FIRST with --no-index — a range spec still phones
+# the index when find-links rides alone. A build without wheels (or an
+# incomplete set) falls through to PyPI. The pins are identical either way.
 COPY wheels /wheels/
-RUN pip install --no-cache-dir --find-links=/wheels pypdfium2==5.9.0 "pillow>=10,<12"
+RUN (pip install --no-cache-dir --no-index --find-links=/wheels \
+      pypdfium2==5.9.0 "pillow>=10,<12" \
+     || pip install --no-cache-dir pypdfium2==5.9.0 "pillow>=10,<12")
 
 ENV SESSION_UI_HOST=0.0.0.0 \
     SESSION_UI_PORT=8765
