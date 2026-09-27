@@ -4890,6 +4890,7 @@
         lib: null, // the lazily imported pdf.js module
         noteTimer: null,
         stick: null, // the page an in-flight scroll is heading to
+        current: 1, // the page the scroll handler last saw in view
         queue: new Set(), // pending page numbers, drained nearest-anchor-first
         pump: null, // the running drain loop (serialization)
         fastPaint: null, // the far-jump target painting small-first
@@ -5297,8 +5298,9 @@
 
       // The render scheduler: a Set of pending page numbers drained by
       // one worker, each pick the page nearest the anchor (the stick of
-      // a jump, else the page currently in view). renderPage stays
-      // serialized — only the order changed.
+      // a jump, else the page the scroll handler last saw in view —
+      // measuring 800 rects per render is a jank the reader can't
+      // afford). renderPage stays serialized — only the order moved.
       function enqueuePage(n) {
         if (!reader.recs.has(n)) return;
         reader.queue.add(n);
@@ -5309,7 +5311,7 @@
         if (reader.pump) return;
         reader.pump = (async () => {
           while (reader.queue.size) {
-            const anchor = reader.stick ?? currentPageNumber() ?? 1;
+            const anchor = reader.stick ?? reader.current ?? 1;
             let best = null;
             let bestDist = Infinity;
             for (const n of reader.queue) {
@@ -5496,7 +5498,7 @@
         // INSTANT, not smooth (the comment is load-bearing): the sheet
         // styles .reader-pages with scroll-behavior: smooth, and
         // behavior: "auto" means "honor the stylesheet" — the jump
-        // became a smooth animation that a busy render loop kept
+        // became a smooth animation the busy open window kept
         // canceling, so a far citation never arrived at all. "instant"
         // overrides the stylesheet and lands in one step.
         const from = currentPageNumber();
@@ -5507,6 +5509,14 @@
           behavior: "instant",
         });
         await ensureRendered(n);
+        // Re-assert the landing: the open window's async work (the
+        // ranged pdf.js parse, the first cold renders) reshuffles the
+        // container between the jump and the settle — the rendered
+        // target, not the interim drift, is where the reader stands.
+        readerPagesEl.scrollTo({
+          top: rec.el.offsetTop - 12,
+          behavior: "instant",
+        });
       }
 
       // Far pages drop their rasters: hundreds of full-page images
@@ -5530,6 +5540,7 @@
         requestAnimationFrame(() => {
           scrollTick = false;
           const current = currentPageNumber();
+          reader.current = current;
           if (document.activeElement !== pageNumEl) markCurrentPage(current);
           if (reader.stick === current) reader.stick = null;
           sweepFarPages(current);
