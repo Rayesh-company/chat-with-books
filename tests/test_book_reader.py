@@ -3,6 +3,8 @@
 provenance bridge a quote click walks (ADR-0007)."""
 
 import sys
+import gzip
+import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -62,6 +64,17 @@ PDF_MAGIC = b"%PDF"
 
 def _get_raw(base, path):
     request = urllib.request.Request(base + path)
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, response.headers, response.read()
+    except urllib.error.HTTPError as exc:  # noqa: F821
+        return exc.code, exc.headers, exc.read()
+
+
+def _conditional_raw(base, path, headers):
+    """One GET with extra request headers — a 304 answer is an HTTPError
+    to urllib, so the conditional reads go through here."""
+    request = urllib.request.Request(base + path, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             return response.status, response.headers, response.read()
@@ -209,3 +222,130 @@ def test_book_page_route_rejects_bad_input(tmp_path):
     finally:
         stop_gate(server, originals)
         serve.BOOKS_DIR = original_dir
+
+
+# ---- the revalidation pair (ADR-0017): ETag + 304, gzip, Range ----
+
+
+def test_book_routes_carry_etag_and_answer_304(tmp_path):
+    books = tmp_path / "books"
+    books.mkdir()
+    (books / "tarhe-kolli.pdf").write_bytes(PDF_MAGIC + b"fake")
+    original_dir = serve.BOOKS_DIR
+    serve.BOOKS_DIR = books
+    base, server, originals = with_gate(tmp_path, None)
+    try:
+        status, headers, _ = _get_raw(base, "/books/tarhe-kolli/book")
+        assert status == 200
+        etag = headers["ETag"]
+        assert etag
+        assert "must-revalidate" in (headers.get("Cache-Control") or "")
+
+        req = urllib.request.Request(
+            base + "/books/tarhe-kolli/book", headers={"If-None-Match": etag}
+        )
+        status304, headers304, body304 = _conditional_raw(
+            base, "/books/tarhe-kolli/book", {"If-None-Match": etag}
+        )
+        assert status304 == 304
+        assert headers304["ETag"] == etag
+        assert body304 == b""
+
+        # A changed file moves the ETag — the stat pair is the validator.
+        (books / "tarhe-kolli.pdf").write_bytes(PDF_MAGIC + b"fake2")
+        status_new, _, _ = _conditional_raw(
+            base, "/books/tarhe-kolli/book", {"If-None-Match": etag}
+        )
+        assert status_new == 200
+
+        # Range requests keep their 206 (pdf.js's lazy page fetches).
+        ranged = urllib.request.Request(
+            base + "/books/tarhe-kolli/book", headers={"Range": "bytes=0-3"}
+        )
+        with urllib.request.urlopen(ranged) as resp3:
+            assert resp3.status == 206
+    finally:
+        stop_gate(server, originals)
+        serve.BOOKS_DIR = original_dir
+
+
+def test_pages_index_gzips_when_accepted(tmp_path):
+    books = tmp_path / "books"
+    books.mkdir()
+    plain = '{"pages": {"1": "متن"}}'
+    (books / "tarhe-kolli.pages.json").write_text(plain, encoding="utf-8")
+    original_dir = serve.BOOKS_DIR
+    serve.BOOKS_DIR = books
+    base, server, originals = with_gate(tmp_path, None)
+    try:
+        req = urllib.request.Request(
+            base + "/books/tarhe-kolli.pages.json",
+            headers={"Accept-Encoding": "gzip"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200
+            assert resp.headers["Content-Encoding"] == "gzip"
+            body = gzip.decompress(resp.read()).decode("utf-8")
+        assert body == plain
+    finally:
+        stop_gate(server, originals)
+        serve.BOOKS_DIR = original_dir
+
+
+@pytest.mark.skipif(
+    not REAL_PDF.exists(), reason="books/ PDFs are provisioned, not committed"
+)
+def test_pdf_doc_handle_reuses_and_evicts(tmp_path):
+    # The open-document reuse (ADR-0017): a second call for the same
+    # Book returns the SAME parsed handle, the LRU's oldest entry closes
+    # when the cap is crossed, and the caller's lock is what guards it.
+    class FakeDoc:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    doc_a, doc_b = FakeDoc(), FakeDoc()
+    original_cache = serve.PDF_DOCS_CACHE
+    serve.PDF_DOCS_CACHE = {"a": doc_a, "b": doc_b}
+    try:
+        with serve.RENDER_LOCK:
+            first = serve.SessionHandler._pdf_doc_handle(REAL_PDF)
+            again = serve.SessionHandler._pdf_doc_handle(REAL_PDF)
+        assert again is first
+        # The cap was full with two fakes: "a" (oldest) was closed and
+        # evicted to make room, "b" and the real handle remain.
+        assert doc_a.closed
+        assert not doc_b.closed
+        assert "b" in serve.PDF_DOCS_CACHE
+        assert str(REAL_PDF) in serve.PDF_DOCS_CACHE
+    finally:
+        for doc in serve.PDF_DOCS_CACHE.values():
+            try:
+                doc.close()
+            except Exception:
+                pass
+        serve.PDF_DOCS_CACHE = original_cache
+
+
+def test_render_cache_prune_keeps_cap(tmp_path):
+    # The ceiling (ADR-0017): the oldest rasters go first, only when the
+    # cap is crossed; under the cap the sweep touches nothing.
+    original_dir = serve.RENDER_CACHE_DIR
+    original_cap = serve.RENDER_CACHE_CAP
+    serve.RENDER_CACHE_DIR = tmp_path
+    serve.RENDER_CACHE_CAP = 100
+    try:
+        old = tmp_path / "tarhe-kolli-p1-w480.png"
+        new = tmp_path / "tarhe-kolli-p2-w480.png"
+        old.write_bytes(b"x" * 80)
+        new.write_bytes(b"x" * 30)
+        os.utime(old, (1_000_000_000, 1_000_000_000))
+        os.utime(new, (2_000_000_000, 2_000_000_000))
+        serve.SessionHandler._prune_render_cache()
+        assert not old.exists()
+        assert new.exists()
+    finally:
+        serve.RENDER_CACHE_DIR = original_dir
+        serve.RENDER_CACHE_CAP = original_cap

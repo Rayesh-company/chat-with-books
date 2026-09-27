@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 import base64
+import gzip
 import hashlib
 import hmac
 import json
@@ -20,9 +21,8 @@ from pathlib import Path
 import re
 import secrets
 import sys
-import tempfile
-import threading
 import time
+import threading
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
@@ -91,6 +91,7 @@ try:
     )
     from ui import ledger
     from ui import session_store
+    from ui import research_store
     from ui.picker import (
         build_picker_prompt,
         parse_picker_reply,
@@ -225,6 +226,7 @@ except ImportError:  # the container runs this file as a script beside the modul
     )
     import ledger
     import session_store
+    import research_store
     from picker import (
         build_picker_prompt,
         parse_picker_reply,
@@ -314,17 +316,27 @@ BOOKS_DIR = Path(
     os.environ.get("SESSION_BOOKS_DIR", str(UI_DIR.parent / "books"))
 )
 # Rendered page rasters (the visual pipeline). The books/ mount is
-# read-only, so the cache lives outside it — /tmp in the container,
-# the system temp beside it in dev.
+# read-only, so the cache lives outside it. Default: a `render-cache/`
+# beside the books dir — persistent across restarts and deploys, unlike
+# the old /tmp default that turned every container rebuild into a fully
+# cold reader (ADR-0017); compose pins the volume explicitly.
 RENDER_CACHE_DIR = Path(
-    os.environ.get(
-        "SESSION_RENDER_CACHE",
-        str(Path(tempfile.gettempdir()) / "chat-books-render"),
-    )
+    os.environ.get("SESSION_RENDER_CACHE", str(BOOKS_DIR.parent / "render-cache"))
 )
+# The cache's ceiling (ADR-0017): width buckets × pages can outgrow a
+# small disk, so once the total passes the cap the oldest rasters go
+# first. Overridable for tests and tight volumes.
+RENDER_CACHE_CAP = int(os.environ.get("SESSION_RENDER_CACHE_CAP", str(3 << 30)))
 # PDFium is not provably thread-safe across documents; renders are
 # serialized (one page takes a fraction of a second).
 RENDER_LOCK = threading.Lock()
+# The open-document reuse (ADR-0017): a raster cache miss used to pay a
+# full PdfDocument parse of the whole file on EVERY page — under the
+# global lock, so every waiting client waited too. The parsed document
+# handles live here, newest-used wins, closed on eviction; reuse stays
+# inside RENDER_LOCK so the thread-safety argument above holds unchanged.
+PDF_DOCS_CACHE: dict[str, object] = {}
+PDF_DOCS_CACHE_CAP = 2
 COGNEE_URL = os.environ.get("COGNEE_URL", "http://127.0.0.1:8000").rstrip("/")
 HOST = os.environ.get("SESSION_UI_HOST", "127.0.0.1")
 PORT = int(os.environ.get("SESSION_UI_PORT", "8765"))
@@ -638,6 +650,24 @@ def _conversation_tail(account: str, session_id) -> str:
     return "\n".join(lines[-_TAIL_TURNS * 2 :])
 
 
+# The pages index's gzip cache (ADR-0017): the per-Book text index
+# shrinks ~6x on the wire but re-compressing it per request spends CPU
+# on every reader open — the compressed bytes live here keyed by the
+# file's mtime, so an unchanged index compresses exactly once. (The
+# mtime key makes a re-indexed Book re-compress for free.)
+_GZIP_CACHE: dict[tuple[str, int], bytes] = {}
+
+
+def _gzipped_file(file_path: Path, mtime_ns: int) -> bytes:
+    key = (str(file_path), mtime_ns)
+    body = _GZIP_CACHE.get(key)
+    if body is None:
+        body = gzip.compress(file_path.read_bytes(), compresslevel=6)
+        _GZIP_CACHE.clear()  # one Book's index at a time — the files are few
+        _GZIP_CACHE[key] = body
+    return body
+
+
 class SessionHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(UI_DIR), **kwargs)
@@ -724,8 +754,10 @@ class SessionHandler(SimpleHTTPRequestHandler):
         ``.pages.json`` text index (the reader's provenance surface,
         ADR-0007). The dataset must be one of the Book set: the allowlist
         is the path-traversal guard, so no ``..`` or hash directory can
-        ever reach the filesystem. No HTTP Range: the browser's PDF.js
-        falls back to one full fetch, fine at the Books' 3–16 MB.
+        ever reach the filesystem. HTTP Range is honored byte-for-byte
+        (pdf.js fetches a Book's pages lazily with disableAutoFetch,
+        ADR-0017), and the full-form answers carry an ETag + 304
+        revalidation so reopening a Book never refetches it whole.
 
         The reader fetches the extension-less ``/book`` form on purpose:
         download managers (IDM among them) intercept requests whose URL
@@ -753,7 +785,8 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         file_path = BOOKS_DIR / f"{dataset}.{suffix}"
         try:
-            total_size = file_path.stat().st_size
+            stat = file_path.stat()
+            total_size = stat.st_size
         except OSError:
             self._drain_request_body()
             self.send_error(404, "Not found")
@@ -790,6 +823,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 self.send_header("Content-Range", f"bytes {start}-{end}/{total_size}")
                 self.send_header("Content-Length", str(chunk_len))
                 self.send_header("Accept-Ranges", "bytes")
+                self.send_header("ETag", f'"{total_size:x}-{stat.st_mtime_ns:x}"')
                 self.end_headers()
 
                 with file_path.open("rb") as f:
@@ -808,15 +842,51 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 pass
 
         try:
+            # The revalidation pair (ADR-0017): a strong ETag off the
+            # file's own stat, and a must-revalidate policy — the
+            # browser re-asks on every reader open and a 304 answer
+            # costs one stat, where the old unconditioned 200 refetched
+            # the whole 16 MB Book each time. Range requests (pdf.js's
+            # lazy page fetches with disableAutoFetch) carry the ETag
+            # too but never take the 304 short-circuit.
+            etag = f'"{total_size:x}-{stat.st_mtime_ns:x}"'
+            if (
+                not range_header
+                and self.headers.get("If-None-Match") == etag
+            ):
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header(
+                    "Cache-Control", "public, max-age=0, must-revalidate"
+                )
+                self.end_headers()
+                return
+            gzip_wanted = (
+                suffix == "pages.json"
+                and "gzip" in (
+                    self.headers.get("Accept-Encoding") or ""
+                )
+            )
             self.send_response(200)
             self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(total_size))
+            self.send_header("ETag", etag)
             self.send_header("Accept-Ranges", "bytes")
+            self.send_header(
+                "Cache-Control", "public, max-age=0, must-revalidate"
+            )
             if suffix == "pdf" and path.endswith(".pdf"):
                 self.send_header(
                     "Content-Disposition",
                     f'attachment; filename="{dataset}.pdf"',
                 )
+            if gzip_wanted:
+                body = _gzipped_file(file_path, stat.st_mtime_ns)
+                self.send_header("Content-Encoding", "gzip")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            self.send_header("Content-Length", str(total_size))
             self.end_headers()
 
             with file_path.open("rb") as f:
@@ -880,39 +950,104 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     @staticmethod
+    def _pdf_doc_handle(source: Path):
+        """The reused parsed document (ADR-0017): an LRU of open
+        PdfDocuments, closed on eviction. A raster cache miss used to
+        pay a full parse of the whole file on EVERY page — under the
+        global lock, so every waiting client waited with it. Callers
+        hold RENDER_LOCK, so the reuse never widens PDFium's thread
+        exposure; the books are read-only mounts, the handle cannot go
+        stale under a live file."""
+        key = str(source)
+        pdf = PDF_DOCS_CACHE.get(key)
+        if pdf is not None:
+            PDF_DOCS_CACHE[key] = PDF_DOCS_CACHE.pop(key)
+            return pdf
+        while len(PDF_DOCS_CACHE) >= PDF_DOCS_CACHE_CAP:
+            oldest = next(iter(PDF_DOCS_CACHE))
+            try:
+                PDF_DOCS_CACHE.pop(oldest).close()
+            except Exception:
+                pass
+        pdf = _pdfium.PdfDocument(str(source))
+        PDF_DOCS_CACHE[key] = pdf
+        return pdf
+
+    @staticmethod
+    def _prune_render_cache():
+        """The cache's ceiling (ADR-0017): once the rasters outgrow the
+        cap the oldest go first. The sweep runs only on the write path
+        and only when the cap is crossed — the hit path never pays for
+        it."""
+        try:
+            entries = list(RENDER_CACHE_DIR.glob("*.png"))
+            total = sum(e.stat().st_size for e in entries)
+            if total <= RENDER_CACHE_CAP:
+                return
+            entries.sort(key=lambda e: e.stat().st_mtime)
+            for entry in entries:
+                if total <= RENDER_CACHE_CAP:
+                    break
+                try:
+                    total -= entry.stat().st_size
+                except OSError:
+                    continue
+                entry.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    @staticmethod
     def _render_book_page(dataset, page_number, width, cache_file):
         """One page raster, cached atomically; None when the page does
-        not exist or the PDF is unreadable."""
+        not exist or the PDF is unreadable. Every answer logs its cost —
+        hit/miss and milliseconds — so a slow page has a witness, and a
+        miss reuses the open-document cache instead of re-parsing the
+        whole file (ADR-0017)."""
         source = BOOKS_DIR / f"{dataset}.pdf"
         if not source.exists():
             return None
         RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        started = time.monotonic()
+        try:
+            body = cache_file.read_bytes()
+        except OSError:
+            body = None
         with RENDER_LOCK:
-            try:
-                body = cache_file.read_bytes()
-            except OSError:
-                body = None
+            if body is None:
+                # The double-check: another thread may have rendered
+                # this exact page while this one waited on the lock.
+                try:
+                    body = cache_file.read_bytes()
+                except OSError:
+                    body = None
             if body is not None:
+                sys.stderr.write(
+                    f"render {dataset} p{page_number} w{width}"
+                    f" hit {time.monotonic() - started:.3f}s\n"
+                )
                 return body
             try:
-                pdf = _pdfium.PdfDocument(str(source))
-                try:
-                    if page_number > len(pdf):
-                        return None
-                    page = pdf[page_number - 1]
-                    bitmap = page.render(scale=width / page.get_width())
-                    image = bitmap.to_pil()
-                finally:
-                    pdf.close()
+                pdf = SessionHandler._pdf_doc_handle(source)
+                if page_number > len(pdf):
+                    return None
+                page = pdf[page_number - 1]
+                bitmap = page.render(scale=width / page.get_width())
+                image = bitmap.to_pil()
                 tmp = cache_file.with_suffix(f".tmp{threading.get_ident()}")
                 image.save(tmp, format="PNG")
                 os.replace(tmp, cache_file)
-                return cache_file.read_bytes()
+                body = cache_file.read_bytes()
             except Exception:
                 sys.stderr.write(
                     f"render failed: {dataset} p{page_number}\n"
                 )
                 return None
+        sys.stderr.write(
+            f"render {dataset} p{page_number} w{width}"
+            f" miss {time.monotonic() - started:.3f}s\n"
+        )
+        SessionHandler._prune_render_cache()
+        return body
 
     def _drain_request_body(self) -> None:
         """Read the body Content-Length promised before answering and
@@ -1567,7 +1702,12 @@ class SessionHandler(SimpleHTTPRequestHandler):
         from the SQLite store, never from the in-memory registry. The
         chip set rides beside the summary under ``suggestions`` so a
         refresh re-renders the skip with the map (T10, GitLab #11).
-        The identity comes from the login cookie (ADR-0013)."""
+        The sitting's chat Session id rides as ``chat_session_id``
+        (ADR-0016's reverse linkage): the refresh reconnect uses it to
+        open the WHOLE sitting — chat and research in one thread —
+        instead of the bare research hang a reload used to leave; null
+        for a pre-linkage conversation. The identity comes from the
+        login cookie (ADR-0013)."""
         account = resolve_identity(self)
         if account is None:
             return
@@ -1580,6 +1720,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
         if payload is None:
             self._json_error(error[0], error[1])
             return
+        payload["chat_session_id"] = research_store.chat_session_for(
+            account, session_id
+        )
         self._send_json(200, payload)
 
     def _research_messages(self) -> None:
@@ -1889,7 +2032,11 @@ class SessionHandler(SimpleHTTPRequestHandler):
         """One Session with its stored messages oldest→newest — the
         resume read. Another Account's Session answers 404, the same
         silence the store gives; the sheet renders the transcript
-        read-only."""
+        read-only. The payload names the sitting's newest research
+        session (ADR-0016): the linkage a reload or a sidebar round-trip
+        needs to raise the research trail beside the chat again — until
+        the linkage landed, the trail's only address lived in the
+        browser's sessionStorage and died at the first sidebar click."""
         account = resolve_identity(self)
         if account is None:
             return
@@ -1897,6 +2044,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
         if session is None:
             self._json_error(404, "نشست پیدا نشد.")
             return
+        session["research_session_id"] = research_store.latest_for_chat_session(
+            account, str(session_id)
+        )
         self._send_json(200, session)
 
     def _session_create(self) -> None:
@@ -2037,6 +2187,16 @@ class SessionHandler(SimpleHTTPRequestHandler):
             if sources is not None and not isinstance(sources, list):
                 raise ValueError("sources must be a list")
             datasets = validated_datasets(payload.get("datasets"))
+            # The Session-store linkage (ADR-0016): the sheet reports
+            # which chat Session this research conversation belongs to,
+            # so the trail survives a reload and a sidebar round-trip.
+            # A malformed or foreign id never fails the ask — the
+            # research is the user's act; the linkage is bookkeeping.
+            chat_session_id = payload.get("chat_session_id")
+            if chat_session_id is not None and not isinstance(
+                chat_session_id, (int, str)
+            ):
+                chat_session_id = None
         except (ValueError, KeyError, TypeError):
             # The body is already read above, so _send_json is safe —
             # _json_error would drain a second time and block.
@@ -2048,6 +2208,20 @@ class SessionHandler(SimpleHTTPRequestHandler):
         if session is None:
             self._send_json(error[0], {"detail": error[1]})
             return
+        if chat_session_id and not session_id:
+            # The creating call only: a live session keeps whatever
+            # sitting founded it, and the id rides only after the
+            # ownership check — another Account's Session is invisible.
+            try:
+                owned = session_store.get_session(
+                    account, int(chat_session_id)
+                )
+            except (TypeError, ValueError):
+                owned = None
+            if owned is not None:
+                research_store.attach_chat_session(
+                    session["id"], account, str(chat_session_id)
+                )
         turn, busy_detail = start_research_turn(account, session, text.strip())
         if turn is None:
             self._send_json(429, {"detail": busy_detail})

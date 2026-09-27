@@ -201,7 +201,10 @@ def test_the_sheet_carries_the_research_ui_contract():
     html = INDEX.read_text(encoding="utf-8")
     # The map is the persistent side rail (T10, GitLab #11): an always
     # open rail beside the chat, never a collapsible details the chat
-    # scrolls away.
+    # scrolls away. ADR-0018 adds the map's SECOND body — the mobile
+    # compass docked to the composer — while the desktop rail keeps its
+    # always-open shape and its ids; the compass panel is a raised
+    # sheet, not a <details>.
     assert 'id="research-rail"' in html
     assert 'id="research-state-body"' in html
     assert '<details id="research-state"' not in html
@@ -213,6 +216,33 @@ def test_the_sheet_carries_the_research_ui_contract():
     assert "نقشۀ پژوهش" in html
     assert "مراحل سفر پژوهش" in html
     assert "sessionResearch" in html
+    # The compass (ADR-0018): the map's mobile body rides the composer
+    # dock — one thin bar raising the full map, never a <details>.
+    assert 'id="research-compass"' in html
+    assert 'id="compass-toggle"' in html
+    assert 'id="compass-panel"' in html
+    assert 'id="compass-state-body"' in html
+    assert "<details id=\"compass" not in html
+    # The clamp toggle's draft strings are pinned to their constants
+    # (the naming gate) — and the closed-resume note mirrors the
+    # server's RESEARCH_SESSION_CLOSED_DETAIL verbatim (ADR-0016).
+    assert "MAP_MORE_LABEL" in html
+    assert "MAP_LESS_LABEL" in html
+    assert "RESEARCH_CLOSED_NOTE" in html
+
+
+def test_the_decide_guard_needs_only_the_session():
+    # The dead-accept fix (ADR-0016): the decide call checks the
+    # session id alone — the researchQuery precondition stayed null on
+    # every reconnected sitting and silently swallowed every «می‌پذیرم».
+    html = INDEX.read_text(encoding="utf-8")
+    assert "if (!researchSessionId) return;" in html
+    assert "!researchSessionId || !researchQuery" not in html
+    # The one hydrator every return path shares, and the research
+    # linkage field the resume read carries.
+    assert "function hydrateResearch(" in html
+    assert "research_session_id" in html
+    assert "chat_session_id" in html
 
 
 def test_the_sheet_stage_labels_carry_the_plain_persian_table():

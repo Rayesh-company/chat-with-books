@@ -1006,21 +1006,32 @@
         align-items: start;
       }
 
+      /* The rail — the map's desktop body (ADR-0018): the parchment
+         card beside the chat, always open (the T10 contract), now a
+         vertical journey stepper over sectioned rows instead of joined
+         strings that could not break. Hidden below 1024px, where the
+         compass carries the map. */
       .research-rail {
-        order: -1;
+        display: none;
         border: 1px solid var(--rule);
+        border-top: 2px solid var(--gold);
         background: var(--raised);
-        padding: 0.6rem 0.95rem 0.8rem;
+        padding: 0.7rem 0.9rem 0.9rem;
         font-size: 0.85rem;
       }
 
       .research-rail-title {
-        margin: 0 0 0.45rem;
+        margin: 0 0 0.6rem;
         font-size: 0.85rem;
         font-weight: 700;
+        color: var(--clay);
       }
 
       @media (min-width: 1024px) {
+        .research-rail {
+          display: block;
+        }
+
         body.research-open .research-layout {
           grid-template-columns: minmax(0, 1fr) 18.5rem;
         }
@@ -1034,22 +1045,265 @@
         }
       }
 
-      .research-state-row {
-        margin: 0.35rem 0 0;
-        line-height: 1.7;
-      }
-
-      .research-state-row .k {
+      /* The journey stepper: one column, dots on a connecting line —
+         gold for the stages done, lapis for the one running. */
+      .research-journey {
+        display: flex;
+        flex-direction: column;
+        margin: 0.1rem 0 0.8rem;
+        font-size: 0.78rem;
         color: var(--mute);
+        list-style: none;
       }
 
-      .research-state-row.frontier {
+      .research-journey .stage {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.24rem 0;
+        min-width: 0;
+      }
+
+      .research-journey .stage:not(:last-child)::after {
+        content: "";
+        position: absolute;
+        inset-inline-start: 0.44rem;
+        top: calc(50% + 0.42rem);
+        height: calc(100% - 0.42rem);
+        width: 1px;
+        background: var(--rule);
+      }
+
+      .research-journey .stage .dot {
+        width: 0.9rem;
+        height: 0.9rem;
+        border-radius: 50%;
+        border: 1px solid var(--mute);
+        flex-shrink: 0;
+        background: transparent;
+        box-sizing: border-box;
+      }
+
+      .research-journey .stage.done .dot {
+        background: var(--gold);
+        border-color: var(--gold);
+      }
+
+      .research-journey .stage.now {
         color: var(--ink);
         font-weight: 600;
       }
 
-      .research-state-row.fog {
+      .research-journey .stage.now .dot {
+        border-color: var(--clay);
+        background: var(--clay);
+        animation: map-pulse 1.6s ease-in-out infinite;
+      }
+
+      @keyframes map-pulse {
+        0%,
+        100% {
+          box-shadow: 0 0 0 0 rgba(31, 74, 120, 0.35);
+        }
+        50% {
+          box-shadow: 0 0 0 0.32rem rgba(31, 74, 120, 0);
+        }
+      }
+
+      /* The map's rows: a headed card, not a paragraph — the
+         destination and the question lead in the lapis head card, the
+         lists stand as their own lines (nothing joins with «؛» into an
+         unbreakable string any more). */
+      .map-head {
+        margin: 0 0 0.6rem;
+        padding: 0.55rem 0.7rem;
+        background: var(--clay-soft);
+        border-inline-start: 3px solid var(--gold);
+        border-radius: 6px;
+        overflow-wrap: anywhere;
+        min-width: 0;
+      }
+
+      .map-head .map-destination {
+        margin: 0 0 0.3rem;
+        font-weight: 700;
+        color: var(--clay);
+        line-height: 1.7;
+      }
+
+      .map-head .map-question {
+        margin: 0;
+        line-height: 1.7;
+      }
+
+      .map-head .map-rq-version {
+        display: inline-block;
+        margin-inline-start: 0.4rem;
+        font-size: 0.72rem;
+        font-weight: 500;
+        color: var(--mute);
+        border: 1px solid var(--rule);
+        border-radius: 999px;
+        padding: 0 0.45rem;
+        vertical-align: 1px;
+      }
+
+      .map-sec {
+        margin: 0.55rem 0 0;
+        overflow-wrap: anywhere;
+        min-width: 0;
+      }
+
+      .map-sec .k {
+        display: block;
+        color: var(--mute);
+        font-size: 0.74rem;
+        letter-spacing: 0.02em;
+      }
+
+      .map-sec .map-lines {
+        margin: 0.15rem 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .map-sec .map-lines li {
+        padding: 0.14rem 0;
+        line-height: 1.7;
+        border-bottom: 1px dashed var(--rule);
+      }
+
+      .map-sec .map-lines li:last-child {
+        border-bottom: none;
+      }
+
+      .map-sec .map-lines li.fog {
         font-style: italic;
+        color: var(--mute);
+      }
+
+      .map-sec .map-lines li.frontier {
+        font-weight: 700;
+        color: var(--clay);
+      }
+
+      .map-more {
+        margin: 0.15rem 0 0;
+        padding: 0;
+        background: none;
+        border: none;
+        color: var(--clay);
+        font-size: 0.76rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .map-more:hover {
+        text-decoration: underline;
+      }
+
+      .map-stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem 0.9rem;
+        margin: 0.7rem 0 0;
+        padding-top: 0.45rem;
+        border-top: 1px solid var(--rule);
+        font-size: 0.74rem;
+        color: var(--mute);
+      }
+
+      .map-stats .stat b {
+        color: var(--ink);
+        font-weight: 700;
+      }
+
+      /* The compass — the map's mobile body: one thin sticky bar glued
+         to the composer (it lives inside the composer-dock, so it
+         rides the dock's own sticky bottom), raising the full map as a
+         sheet. The desktop hides it; the rail owns the wide screen. */
+      #research-compass {
+        display: block;
+      }
+
+      @media (min-width: 1024px) {
+        #research-compass {
+          display: none;
+        }
+      }
+
+      #compass-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        width: 100%;
+        padding: 0.42rem 0.2rem;
+        background: none;
+        border: none;
+        border-top: 1px solid var(--rule);
+        font-size: 0.78rem;
+        color: var(--mute);
+        cursor: pointer;
+        min-width: 0;
+      }
+
+      .compass-dots {
+        display: inline-flex;
+        gap: 0.28rem;
+        flex-shrink: 0;
+      }
+
+      .compass-dots i {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
+        border: 1px solid var(--mute);
+        box-sizing: border-box;
+      }
+
+      .compass-dots i.done {
+        background: var(--gold);
+        border-color: var(--gold);
+      }
+
+      .compass-dots i.now {
+        background: var(--clay);
+        border-color: var(--clay);
+        animation: map-pulse 1.6s ease-in-out infinite;
+      }
+
+      .compass-label {
+        font-weight: 700;
+        color: var(--ink);
+        flex-shrink: 0;
+      }
+
+      .compass-now {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        text-align: start;
+      }
+
+      .compass-chevron {
+        display: inline-flex;
+        flex-shrink: 0;
+        transition: transform 0.18s ease;
+      }
+
+      #compass-toggle[aria-expanded="true"] .compass-chevron {
+        transform: rotate(180deg);
+      }
+
+      #compass-panel {
+        max-height: min(60dvh, 26rem);
+        overflow-y: auto;
+        padding: 0.6rem 0.2rem 0.7rem;
+        border-bottom: 1px solid var(--rule);
+        font-size: 0.82rem;
       }
 
       .research-chat {
@@ -1113,44 +1367,6 @@
 
       .research-chip.reject {
         border-style: dashed;
-      }
-
-      .research-journey {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.2rem 1rem;
-        margin: 0.2rem 0 0.9rem;
-        font-size: 0.78rem;
-        color: var(--mute);
-      }
-
-      .research-journey .stage {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        white-space: nowrap;
-      }
-
-      .research-journey .stage .dot {
-        width: 0.55rem;
-        height: 0.55rem;
-        border-radius: 50%;
-        border: 1px solid var(--mute);
-        flex-shrink: 0;
-      }
-
-      .research-journey .stage.done .dot {
-        background: var(--mute);
-      }
-
-      .research-journey .stage.now {
-        color: var(--ink);
-        font-weight: 600;
-      }
-
-      .research-journey .stage.now .dot {
-        border-color: var(--clay);
-        background: var(--clay);
       }
 
       .research-question {
@@ -1873,6 +2089,38 @@
              shell's draft table in the script below lists them for the
              PM. -->
         <div class="composer-dock" id="composer-dock" hidden>
+          <!-- The compass (ADR-0018): the map's mobile body, docked to
+               the conversation's always-sticky bottom edge. Collapsed it
+               is one thin bar — five stage dots, the stage now running,
+               the destination — and the chevron raises the full map as
+               a bottom sheet above the composer. The desktop rail keeps
+               the same data through the same renderer; CSS picks the
+               body per breakpoint. New labels here are DRAFT (the
+               shell's draft table). -->
+          <div id="research-compass" hidden>
+            <button
+              type="button"
+              id="compass-toggle"
+              aria-expanded="false"
+              aria-controls="compass-panel"
+            >
+              <span id="compass-dots" class="compass-dots" aria-hidden="true"></span>
+              <span class="compass-label">نقشۀ پژوهش</span>
+              <span id="compass-now" class="compass-now"></span>
+              <span class="compass-chevron" aria-hidden="true">
+                <svg viewBox="0 0 12 8" width="12" height="8" focusable="false"><path d="M1 6.5 6 1.5 11 6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+              </span>
+            </button>
+            <div id="compass-panel" hidden>
+              <nav
+                id="compass-journey"
+                class="research-journey"
+                aria-label="مراحل سفر پژوهش"
+                hidden
+              ></nav>
+              <div id="compass-state-body"></div>
+            </div>
+          </div>
           <form id="ask" class="composer">
             <textarea
               id="question"
@@ -1984,6 +2232,16 @@
       const RESEARCH_SEND_LABEL = "فرستادن";
       const ASK_PLACEHOLDER = "پرسش خود را بنویسید";
       const ASK_SEND_LABEL = "بپرس";
+      // The closed conversation's resume note (ADR-0016): not a new
+      // name — the exact text of ui/research.py's
+      // RESEARCH_SESSION_CLOSED_DETAIL, mirrored client-side because
+      // the 409's detail rides no payload once the fetch fails.
+      const RESEARCH_CLOSED_NOTE =
+        "این گفتگوی پژوهش بسته است؛ پرسش تازه‌ای بپرسید.";
+      // The map's clamp toggles (ADR-0018) — the two NEW draft strings
+      // the compass/rail redesign added, pinned here for the PM.
+      const MAP_MORE_LABEL = "نمایش بیشتر";
+      const MAP_LESS_LABEL = "نمایش کمتر";
 
       const BOOK_TITLES = {
         "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
@@ -2275,6 +2533,16 @@
           });
           card.append(note, again);
           threadListEl.append(card);
+        }
+        // The research linkage (ADR-0016): a sitting that researched
+        // raises its whole research conversation beside the restored
+        // chat — the trail no longer dies because a sidebar click
+        // dropped the browser's only pointer. The server store is the
+        // source; sessionStorage re-arms only the same-tab turn resume.
+        if (session.research_session_id) {
+          researchSessionId = String(session.research_session_id);
+          storeResearch({ session_id: researchSessionId });
+          hydrateResearch(researchSessionId);
         }
         scrollThreadEnd();
       }
@@ -3228,6 +3496,33 @@
             researchFormEl.requestSubmit();
           }
         });
+        // The compass (ADR-0018): the map's mobile body rides the
+        // composer dock — shown with the section, collapsed by
+        // default, the full map raised by the chevron and dismissed
+        // with Escape. The element is the static one in the dock; the
+        // toggle wires once.
+        const compassEl = document.getElementById("research-compass");
+        const toggleEl = document.getElementById("compass-toggle");
+        const panelEl = document.getElementById("compass-panel");
+        if (compassEl && toggleEl && panelEl) {
+          compassEl.hidden = false;
+          toggleEl.setAttribute("aria-expanded", "false");
+          panelEl.hidden = true;
+        }
+        if (toggleEl && panelEl && !toggleEl.dataset.wired) {
+          toggleEl.dataset.wired = "1";
+          toggleEl.addEventListener("click", () => {
+            const open = toggleEl.getAttribute("aria-expanded") === "true";
+            toggleEl.setAttribute("aria-expanded", String(!open));
+            panelEl.hidden = open;
+          });
+          document.addEventListener("keydown", (event) => {
+            if (event.key !== "Escape") return;
+            if (toggleEl.getAttribute("aria-expanded") !== "true") return;
+            toggleEl.setAttribute("aria-expanded", "false");
+            panelEl.hidden = true;
+          });
+        }
       }
 
       // One assistant or user bubble; the body is a rendered blocks
@@ -3321,11 +3616,14 @@
         return doc;
       }
 
-      // The state strip, drawn as THE MAP (ADR-0009): the journey strip
-      // naming the five stages, then the route — destination, research
-      // question with its version count, the frontier, the named open
-      // questions, the decisions index, the fog, the out-of-scope, and
-      // the counts row — from the server's summary projection.
+      // The state strip, drawn as THE MAP (ADR-0009, redrawn ADR-0018):
+      // the journey stepper naming the five stages, then the route —
+      // destination, research question with its version count, the
+      // frontier, the named open questions, the decisions index, the
+      // fog, the out-of-scope, and the counts row — from the server's
+      // summary projection. ONE renderer feeds BOTH bodies: the
+      // desktop rail (#research-rail) and the mobile compass
+      // (#research-compass); CSS picks which is visible.
       const RESEARCH_STAGE_LIST = [
         ["orientation", "نام‌گذاری مقصد"],
         ["mapping", "نقشه‌برداری"],
@@ -3336,23 +3634,47 @@
 
       function renderResearchJourney(stage) {
         const index = RESEARCH_STAGE_LIST.findIndex(([key]) => key === stage);
-        if (index < 0) {
-          researchJourneyEl.hidden = true;
-          researchJourneyEl.replaceChildren();
-          return;
+        for (const journeyEl of [
+          researchJourneyEl,
+          document.getElementById("compass-journey"),
+        ]) {
+          if (!journeyEl) continue;
+          if (index < 0) {
+            journeyEl.hidden = true;
+            journeyEl.replaceChildren();
+            continue;
+          }
+          const frag = document.createDocumentFragment();
+          RESEARCH_STAGE_LIST.forEach(([key, label], i) => {
+            const span = document.createElement("span");
+            span.className = `stage${i < index ? " done" : i === index ? " now" : ""}`;
+            const dot = document.createElement("span");
+            dot.className = "dot";
+            dot.setAttribute("aria-hidden", "true");
+            span.append(dot, document.createTextNode(label));
+            frag.append(span);
+          });
+          journeyEl.hidden = false;
+          journeyEl.replaceChildren(frag);
         }
-        const frag = document.createDocumentFragment();
-        RESEARCH_STAGE_LIST.forEach(([key, label], i) => {
-          const span = document.createElement("span");
-          span.className = `stage${i < index ? " done" : i === index ? " now" : ""}`;
-          const dot = document.createElement("span");
-          dot.className = "dot";
-          dot.setAttribute("aria-hidden", "true");
-          span.append(dot, document.createTextNode(label));
-          frag.append(span);
-        });
-        researchJourneyEl.hidden = false;
-        researchJourneyEl.replaceChildren(frag);
+        // The compass bar's own strip: five mini dots plus the running
+        // stage's name — the collapsed map at a glance.
+        const dotsEl = document.getElementById("compass-dots");
+        if (dotsEl) {
+          const dots = document.createDocumentFragment();
+          RESEARCH_STAGE_LIST.forEach(([key], i) => {
+            const dot = document.createElement("i");
+            dot.className =
+              i < index ? "done" : i === index ? "now" : "";
+            dots.append(dot);
+          });
+          dotsEl.replaceChildren(dots);
+        }
+        const nowEl = document.getElementById("compass-now");
+        if (nowEl) {
+          nowEl.textContent =
+            index < 0 ? "" : RESEARCH_STAGE_LIST[index][1];
+        }
       }
 
       const RESEARCH_STATUS_LABELS = {
@@ -3361,64 +3683,153 @@
         gap: "شکاف",
       };
 
+      // The sections' clamp: the map shows three lines of each long
+      // list; the operator's expansions survive the two-second poll
+      // and every settle re-render (the map must not collapse under a
+      // reading eye).
+      const RESEARCH_MAP_CLAMP = 3;
+      const researchMapExpanded = new Set();
+
+      function buildMapBody(state, container) {
+        if (!container) return;
+        const body = document.createDocumentFragment();
+        if (state.destination || state.research_question) {
+          const head = document.createElement("div");
+          head.className = "map-head";
+          if (state.destination) {
+            const destination = document.createElement("p");
+            destination.className = "map-destination";
+            destination.textContent = state.destination;
+            head.append(destination);
+          }
+          const question = document.createElement("p");
+          question.className = "map-question";
+          question.append(
+            document.createTextNode("پرسش پژوهش: "),
+            document.createTextNode(state.research_question || "—")
+          );
+          const version = document.createElement("span");
+          version.className = "map-rq-version";
+          version.textContent = `نسخهٔ ${state.rq_versions || 1}`;
+          question.append(version);
+          head.append(question);
+          body.append(head);
+        }
+        const section = (key, label) => {
+          const sec = document.createElement("div");
+          sec.className = "map-sec";
+          const k = document.createElement("span");
+          k.className = "k";
+          k.textContent = label;
+          sec.append(k);
+          return sec;
+        };
+        const lineList = (sec, key, lines, fogClass) => {
+          const list = document.createElement("ul");
+          list.className = "map-lines";
+          const expanded = researchMapExpanded.has(key);
+          lines.forEach((text, i) => {
+            const li = document.createElement("li");
+            if (fogClass) li.className = fogClass;
+            li.textContent = text;
+            if (!expanded && i >= RESEARCH_MAP_CLAMP) li.hidden = true;
+            list.append(li);
+          });
+          sec.append(list);
+          if (lines.length > RESEARCH_MAP_CLAMP) {
+            const hiddenCount = lines.length - RESEARCH_MAP_CLAMP;
+            const more = document.createElement("button");
+            more.type = "button";
+            more.className = "map-more";
+            more.textContent = expanded
+              ? MAP_LESS_LABEL
+              : `${MAP_MORE_LABEL} (${toPersianDigits(hiddenCount)})`;
+            more.addEventListener("click", () => {
+              const open = researchMapExpanded.has(key);
+              if (open) researchMapExpanded.delete(key);
+              else researchMapExpanded.add(key);
+              [...list.children].forEach((li, i) => {
+                li.hidden = !researchMapExpanded.has(key) && i >= RESEARCH_MAP_CLAMP;
+              });
+              more.textContent = researchMapExpanded.has(key)
+                ? MAP_LESS_LABEL
+                : `${MAP_MORE_LABEL} (${toPersianDigits(hiddenCount)})`;
+            });
+            sec.append(more);
+          }
+          return sec;
+        };
+        if (state.frontier) {
+          const sec = section("frontier", "در حال پرداختن");
+          lineList(sec, "frontier", [`«${state.frontier}»`]).querySelector("li").className =
+            "frontier";
+          body.append(sec);
+        }
+        if (Array.isArray(state.open_questions) && state.open_questions.length) {
+          const sec = section("open_questions", "پرسش‌های باز");
+          lineList(
+            sec,
+            "open_questions",
+            state.open_questions.map(
+              (q) => `«${q.name}» (${RESEARCH_STATUS_LABELS[q.status] || q.status})`
+            )
+          );
+          body.append(sec);
+        }
+        if (Array.isArray(state.decisions) && state.decisions.length) {
+          const sec = section("decisions", "تصمیم‌ها");
+          lineList(sec, "decisions", state.decisions);
+          body.append(sec);
+        }
+        if (Array.isArray(state.diagnoses) && state.diagnoses.length) {
+          const sec = section("diagnoses", "تشخیص‌ها");
+          lineList(
+            sec,
+            "diagnoses",
+            state.diagnoses.map((d) => d.cause_label || d.cause)
+          );
+          body.append(sec);
+        }
+        if (Array.isArray(state.fog) && state.fog.length) {
+          const sec = section("fog", "هنوز نامشخص");
+          lineList(sec, "fog", state.fog, "fog");
+          body.append(sec);
+        }
+        if (Array.isArray(state.out_of_scope) && state.out_of_scope.length) {
+          const sec = section("out_of_scope", "خارج از دامنه");
+          lineList(sec, "out_of_scope", state.out_of_scope);
+          body.append(sec);
+        }
+        const stats = document.createElement("p");
+        stats.className = "map-stats";
+        const stat = (label, value) => {
+          const span = document.createElement("span");
+          span.className = "stat";
+          const b = document.createElement("b");
+          b.textContent = toPersianDigits(value);
+          span.append(b, document.createTextNode(` ${label}`));
+          return span;
+        };
+        stats.append(
+          stat("شواهد", state.evidence_count || 0),
+          stat("ادعاها", (state.claims || []).length),
+          stat("شکاف‌ها", (state.gaps || []).length),
+          stat("نوبت‌ها", state.turns || 0)
+        );
+        body.append(stats);
+        container.replaceChildren(body);
+      }
+
       function renderResearchState(state) {
         if (!state) return;
         renderResearchJourney(state.stage);
-        const body = document.createDocumentFragment();
-        const row = (key, value, extraClass) => {
-          const p = document.createElement("p");
-          p.className = extraClass
-            ? `research-state-row ${extraClass}`
-            : "research-state-row";
-          const k = document.createElement("span");
-          k.className = "k";
-          k.textContent = `${key}: `;
-          p.append(k, document.createTextNode(String(value)));
-          body.append(p);
-        };
-        if (state.destination) {
-          row("مقصد", state.destination);
-        }
-        row(
-          "پرسش پژوهش",
-          `${state.research_question || "—"} (نسخهٔ ${state.rq_versions || 1})`
-        );
-        if (state.frontier) {
-          row("در حال پرداختن", `«${state.frontier}»`, "frontier");
-        }
-        if (Array.isArray(state.open_questions) && state.open_questions.length) {
-          row(
-            "پرسش‌های باز",
-            state.open_questions
-              .map(
-                (q) =>
-                  `«${q.name}» (${RESEARCH_STATUS_LABELS[q.status] || q.status})`
-              )
-              .join("؛ ")
-          );
-        }
-        if (Array.isArray(state.decisions) && state.decisions.length) {
-          row("تصمیم‌ها", state.decisions.join(" | "));
-        }
-        if (Array.isArray(state.diagnoses) && state.diagnoses.length) {
-          row(
-            "تشخیص‌ها",
-            state.diagnoses.map((d) => d.cause_label || d.cause).join("؛ ")
-          );
-        }
-        if (Array.isArray(state.fog) && state.fog.length) {
-          row("هنوز نامشخص", state.fog.join("؛ "), "fog");
-        }
-        if (Array.isArray(state.out_of_scope) && state.out_of_scope.length) {
-          row("خارج از دامنه", state.out_of_scope.join("؛ "));
-        }
-        row(
-          "شمارش",
-          `شواهد ${state.evidence_count || 0} · ادعاها ${
-            (state.claims || []).length
-          } · شکاف‌ها ${(state.gaps || []).length} · نوبت‌ها ${state.turns || 0}`
-        );
-        researchStateBodyEl.replaceChildren(body);
+        // The rail keeps its own scroll across the poll re-renders — a
+        // map that jumps under a reading eye is a map that gets closed.
+        const railEl = document.getElementById("research-rail");
+        const railScroll = railEl?.scrollTop ?? 0;
+        buildMapBody(state, researchStateBodyEl);
+        buildMapBody(state, document.getElementById("compass-state-body"));
+        if (railEl) railEl.scrollTop = railScroll;
       }
 
       // The Session report chip (T19): a DOWNLOAD action, never a turn
@@ -3532,7 +3943,10 @@
             if (item.text) chip.title = item.text;
             if (!item.accept) chip.classList.add("reject");
             chip.addEventListener("click", () => {
-              if (researchInputEl.disabled) return;
+              // No input-disabled guard here: decideResearch locks the
+              // input itself for the call's duration, and a reconnected
+              // sitting's input used to arrive disabled and eat the
+              // click (the dead-accept fix's other half).
               decideResearch(item.id, item.accept, item.choice);
             });
           } else {
@@ -3559,7 +3973,12 @@
 
       function settleResearchTurn(message) {
         stopResearchPolling();
-        clearResearch();
+        // A failed or aborted turn drops only the turn handle — the
+        // research session itself stays alive in the store (ADR-0016),
+        // so the chips, the next message, and the sidebar's reopen all
+        // keep working; the old full clear orphaned a live session.
+        if (researchSessionId) storeResearch({ session_id: researchSessionId });
+        else clearResearch();
         if (message) appendResearchError(message);
         setPhaseState(3, "failed");
         stopPhaseTimer(3);
@@ -3568,7 +3987,12 @@
       }
 
       async function decideResearch(proposalId, accept, choice) {
-        if (!researchSessionId || !researchQuery) return;
+        // The session id is the only credential a decide needs (the
+        // endpoint is session_id + proposal_id + accept) — the old
+        // researchQuery precondition was a leftover of the pre-ADR-0015
+        // ask-seeded flow, and after any reconnect it stayed null and
+        // silently swallowed every «می‌پذیرم» (the dead-accept fix).
+        if (!researchSessionId) return;
         researchInputEl.disabled = true;
         researchSendEl.disabled = true;
         try {
@@ -3728,6 +4152,11 @@
         if (researchSessionId) {
           body.session_id = researchSessionId;
         } else {
+          // The founding turn also names the sitting it belongs to
+          // (ADR-0016): the chat Session must exist before the research
+          // store can record the linkage a reload or a sidebar trip
+          // needs — a store miss still never blocks the ask itself.
+          if (!sessionState.storeId) await ensureStoreSession(text);
           // The creating call seeds the session with its founding
           // question and — when a prior ask left one — its Evidence
           // pool (ADR 0008); after this, text alone. The Session's
@@ -3736,6 +4165,7 @@
           body.question = researchQuery;
           body.sources = researchSources;
           if (sessionState.book) body.datasets = [sessionState.book];
+          if (sessionState.storeId) body.chat_session_id = sessionState.storeId;
         }
         try {
           const res = await fetch("/research/message", {
@@ -3816,6 +4246,15 @@
           phaseEls[3].startedAt = null;
         }
         document.body.classList.remove("research-open");
+        // The compass goes home with the section, collapsed and
+        // clamped — a new sitting's map starts fresh (ADR-0018).
+        const compassEl = document.getElementById("research-compass");
+        if (compassEl) compassEl.hidden = true;
+        const toggleEl = document.getElementById("compass-toggle");
+        if (toggleEl) toggleEl.setAttribute("aria-expanded", "false");
+        const panelEl = document.getElementById("compass-panel");
+        if (panelEl) panelEl.hidden = true;
+        researchMapExpanded.clear();
       }
 
       // ===== The research mode toggle (ADR-0015) =====
@@ -3853,76 +4292,125 @@
         }
       });
 
-      // Refresh reconnect: a stored identity means this Account has a
-      // research conversation the reload must not throw away. The
-      // transcript is RE-FETCHED (ADR-0011 — what was said stays
-      // visible across a refresh), the map re-renders from
-      // /research/state, and any in-flight turn is polled to its
-      // settle. Until the Session store lands (T27 stage 3) the resumed
-      // conversation hangs in a bare thread; the store restores its ask
-      // beside it.
-      (function reconnectResearch() {
-        const stored = storedResearch();
-        if (!stored || !stored.session_id) return;
-        researchSessionId = stored.session_id;
-        sessionState.active = true;
-        newSessionView.hidden = true;
-        threadListEl.hidden = false;
-        composerDock.hidden = false;
-        sessionTitleEl.textContent = PHASE_NAMES[3];
-        renderSessionList();
+      // The research resume (ADR-0016): ONE hydrator for every return
+      // path — the boot's same-tab reconnect and the Session store's
+      // linkage both end here. The server is the truth: the transcript
+      // is re-fetched (ADR-0011 — what was said stays visible across a
+      // refresh), the map re-renders from /research/state, the founding
+      // question re-arms (the decide chips died on every reconnected
+      // sitting while the decide guard still demanded it — the
+      // dead-accept fix), and a stored in-flight turn is polled to its
+      // settle. A closed conversation (the state read answers 409)
+      // renders read-only with the closed note and never re-arms the
+      // composer that could no longer feed it.
+      async function hydrateResearch(researchId) {
         createResearchSection();
-        // The reconnected conversation IS the research mode: the
-        // toggle re-arms so the shell composer keeps feeding it
-        // (ADR-0015).
-        setResearchMode(true);
-        selectPhase(3, false);
-        (async () => {
-          try {
-            const [msgRes, stateRes] = await Promise.all([
-              fetch(
-                `/research/messages?session=${encodeURIComponent(researchSessionId)}`,
-                { cache: "no-store" }
-              ),
-              fetch(
-                `/research/state?session=${encodeURIComponent(researchSessionId)}`,
-                { cache: "no-store" }
-              ),
-            ]);
-            if (msgRes.ok) {
-              const payload = await msgRes.json();
-              researchChatEl.replaceChildren();
-              for (const message of Array.isArray(payload.messages) ? payload.messages : []) {
-                if (message.role === "user") {
-                  appendResearchMessage(
-                    "user",
-                    researchText(String(message.payload || ""), "research-msg-text")
-                  );
-                } else {
-                  appendResearchMessage(
-                    "assistant",
-                    researchBlocksNode(
-                      Array.isArray(message.payload) ? message.payload : []
-                    )
-                  );
-                }
+        let closed = false;
+        try {
+          const [msgRes, stateRes] = await Promise.all([
+            fetch(
+              `/research/messages?session=${encodeURIComponent(researchId)}`,
+              { cache: "no-store" }
+            ),
+            fetch(
+              `/research/state?session=${encodeURIComponent(researchId)}`,
+              { cache: "no-store" }
+            ),
+          ]);
+          if (msgRes.ok) {
+            const payload = await msgRes.json();
+            researchChatEl.replaceChildren();
+            for (const message of Array.isArray(payload.messages) ? payload.messages : []) {
+              if (message.role === "user") {
+                appendResearchMessage(
+                  "user",
+                  researchText(String(message.payload || ""), "research-msg-text")
+                );
+              } else {
+                appendResearchMessage(
+                  "assistant",
+                  researchBlocksNode(
+                    Array.isArray(message.payload) ? message.payload : []
+                  )
+                );
               }
             }
-            if (stateRes.ok) {
-              const payload = await stateRes.json();
-              renderResearchState(payload.research_state || payload);
-              renderResearchSuggestions(payload.suggestions || []);
-            }
-          } catch {
-            appendResearchError("بازخوانی گفتگو نشد؛ ادامه از سرور ممکن است.");
           }
-          if (!stored.turn_id) return;
+          if (stateRes.ok) {
+            const payload = await stateRes.json();
+            const state = payload.research_state || payload;
+            if (
+              !researchQuery &&
+              typeof state.research_question === "string" &&
+              state.research_question
+            ) {
+              researchQuery = state.research_question;
+            }
+            renderResearchState(state);
+            renderResearchSuggestions(payload.suggestions || []);
+          } else if (stateRes.status === 409) {
+            closed = true;
+          }
+        } catch {
+          appendResearchError("بازخوانی گفتگو نشد؛ ادامه از سرور ممکن است.");
+        }
+        // An in-flight turn the tab still holds (the same-tab reload):
+        // the poll picks the turn back up mid-flight.
+        const stored = storedResearch();
+        if (stored && stored.session_id === researchId && stored.turn_id) {
           setPhaseState(3, "running");
           setRunningPhase(3);
           researchInputEl.disabled = true;
           researchSendEl.disabled = true;
           showResearchStatus("در حال پیگیری پاسخ پژوهش…");
           pollResearchTurn(stored.turn_id);
+          return;
+        }
+        if (closed) {
+          setResearchMode(false);
+          researchChatEl.append(researchText(RESEARCH_CLOSED_NOTE, "empty"));
+          return;
+        }
+        setResearchMode(true);
+        selectPhase(3, false);
+        armResearchInput();
+      }
+
+      // Refresh reconnect: a stored identity means this Account has a
+      // research conversation the reload must not throw away. The
+      // conversation's state names the chat Session it belongs to
+      // (ADR-0016's reverse linkage), so the boot opens THAT sitting —
+      // chat and research raised together in one thread, the way the
+      // sidebar's click now restores them. No linkage (a pre-linkage
+      // conversation, or the read failing) keeps the bare reconnect
+      // this function has always done.
+      (function reconnectResearch() {
+        const stored = storedResearch();
+        if (!stored || !stored.session_id) return;
+        researchSessionId = stored.session_id;
+        sessionState.active = true;
+        (async () => {
+          try {
+            const res = await fetch(
+              `/research/state?session=${encodeURIComponent(researchSessionId)}`,
+              { cache: "no-store" }
+            );
+            if (res.ok) {
+              const payload = await res.json();
+              if (payload.chat_session_id) {
+                openStoreSession(String(payload.chat_session_id));
+                return;
+              }
+            }
+          } catch {}
+          newSessionView.hidden = true;
+          threadListEl.hidden = false;
+          composerDock.hidden = false;
+          sessionTitleEl.textContent = PHASE_NAMES[3];
+          renderSessionList();
+          setResearchMode(true);
+          selectPhase(3, false);
+          await hydrateResearch(researchSessionId);
         })();
       })();
 
@@ -4402,7 +4890,9 @@
         lib: null, // the lazily imported pdf.js module
         noteTimer: null,
         stick: null, // the page an in-flight scroll is heading to
-        chain: Promise.resolve(), // serialized page-render queue
+        queue: new Set(), // pending page numbers, drained nearest-anchor-first
+        pump: null, // the running drain loop (serialization)
+        fastPaint: null, // the far-jump target painting small-first
       };
 
       // pdf.js paints its canvases through requestAnimationFrame, which
@@ -4717,17 +5207,23 @@
         markCurrentPage(Math.min(Math.max(page || 1, 1), reader.pageCount));
         await gotoPage(Math.min(Math.max(page || 1, 1), reader.pageCount));
 
-        try {
-          await ensurePdfJs();
-          if (reader.doc === doc && (!reader.pdf || reader.pdfDoc !== doc)) {
-            const previousTask = reader.loadingTask || null;
-            const task = reader.lib.getDocument({
-              url: `/books/${encodeURIComponent(doc)}/book`,
-              cMapUrl: "/vendor/cmaps/",
-              cMapPacked: true,
-              standardFontDataUrl: "/vendor/standard_fonts/",
-              isEvalSupported: false,
-            });
+          try {
+            await ensurePdfJs();
+            if (reader.doc === doc && (!reader.pdf || reader.pdfDoc !== doc)) {
+              const previousTask = reader.loadingTask || null;
+              const task = reader.lib.getDocument({
+                url: `/books/${encodeURIComponent(doc)}/book`,
+                cMapUrl: "/vendor/cmaps/",
+                cMapPacked: true,
+                standardFontDataUrl: "/vendor/standard_fonts/",
+                isEvalSupported: false,
+                // Lazy data (ADR-0017): pdf.js fetches only the byte
+                // ranges the parsed pages actually need (the server
+                // honors Range), instead of pulling the whole 16 MB in
+                // the background on every open. The cMaps stay — the
+                // Identity-H subsets' text layer depends on them.
+                disableAutoFetch: true,
+              });
             reader.loadingTask = task;
             const pdf = await task.promise;
             if (gen !== reader.gen) return;
@@ -4745,7 +5241,7 @@
             for (const [n, rec] of reader.recs) {
               if (rec.rendered && !rec.el.querySelector(".textLayer")) {
                 rec.rendered = false;
-                renderPage(n);
+                enqueuePage(n);
               }
             }
           }
@@ -4777,18 +5273,19 @@
           reader.recs.set(n, { el, rendered: false, job: null });
         }
         readerPagesEl.append(frag);
-        // Render entries lazily but SERIALIZED: one page at a time. A
-        // long jump (page 1 → 740) crosses dozens of placeholders, and
-        // concurrent canvas paints would freeze the sheet.
-        reader.chain = Promise.resolve();
+        // Render entries lazily but SERIALIZED, ordered by distance from
+        // the scroll anchor (ADR-0017): one page at a time — a long jump
+        // (page 1 → 740) crosses dozens of placeholders, and concurrent
+        // canvas paints would freeze the sheet — but the anchor's own
+        // page goes FIRST, where the old first-come chain made the jump
+        // target wait behind every neighbor the observer had queued.
+        reader.queue = new Set();
+        reader.pump = null;
         reader.observer = new IntersectionObserver(
           (entries) => {
             for (const entry of entries) {
               if (!entry.isIntersecting) continue;
-              const n = Number(entry.target.dataset.page);
-              reader.chain = reader.chain
-                .then(() => renderPage(n))
-                .catch(() => {});
+              enqueuePage(Number(entry.target.dataset.page));
             }
           },
           { root: readerPagesEl, rootMargin: "700px 0px" }
@@ -4796,6 +5293,38 @@
         for (const rec of reader.recs.values()) {
           reader.observer.observe(rec.el);
         }
+      }
+
+      // The render scheduler: a Set of pending page numbers drained by
+      // one worker, each pick the page nearest the anchor (the stick of
+      // a jump, else the page currently in view). renderPage stays
+      // serialized — only the order changed.
+      function enqueuePage(n) {
+        if (!reader.recs.has(n)) return;
+        reader.queue.add(n);
+        pumpPages();
+      }
+
+      function pumpPages() {
+        if (reader.pump) return;
+        reader.pump = (async () => {
+          while (reader.queue.size) {
+            const anchor = reader.stick ?? currentPageNumber() ?? 1;
+            let best = null;
+            let bestDist = Infinity;
+            for (const n of reader.queue) {
+              const dist = Math.abs(n - anchor);
+              if (dist < bestDist) {
+                bestDist = dist;
+                best = n;
+              }
+            }
+            reader.queue.delete(best);
+            await renderPage(best).catch(() => {});
+          }
+        })().finally(() => {
+          reader.pump = null;
+        });
       }
 
       async function renderPage(n) {
@@ -4825,9 +5354,29 @@
           img.className = "reader-img";
           img.alt = `صفحهٔ ${toPersianDigits(n)}`;
           img.decoding = "async";
-          img.src = `/books/${encodeURIComponent(reader.doc)}/page/${n}.png?w=${Math.round(
+          const fullSrc = `/books/${encodeURIComponent(reader.doc)}/page/${n}.png?w=${Math.round(
             widthPx * dpr
           )}`;
+          if (reader.fastPaint === n) {
+            // The far jump's first paint (ADR-0017): the small cached
+            // bucket fills the placeholder immediately — a page that
+            // arrives blurry in 0.2s beats one that arrives sharp in
+            // 3s — and the full-width raster swaps in on load. Both
+            // buckets are `immutable`-cached; the pre-warm only ever
+            // costs its bytes once.
+            reader.fastPaint = null;
+            img.src = `/books/${encodeURIComponent(reader.doc)}/page/${n}.png?w=480`;
+            img.addEventListener(
+              "load",
+              () => {
+                if (gen !== reader.gen) return;
+                img.src = fullSrc;
+              },
+              { once: true }
+            );
+          } else {
+            img.src = fullSrc;
+          }
           rec.el.replaceChildren(img);
           rec.el.style.height = `${heightPx}px`;
 
@@ -4864,6 +5413,13 @@
           );
         } finally {
           rec.job = null;
+          // The waiter pattern: ensureRendered resolves the exact page
+          // it asked for, whether the scheduler rendered it just now or
+          // the page was already done when the wait began.
+          const resolve = rec.resolve;
+          rec.promise = null;
+          rec.resolve = null;
+          resolve?.();
         }
       }
 
@@ -4918,18 +5474,17 @@
         rec.pageH = vp.height;
       }
 
-      async function ensureRendered(n) {
+      function ensureRendered(n) {
         const rec = reader.recs.get(n);
-        if (!rec) return null;
-        if (!rec.rendered) {
-          // The same serialization chain the observer feeds — an
-          // explicit wait never paints beside the queued renders.
-          reader.chain = reader.chain
-            .then(() => renderPage(n))
-            .catch(() => {});
-          await reader.chain;
+        if (!rec) return Promise.resolve(null);
+        if (rec.rendered) return Promise.resolve(rec);
+        if (!rec.promise) {
+          rec.promise = new Promise((resolve) => {
+            rec.resolve = resolve;
+          });
+          enqueuePage(n);
         }
-        return rec.rendered ? rec : null;
+        return rec.promise.then(() => (rec.rendered ? rec : null));
       }
 
       async function gotoPage(n) {
@@ -4939,6 +5494,8 @@
         // mid-flight the visible page is still far away, and sweeping
         // on that would evict the very page this jump is heading to.
         // Instant, not smooth: a citation can be 700 pages away.
+        const from = currentPageNumber();
+        if (from && Math.abs(n - from) > 3) reader.fastPaint = n;
         reader.stick = n;
         readerPagesEl.scrollTo({
           top: rec.el.offsetTop - 12,
@@ -5047,7 +5604,10 @@
         try {
           const res = await fetch(
             `/books/${encodeURIComponent(reader.doc)}.pages.json`,
-            { cache: "no-store" }
+            // Revalidation, not bypass (ADR-0017): the ETag turns this
+            // 1.95 MB index into a 304 on every open after the first —
+            // `no-store` here refetched it whole, every time.
+            { cache: "default" }
           );
           if (!res.ok) throw new Error("no index");
           reader.pagesIndex = (await res.json()).pages;

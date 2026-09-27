@@ -106,6 +106,20 @@ def _connect() -> sqlite3.Connection:
             "ADD COLUMN version INTEGER NOT NULL DEFAULT 0"
         )
         conn.commit()
+    # The Session-store linkage (ADR-0016): which chat Session (the
+    # sheet's sidebar row) a research session belongs to. Nullable —
+    # rows written before the linkage carry NULL and stay reachable the
+    # old same-tab way; the column tops up in place like `version`.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(research_sessions)")}
+    if "chat_session_id" not in columns:
+        conn.execute(
+            "ALTER TABLE research_sessions ADD COLUMN chat_session_id TEXT"
+        )
+        conn.commit()
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_research_chat_session"
+        " ON research_sessions(account, chat_session_id)"
+    )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS research_messages ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, "
@@ -274,5 +288,64 @@ def append_message(session_id: str, role: str, payload) -> None:
             ),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def attach_chat_session(session_id: str, account: str, chat_session_id: str) -> bool:
+    """Record the chat Session a research session belongs to (ADR-0016):
+    the linkage the reload and the session switch need to find the trail
+    again — until now the only copy lived in the browser's
+    sessionStorage and died at the first sidebar click. The id is
+    accepted only from the session's own Account (the same cross-account
+    silence every gated write gives) and the write is an UPDATE, never
+    an insert — a research session is created exactly once, by
+    ensure_session; this call can only label the existing row."""
+    conn = _connect()
+    try:
+        cursor = conn.execute(
+            "UPDATE research_sessions SET chat_session_id = ? "
+            "WHERE id = ? AND account = ?",
+            (chat_session_id, session_id, account),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def latest_for_chat_session(account: str, chat_session_id: str) -> str | None:
+    """The id of the Account's newest research session tied to one chat
+    Session (ADR-0016) — the resume answer for "which research
+    conversation does this sitting reopen?" None when the sitting never
+    researched (the common case, answered with the cheapest possible
+    query) or the linkage is not the caller's own."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT id FROM research_sessions "
+            "WHERE account = ? AND chat_session_id = ? "
+            "ORDER BY created_at DESC, updated_at DESC LIMIT 1",
+            (account, chat_session_id),
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def chat_session_for(account: str, session_id: str) -> str | None:
+    """The reverse lookup (ADR-0016): which chat Session one research
+    session belongs to — the refresh reconnect reads it to open the
+    WHOLE sitting (chat and research together) instead of the bare
+    research thread. None for an unknown, foreign, or pre-linkage
+    session."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT chat_session_id FROM research_sessions "
+            "WHERE id = ? AND account = ?",
+            (session_id, account),
+        ).fetchone()
+        return row[0] if row and row[0] else None
     finally:
         conn.close()

@@ -10,6 +10,8 @@ ui/accounts.sqlite3
 # The customer PDFs stay out of git; provision books/ from the
 # cognee storage export (see ADR-0007). The text indexes ship.
 books/*.pdf
+# The page rasters' disk cache (ADR-0017) — regenerable by design.
+render-cache/
 ~$*
 .agents/
 .claude/

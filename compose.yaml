@@ -221,6 +221,11 @@ services:
       # serve.py's /books routes. Default BOOKS_DIR resolves to /books —
       # ui/serve.py's parent — so the mount point matches the dev layout.
       - ./books:/books:ro
+      # The page rasters' disk cache (ADR-0017): the render-cache bind
+      # sits beside the books mount exactly where serve.py's default
+      # BOOKS_DIR/../render-cache resolves, so a rebuild never re-renders
+      # the pages a visitor already paid the wait for.
+      - ./render-cache:/render-cache
     ports:
       - "8765:8765"
     healthcheck:
