@@ -12,6 +12,9 @@ ui/accounts.sqlite3
 books/*.pdf
 # The page rasters' disk cache (ADR-0017) — regenerable by design.
 render-cache/
+# The offline build's planted wheels (ui/Dockerfile) — they ride the
+# deploy tree, never git.
+ui/wheels/*.whl
 ~$*
 .agents/
 .claude/

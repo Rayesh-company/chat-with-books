@@ -16,7 +16,12 @@ COPY vendor /app/vendor
 # The visual pipeline: pages rasterize server-side through PDFium
 # (pypdfium2 bundles the binary; Pillow encodes the PNGs) — pdf.js's
 # canvas cannot faithfully draw these Persian subset fonts (ADR-0007).
-RUN pip install --no-cache-dir pypdfium2==5.9.0 "pillow>=10,<12"
+# The wheel fallback (the VPS pip times out on PyPI): the deploy plants
+# the host's pinned wheels into ui/wheels/ before the build when the
+# host carries ~/cwb-wheels; a build without wheels falls through to
+# PyPI. The pins below are identical either way.
+COPY wheels /wheels/
+RUN pip install --no-cache-dir --find-links=/wheels pypdfium2==5.9.0 "pillow>=10,<12"
 
 ENV SESSION_UI_HOST=0.0.0.0 \
     SESSION_UI_PORT=8765
