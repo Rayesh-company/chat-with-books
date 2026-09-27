@@ -28,3 +28,6 @@ ui/wheels/*.whl
 
 ui/usage_ledger.sqlite3
 ui/audit.sqlite3
+
+# The pilot bench Accounts (credentials) — local only, never committed.
+benchmark/pilot/accounts.json

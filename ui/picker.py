@@ -59,9 +59,12 @@ def build_picker_prompt(question: str, sources) -> str:
         f"the question — aim for {_count_word(QUOTE_SELECTION_AIM)}; "
         "fewer only when the passages hold fewer. Each selection is a "
         "complete Farsi sentence copied VERBATIM from exactly ONE "
-        "passage (ignore the \\b noise; write proper Farsi). Do not "
-        "paraphrase, do not merge, do not shorten. Never invent a "
-        "sentence.\n\n"
+        "passage, exactly as printed: some Books' text layers carry "
+        "damage — lost or fused letters, reversed digits, stray Latin "
+        "fragments — copy the damage as it stands and correct nothing "
+        "(only the \\b backspaces are word spacing, not part of a "
+        "word). Do not paraphrase, do not merge, do not shorten. Never "
+        "invent a sentence.\n\n"
         "Reply with ONLY a JSON object, no prose, no code fence:\n"
         '{"selections": [{"text": "<verbatim sentence>", '
         '"source": <passage index>}]}'

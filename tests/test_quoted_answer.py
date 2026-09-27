@@ -124,6 +124,94 @@ def test_guard_drops_paraphrased_sentence():
     assert serve.guard_sentences([{"text": paraphrase, "source": 0}], SOURCES) == []
 
 
+def test_normalize_rides_the_wider_arabic_script_variants():
+    # Teh marbuta, alef maqsura, and the hamza-bearing alef forms ride
+    # to their Farsi letters on BOTH sides of every comparison — some
+    # Books' layers spell Arabic-style (دربارة), the composer writes
+    # plain Farsi (درباره), and the pair must not read as different
+    # letters.
+    assert serve.normalize_for_match("دربارة") == serve.normalize_for_match("درباره")
+    assert serve.normalize_for_match("عيسى") == serve.normalize_for_match("عیسی")
+    assert serve.normalize_for_match("أثر") == serve.normalize_for_match("اثر")
+    assert serve.normalize_for_match("إسلام") == serve.normalize_for_match("اسلام")
+
+
+def test_fuzzy_window_bars():
+    # The fuzzy tier's bars, on letter streams the exact match already
+    # rejected: a couple of damaged letters stay (contiguous, high
+    # coverage), real rewrites scatter or thin out and drop.
+    needle = "abcdefghij" * 4  # 40 letters — over the tier's floor
+    near = needle[:19] + "XY" + needle[21:]
+    assert serve._fuzzy_window(needle, near) == (0, 40)
+    far = needle[:32] + "XXXXXXXX"  # a fifth of the letters gone
+    assert serve._fuzzy_window(needle, far) is None
+    half = needle[:20]  # half the quote is not in the passage
+    assert serve._fuzzy_window(needle, half) is None
+    # Short quotes never ride the fuzzy tier — only the exact match does.
+    assert serve._fuzzy_window(needle[:20], needle[:20]) is None
+    # Matches scattered across the passage (AI text stitched from two
+    # places) fail the window-precision bar even at full coverage.
+    scattered = needle[:20] + "." * 200 + needle[20:]
+    assert serve._fuzzy_window(needle, scattered) is None
+
+
+def test_fuzzy_tier_keeps_a_repaired_sentence_and_shows_the_passage():
+    # Book 70143-336's layer damage (verbatim from its pages.json): the
+    # digits print reversed and the spellings ride teh marbuta. A quote
+    # repairing exactly that damage — ۲۵۰ for ۰۵۲ — is not in the
+    # passage letter-for-letter, but its matches sit contiguous inside
+    # the stream, so the tier keeps it; what renders is the passage's
+    # own slice, the Book's letters, never the model's repair.
+    damaged = {
+        "reference": "chunk 1 of document 70143-336 (pages 2-10)",
+        "passage": "اطاع از این شرایط، به درک بهتر \nحرکت انسان ۰۵۲ ساله در این برهة "
+        "زمانی حساس کمک فراوانی می کند.",
+    }
+    repaired = (
+        "اطاع از این شرایط، به درک بهتر حرکت انسان ۲۵۰ ساله در این برهه "
+        "زمانی حساس کمک فراوانی می‌کند."
+    )
+    kept = serve.guard_sentences([{"text": repaired, "source": 0}], [damaged])
+    assert kept and "۰۵۲" in kept[0]["text"]
+    assert "۲۵۰" not in kept[0]["text"]
+    assert kept[0]["reference"] == damaged["reference"]
+
+
+def test_fuzzy_tier_drops_a_true_paraphrase():
+    # A rewording scatters its matches and thins its coverage — no
+    # contiguous near-verbatim span, no tier.
+    damaged = {
+        "reference": "chunk 1 of document 70143-336 (pages 2-10)",
+        "passage": "اطاع از این شرایط، به درک بهتر \nحرکت انسان ۰۵۲ ساله در این برهة "
+        "زمانی حساس کمک فراوانی می کند.",
+    }
+    paraphrase = (
+        "آشنایی با این شرایط، شناخت حرکت انسان ۲۵۰ ساله را در آن دوران "
+        "حساس ساده‌تر می‌کند."
+    )
+    assert serve.guard_sentences([{"text": paraphrase, "source": 0}], [damaged]) == []
+
+
+def test_fuzzy_tier_drops_a_short_reworded_quote():
+    # Short needles can full-cover by accident (a few words picked from
+    # anywhere in a passage); the tier's letter floor keeps them out —
+    # only the exact match, which proves word-for-word presence, may
+    # keep a short quote.
+    short = "کمک فراوانی حساس می‌کند"
+    assert serve.guard_sentences([{"text": short, "source": 0}], SOURCES) == []
+
+
+def test_fuzzy_tier_still_respects_the_claimed_source():
+    # The repaired sentence kept above, claiming the wrong passage: the
+    # tooltip would cite a passage it never came from — dropped, tier
+    # or no tier.
+    repaired = (
+        "اطاع از این شرایط، به درک بهتر حرکت انسان ۲۵۰ ساله در این برهه "
+        "زمانی حساس کمک فراوانی می‌کند."
+    )
+    assert serve.guard_sentences([{"text": repaired, "source": 1}], SOURCES) == []
+
+
 def test_guard_drops_sentence_claiming_the_wrong_source():
     # Verbatim from source 0 but labelled source 1: the tooltip would cite
     # the wrong passage, so the guard drops it.

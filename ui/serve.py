@@ -41,6 +41,7 @@ try:
     # The deep modules behind this facade; the re-exports below keep the
     # tests' single `from ui import serve` import seam.
     from ui.guard import (
+        _fuzzy_window,
         _stream_with_offsets,
         book_label,
         display_text,
@@ -93,6 +94,7 @@ try:
     from ui import session_store
     from ui import research_store
     from ui.picker import (
+        QUOTE_SELECTION_FLOOR,
         build_picker_prompt,
         parse_picker_reply,
         pick_quote_selection,
@@ -175,6 +177,7 @@ try:
     )
 except ImportError:  # the container runs this file as a script beside the modules
     from guard import (
+        _fuzzy_window,
         _stream_with_offsets,
         book_label,
         display_text,
@@ -228,6 +231,7 @@ except ImportError:  # the container runs this file as a script beside the modul
     import session_store
     import research_store
     from picker import (
+        QUOTE_SELECTION_FLOOR,
         build_picker_prompt,
         parse_picker_reply,
         pick_quote_selection,
