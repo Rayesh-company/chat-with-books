@@ -9,6 +9,8 @@ not the transcript's to erase."""
 
 from pathlib import Path
 
+import json
+
 from tests.helpers import (
     account_email_for_phone,
     POOL,
@@ -232,6 +234,9 @@ SNAPSHOT = {
         }
     ],
     "citations": [],
+    # The marker /quote-selection rides on every snapshot it settles
+    # (the store's downgrade rule reads it — the arrive-order race).
+    "selection_snapshot": True,
 }
 ARTICLE = {
     "question": ASK["text"],
@@ -378,5 +383,177 @@ def test_the_phases_stay_silent_without_the_sitting_keys(tmp_path):
         finally:
             con.close()
         assert rows == 0
+    finally:
+        stop_gate(server, originals)
+
+
+# --- the settle's shape precedence (the arrive-order race, 2026-09-27) --------
+
+
+def test_settle_ask_never_downgrades_the_stored_answer(tmp_path):
+    """The two phase endpoints settle the same ask_key from two
+    concurrent handlers and arrival order is not guaranteed: a slow
+    picker's quote-only snapshot landing after the article used to
+    overwrite it (the reload then showed only quotes and page labels —
+    the operator's single-use answer report), and a failed phase 2's
+    empty blocks erased the row entirely. The store now judges shapes,
+    not arrival: the article always wins, an empty write never
+    erases."""
+    session_store.SESSIONS_DB = tmp_path / "sessions.sqlite3"
+    session_id = session_store.create_session(PHONE, "70143-336", "")["id"]
+    # The article settles first; the late snapshot cannot take it back.
+    session_store.settle_ask(PHONE, session_id, "ask-1", ARTICLE)
+    settled = session_store.settle_ask(PHONE, session_id, "ask-1", SNAPSHOT)
+    rows = [m for m in settled["messages"] if m["role"] == "assistant"]
+    assert len(rows) == 1 and rows[0]["payload"] == ARTICLE
+    # A failed phase 2's empty write cannot erase it either.
+    emptied = dict(ARTICLE, blocks=[])
+    session_store.settle_ask(PHONE, session_id, "ask-1", emptied)
+    settled = session_store.get_session(PHONE, session_id)
+    rows = [m for m in settled["messages"] if m["role"] == "assistant"]
+    assert len(rows) == 1 and rows[0]["payload"] == ARTICLE
+    # Snapshot over snapshot keeps latest-wins (two picker re-runs).
+    second_snapshot = dict(SNAPSHOT, question="بازپرسشِ همان پرسش")
+    session_store.settle_ask(PHONE, session_id, "ask-2", SNAPSHOT)
+    settled = session_store.settle_ask(
+        PHONE, session_id, "ask-2", second_snapshot
+    )
+    rows = [m for m in settled["messages"] if m["role"] == "assistant"]
+    assert [r["payload"] for r in rows] == [ARTICLE, second_snapshot]
+
+
+# --- the follow-up thread (ADR-0015) ------------------------------------------
+
+
+REWRITE_CONTENT = "دروازه‌های چهارگانهٔ انسان ۲۵۰ ساله چیست؟"
+
+
+class RewriteUpstream:
+    """Tells the composer (the rewrite call) from Cognee (the relay) by
+    URL, and captures what the relay finally received — the rewritten
+    query's ride and the sitting id's absence are the test's subject."""
+
+    def __init__(self):
+        self.composer_bodies = []
+        self.relay_bodies = []
+
+    def __call__(self, request, timeout=None):
+        url = request.full_url
+        body = request.data.decode("utf-8") if request.data else ""
+        if "chat/completions" in url:
+            self.composer_bodies.append(json.loads(body))
+            payload = json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {"content": REWRITE_CONTENT},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+        else:
+            self.relay_bodies.append(json.loads(body))
+            payload = b"[]"
+
+        class Response:
+            status = 200
+            headers = {"Content-Type": "application/json"}
+
+            def __init__(self, body):
+                self._body = body
+
+            def read(self):
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        return Response(payload)
+
+
+def _sitting_with_a_turn(base):
+    """One stored turn pair: the raw material the rewrite reads."""
+    status, session = post(
+        base, "/sessions", {"book": "70143-336", "title": ""}, phone=PHONE
+    )
+    assert status == 200
+    session_id = session["id"]
+    status, _ = post(
+        base,
+        f"/sessions/{session_id}/messages",
+        {"role": "user", "payload": {"text": ASK["text"]}},
+        phone=PHONE,
+    )
+    assert status == 200
+    status, _ = post(
+        base,
+        f"/sessions/{session_id}/messages",
+        {"role": "assistant", "payload": ARTICLE},
+        phone=PHONE,
+    )
+    assert status == 200
+    return session_id
+
+
+def test_a_short_followup_is_rewritten_over_the_sitting(tmp_path):
+    """The follow-up thread (ADR-0015): with an existing sitting, a
+    short question is rewritten into a self-contained query over the
+    sitting's stored turns BEFORE the relay — the sitting's id never
+    rides upstream. A long question rides raw with no rewrite call at
+    all, and the rewrite's spend is metered like every composer call."""
+    upstream = RewriteUpstream()
+    base, server, originals = with_gate(tmp_path, upstream)
+    try:
+        session_id = _sitting_with_a_turn(base)
+        status, _ = post(
+            base,
+            "/api/v1/recall",
+            {
+                "query": "بیشتر توضیح بده",
+                "session_id": session_id,
+                "datasets": ["70143-336"],
+            },
+            phone=PHONE,
+        )
+        assert status == 200
+        assert len(upstream.composer_bodies) == 1
+        prompt = upstream.composer_bodies[0]["messages"][0]["content"]
+        assert ASK["text"] in prompt and "بیشتر توضیح بده" in prompt
+        assert len(upstream.relay_bodies) == 1
+        relayed = upstream.relay_bodies[0]
+        assert relayed["query"] == REWRITE_CONTENT
+        assert "session_id" not in relayed
+        # A long question is its own query — the rewriter sleeps.
+        long_query = "این یک پرسش بلند و خودبسنده با بیش از هشت واژه است که نیازی به بازنویسی ندارد"
+        status, _ = post(
+            base,
+            "/api/v1/recall",
+            {"query": long_query, "session_id": session_id},
+            phone=PHONE,
+        )
+        assert status == 200
+        assert len(upstream.composer_bodies) == 1
+        assert upstream.relay_bodies[1]["query"] == long_query
+    finally:
+        stop_gate(server, originals)
+
+
+def test_research_starts_without_a_prior_chat(tmp_path):
+    """ADR-0015: the research conversation may be the day's first act.
+    The old minimum-of-one-chat precondition answered 429 «اول یک پرسش
+    بپرسید» before the body was even read; the Balance-only gate lets a
+    malformed body reach its validation (400), and the toggle-first
+    sitting starts."""
+    base, server, originals = with_gate(tmp_path, None)
+    try:
+        status, body = post(
+            base, "/research/message", {"text": ""}, phone=PHONE
+        )
+        assert status == 400
+        assert "اول یک پرسش" not in str(body)
     finally:
         stop_gate(server, originals)

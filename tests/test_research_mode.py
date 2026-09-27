@@ -1595,17 +1595,21 @@ def test_the_messages_endpoint_gates_the_phone_and_returns_the_transcript(tmp_pa
 # --- the endpoints -----------------------------------------------------------
 
 
-def test_research_message_needs_the_chat_today_gate(tmp_path):
-    # Phase 2's gate shape: no login -> 401 (ADR-0013 — the phone header
-    # no longer authenticates anything); a logged-in Account with no
-    # chat today -> 429; the upstream never runs for a rejected message.
+def test_research_message_gate_is_the_balance_only_shape(tmp_path):
+    # ADR-0015 (the composer's research toggle): the old
+    # minimum-of-one-chat precondition is gone — the research
+    # conversation may be the day's first act, seeded by the typed
+    # question alone. No login -> 401 (ADR-0013 — the phone header no
+    # longer authenticates anything); a logged-in Account with a
+    # positive Balance reaches the handler (202, the turn admitted);
+    # the admitted turn's classify call ran upstream.
     upstream = ResearchUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
         no_phone, _ = post(
             base, "/research/message", {"text": "پیام", "question": "پرسش؟"}
         )
-        no_chat, payload = post(
+        status, payload = post(
             base,
             "/research/message",
             {"text": "پیام", "question": "پرسش؟"},
@@ -1614,9 +1618,10 @@ def test_research_message_needs_the_chat_today_gate(tmp_path):
     finally:
         stop_gate(server, original)
     assert no_phone == 401
-    assert no_chat == 429
-    assert "گفتگو" in payload["detail"]
-    assert upstream.calls == []
+    assert status == 202
+    assert payload["turn_id"] and payload["session_id"]
+    wait_turn_done(payload["turn_id"])
+    assert upstream.calls, "the admitted turn ran"
 
 
 def test_research_message_rejects_bad_bodies(tmp_path):

@@ -971,6 +971,23 @@
         color: var(--surface);
       }
 
+      /* The research toggle (ADR-0015): the composer's mode arm. Same
+         pressed vocabulary as the reader's Book chips — the palette's
+         own tokens, nothing new. */
+      .mode-toggle {
+        background: transparent;
+        color: var(--mute);
+        border: 1px solid var(--rule);
+        padding: 0.4rem 0.9rem;
+        font-size: 0.8rem;
+      }
+
+      .mode-toggle[aria-pressed="true"] {
+        color: var(--surface);
+        background: var(--ink);
+        border-color: var(--ink);
+      }
+
       /* ===== Research Mode (ADR-0008/0009): one section per Session,
          appended to the thread when the ask arms it — the transcript,
          the chips, and the map rail keep their ids and behavior. */
@@ -1163,6 +1180,14 @@
         gap: 0.7rem;
         align-items: flex-end;
         margin-top: 0.4rem;
+      }
+
+      /* The one door (ADR-0015): the section's own composer is retired —
+         the shell composer with the research toggle armed is the only
+         way in; the element (and its wiring) stays for the reconnect
+         paths, just never shown. */
+      .research-form[hidden] {
+        display: none;
       }
 
       .research-form textarea {
@@ -1842,9 +1867,11 @@
           <div id="thread-list" class="thread-list" hidden></div>
         </main>
 
-        <!-- The composer: the ask's one door. «توقف», the theme names and
-             the counter text are DRAFT strings — the shell's draft table
-             in the script below lists them for the PM. -->
+        <!-- The composer: the ask's one door (ADR-0015) — the research
+             toggle arms it for the research conversation; «توقف», the
+             theme names and the counter text are DRAFT strings — the
+             shell's draft table in the script below lists them for the
+             PM. -->
         <div class="composer-dock" id="composer-dock" hidden>
           <form id="ask" class="composer">
             <textarea
@@ -1857,6 +1884,12 @@
             <div class="composer-row">
               <span id="char-note" class="char-note" aria-live="polite"></span>
               <span class="spacer"></span>
+              <button
+                type="button"
+                id="research-mode-btn"
+                class="mode-toggle"
+                aria-pressed="false"
+              >حالت پژوهش</button>
               <button type="button" id="stop-btn" hidden>توقف</button>
               <button type="submit" id="ask-btn">بپرس</button>
             </div>
@@ -1924,7 +1957,11 @@
       //   «فهرست نشست‌ها» (the sidebar) · «نشست تازه» (its button) ·
       //   «توقف» (the stop button) · «تغییر پوسته»/«شب»/«روز» (theme) ·
       //   the hero title and note, the starter questions, «پرسش متوقف
-      //   شد.» + the stop's charge note, «اکنون», the character note.
+      //   شد.» + the stop's charge note, «اکنون», the character note ·
+      //   the research section's empty note (ADR-0015 — the one NEW
+      //   string the composer's research toggle added; the toggle's own
+      //   label, the research placeholder and its send word reuse the
+      //   roster's approved strings).
 
       const SESSION_LIST_TITLE = "فهرست نشست‌ها";
       const NEW_SESSION_LABEL = "نشست تازه";
@@ -1934,6 +1971,19 @@
       const UNANSWERED_NOTE =
         "این پرسش بی‌پاسخ ماند — نشست پیش از رسیدن پاسخ قطع شد. هزینهٔ بخش روان‌شده به‌همان صادقانگی ثبت شده است.";
       const REASK_LABEL = "پرسیدن دوباره";
+
+      // The research mode toggle (ADR-0015). The label is the approved
+      // glossary name (CONTEXT.md's Research Mode row); the composer's
+      // armed placeholder and send word reuse the roster's existing
+      // research strings; only the section's empty note is a NEW draft
+      // string, pinned here for the PM.
+      const RESEARCH_MODE_LABEL = "حالت پژوهش";
+      const RESEARCH_SECTION_NOTE =
+        "پرسش پژوهشی خود را از همین کامپوزر پایین بپرسید؛ نقشۀ پژوهش کنار گفتگو می‌آید.";
+      const RESEARCH_PLACEHOLDER = "پیام پژوهش خود را بنویسید";
+      const RESEARCH_SEND_LABEL = "فرستادن";
+      const ASK_PLACEHOLDER = "پرسش خود را بنویسید";
+      const ASK_SEND_LABEL = "بپرس";
 
       const BOOK_TITLES = {
         "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
@@ -2086,6 +2136,7 @@
         if (!session) return;
         if (quotedAbort) quotedAbort.abort();
         resetResearch();
+        setResearchMode(false);
         citationRun += 1;
         askState = null;
         quotedAbort = null;
@@ -2154,6 +2205,42 @@
               article.append(p);
             } else {
               continue;
+            }
+            // The Evidence pool rides the resume (restore fidelity,
+            // 2026-09-27): the settled rows carry the ask's stored
+            // citations, and the resumed sitting shows the same
+            // collapsed pool the live ask did — not just the article.
+            const citations = Array.isArray(message.payload.citations)
+              ? message.payload.citations
+              : [];
+            if (citations.length) {
+              const pool = document.createElement("details");
+              pool.className = "evidence-pool";
+              const summary = document.createElement("summary");
+              summary.textContent = "همۀ نقل‌قول‌های بازیابی‌شده";
+              const poolHeading = document.createElement("h2");
+              poolHeading.className = "citations-heading";
+              poolHeading.textContent = "استناد";
+              const list = document.createElement("div");
+              list.className = "citations";
+              for (const item of citations) {
+                if (!item || typeof item !== "object") continue;
+                const reference =
+                  typeof item.reference === "string" ? item.reference : "";
+                const passage =
+                  typeof item.passage === "string" ? item.passage : "";
+                if (!reference && !passage) continue;
+                const p = document.createElement("p");
+                p.className = "cite";
+                p.textContent = cleanFarsi(
+                  passage ? `${reference}: "${passage}"` : reference
+                );
+                list.append(p);
+              }
+              if (list.children.length) {
+                pool.append(summary, poolHeading, list);
+                article.append(pool);
+              }
             }
             threadListEl.append(article);
           }
@@ -2244,6 +2331,9 @@
       } catch {}
 
       function startSession(bookDoc, seedQuestion) {
+        // A new sitting begins in the ask mode (ADR-0015): the toggle's
+        // arm belongs to the sitting that armed it.
+        setResearchMode(false);
         sessionState.active = true;
         sessionState.book = bookDoc;
         sessionState.titled = false;
@@ -2486,6 +2576,7 @@
       function selectPhase(n, scroll = true) {
         document.body.classList.toggle("research-open", n === 3);
         if (!scroll) return;
+        if (!nearBottom()) return;
         if (n === 3) {
           researchSectionEl?.scrollIntoView({ behavior: "smooth", block: "start" });
         } else {
@@ -2970,7 +3061,7 @@
           }
           answerEl.className = "answer";
           answerEl.replaceChildren(doc);
-          scrollThreadEnd();
+          if (nearBottom()) scrollThreadEnd();
         } catch {
           if (run !== citationRun) {
             return;
@@ -2990,6 +3081,10 @@
       // with its Evidence pool.
       const RESEARCH_POLL_MS = 2000;
       let researchPollTimer = null;
+      // The turn's generation (ADR-0015): resetResearch bumps it, so an
+      // in-flight POST or poll from a closed conversation settles
+      // silently instead of painting into removed nodes.
+      let researchRun = 0;
       let researchStatusEl = null;
       let researchSectionEl = null;
       let researchChatEl = null;
@@ -3019,20 +3114,35 @@
         }
       }
 
+      // Scroll freedom (operator feedback, 2026-09-27): while the
+      // pipeline generates, the reader may scroll anywhere — a landing
+      // yanks the view only when the reader is ALREADY near the bottom,
+      // and the follow resumes the moment they return. The submit's own
+      // jump stays unconditional (the send was their act) but instant,
+      // so the smooth glide never fights the first upward drag.
+      function nearBottom(threshold = 140) {
+        const doc = document.documentElement;
+        return (
+          window.innerHeight + window.scrollY >= doc.scrollHeight - threshold
+        );
+      }
+
       function scrollResearch() {
+        if (!nearBottom()) return;
         researchChatEl?.scrollIntoView({ block: "end", behavior: "smooth" });
       }
 
-      function scrollThreadEnd() {
+      function scrollThreadEnd(smooth = true) {
         window.scrollTo({
           top: document.documentElement.scrollHeight,
-          behavior: "smooth",
+          behavior: smooth ? "smooth" : "auto",
         });
       }
 
       // One research section per Session, appended to the thread when
-      // the ask arms it; a new ask closes it (the server aborts the
-      // in-flight turn and closes the session on the ask's recall POST).
+      // the toggle arms it or a reconnect needs it (ADR-0015); a new
+      // ask closes it (the server aborts the in-flight turn and closes
+      // the session on the ask's recall POST).
       function createResearchSection() {
         if (researchSectionEl) return;
         researchSectionEl = document.createElement("section");
@@ -3064,7 +3174,12 @@
                    the suggestions payload, so a rename never
                    touches this file. -->
               <div id="research-suggest" class="research-suggest"></div>
-              <form id="research-form" class="research-form">
+              <!-- The one door (ADR-0015): this section's own composer
+                   is retired — the shell composer with the research
+                   toggle armed sends the research messages now. The
+                   element (and its wiring below) stays so the
+                   reconnect paths keep their shape; it never shows. -->
+              <form id="research-form" class="research-form" hidden>
                 <textarea
                   id="research-input"
                   maxlength="2000"
@@ -3099,7 +3214,7 @@
         phaseEls[3].mark = three;
         phaseEls[3].timer = three.querySelector(".phase-timer");
         researchChatEl.replaceChildren(
-          researchText("پس از پاسخ اول، گفتگوی پژوهش را اینجا آغاز کنید.", "empty")
+          researchText(RESEARCH_SECTION_NOTE, "empty")
         );
         researchFormEl.addEventListener("submit", (event) => {
           event.preventDefault();
@@ -3434,8 +3549,12 @@
       }
 
       function armResearchInput() {
-        researchInputEl.disabled = false;
-        researchSendEl.disabled = false;
+        if (researchInputEl) researchInputEl.disabled = false;
+        if (researchSendEl) researchSendEl.disabled = false;
+        // The one door (ADR-0015): when the toggle routed the ask
+        // here, the shell composer's send re-arms with the settle —
+        // every settle path funnels through this function.
+        if (researchMode) buttonEl.disabled = false;
       }
 
       function settleResearchTurn(message) {
@@ -3482,6 +3601,7 @@
       }
 
       function pollResearchTurn(turnId) {
+        const run = researchRun;
         const poll = async () => {
           let payload = null;
           let gone = false;
@@ -3503,6 +3623,11 @@
           } catch {
             // A transient network blip is not a settled turn — the next
             // tick retries.
+          }
+          if (run !== researchRun) {
+            // The conversation was reset under this poll (a new ask, a
+            // new sitting): settle silently, paint nothing.
+            return;
           }
           if (gone) {
             settleResearchTurn("پاسخ پژوهش ناتمام ماند؛ دوباره تلاش کنید.");
@@ -3558,12 +3683,39 @@
       }
 
       async function sendResearchMessage() {
-        if (!researchQuery || researchInputEl.disabled) return;
+        // The retired second door (ADR-0015): the form is hidden, its
+        // wiring kept only so the reconnect shape holds. The shell
+        // composer with the toggle armed is the way research messages
+        // are sent now (submitResearchAsk).
+        if (!researchInputEl || researchInputEl.disabled) return;
         const text = researchInputEl.value.trim();
         if (!text) return;
         researchInputEl.value = "";
         researchInputEl.disabled = true;
         researchSendEl.disabled = true;
+        await runResearchTurn(text);
+      }
+
+      // The toggle's research ask (ADR-0015): the typed question goes
+      // straight into the research conversation — the founding message
+      // and goal when no research session lives yet, the next message
+      // when one does.
+      function submitResearchAsk(query) {
+        buttonEl.disabled = true;
+        if (!researchSessionId) {
+          researchQuery = query;
+        }
+        createResearchSection();
+        document.body.classList.add("research-open");
+        scrollThreadEnd(false);
+        return runResearchTurn(query);
+      }
+
+      // The turn runner shared by both doors: bubble, seed-or-continue
+      // body, POST, poll — every settle path funnels into
+      // armResearchInput, which re-arms the shell composer too.
+      async function runResearchTurn(text) {
+        const run = researchRun;
         researchSuggestEl.replaceChildren();
         setPhaseState(3, "running");
         setRunningPhase(3);
@@ -3576,10 +3728,11 @@
         if (researchSessionId) {
           body.session_id = researchSessionId;
         } else {
-          // The creating call seeds the session with the ask and its
-          // Evidence pool (ADR 0008) — after this, text alone. The
-          // Session's Book pick rides along (ADR-0014): the session's
-          // gathers search that Book only.
+          // The creating call seeds the session with its founding
+          // question and — when a prior ask left one — its Evidence
+          // pool (ADR 0008); after this, text alone. The Session's
+          // Book pick rides along (ADR-0014): the session's gathers
+          // search that Book only.
           body.question = researchQuery;
           body.sources = researchSources;
           if (sessionState.book) body.datasets = [sessionState.book];
@@ -3591,6 +3744,7 @@
             body: JSON.stringify(body),
           });
           const payload = await res.json().catch(() => ({}));
+          if (run !== researchRun) return;
           if (!res.ok || !payload.turn_id) {
             // A rejection — a busy 429 or a closed session among them —
             // shows the server's Farsi detail; the timer never started
@@ -3614,6 +3768,7 @@
           startPhaseTimer(3);
           pollResearchTurn(payload.turn_id);
         } catch {
+          if (run !== researchRun) return;
           appendResearchError("ارتباط با سرویس پژوهش قطع شد.");
           setPhaseState(3, "ready");
           setRunningPhase(null);
@@ -3621,14 +3776,14 @@
         }
       }
 
-      // The ask arms the Session's research section: once the first
-      // answer exists, Research Mode is ready — seeded with the ask and
-      // its pool, never automatic (the dive's operator-start rule, kept).
+      // The ask seeds the research mode (ADR-0015): the question and
+      // its Evidence pool wait as the next research conversation's
+      // creating seed. The section itself is never armed by an answer
+      // — that is the composer toggle's call (the dive's
+      // operator-start rule, kept, now honestly operator-started).
       function armResearch(query, sources) {
         researchQuery = query;
         researchSources = sources;
-        createResearchSection();
-        armResearchInput();
       }
 
       // A new ask owns the thread: stop polling, drop the stored
@@ -3636,6 +3791,7 @@
       // aborts the Account's in-flight turn and closes its session on
       // the ask's own recall POST (ADR 0008).
       function resetResearch() {
+        researchRun += 1;
         stopResearchPolling();
         clearResearch();
         researchSessionId = null;
@@ -3662,6 +3818,41 @@
         document.body.classList.remove("research-open");
       }
 
+      // ===== The research mode toggle (ADR-0015) =====
+      // The composer's one door serves both modes: the default is the
+      // ask; armed, the typed question goes into the research
+      // conversation. The old arm-after-the-answer flow is gone — the
+      // section appears when the operator arms the mode (or a refresh
+      // reconnects a live conversation), never because an answer
+      // landed.
+      const researchModeBtn = document.getElementById("research-mode-btn");
+      let researchMode = false;
+      function setResearchMode(on) {
+        researchMode = on;
+        researchModeBtn.setAttribute("aria-pressed", on ? "true" : "false");
+        questionEl.placeholder = on ? RESEARCH_PLACEHOLDER : ASK_PLACEHOLDER;
+        buttonEl.textContent = on ? RESEARCH_SEND_LABEL : ASK_SEND_LABEL;
+        document.body.classList.toggle(
+          "research-open",
+          on && Boolean(researchSectionEl)
+        );
+      }
+      researchModeBtn.addEventListener("click", () => {
+        setResearchMode(!researchMode);
+        if (researchMode) {
+          if (sessionState.active && !researchSectionEl) {
+            createResearchSection();
+            document.body.classList.add("research-open");
+          }
+          questionEl.focus();
+        } else if (researchSectionEl && !researchSessionId) {
+          // Toggled off with no live conversation underneath: the empty
+          // section goes home. A live conversation keeps its section
+          // (its poll keeps running) until the next ask closes it.
+          resetResearch();
+        }
+      });
+
       // Refresh reconnect: a stored identity means this Account has a
       // research conversation the reload must not throw away. The
       // transcript is RE-FETCHED (ADR-0011 — what was said stays
@@ -3681,6 +3872,10 @@
         sessionTitleEl.textContent = PHASE_NAMES[3];
         renderSessionList();
         createResearchSection();
+        // The reconnected conversation IS the research mode: the
+        // toggle re-arms so the shell composer keeps feeding it
+        // (ADR-0015).
+        setResearchMode(true);
         selectPhase(3, false);
         (async () => {
           try {
@@ -3853,6 +4048,24 @@
           return;
         }
 
+        // The message leaves the box the moment it is sent (operator
+        // feedback, 2026-09-27): capture, then clear — the draft store
+        // goes with it. The deliberate refills (starter chips,
+        // «پرسیدن دوباره») are not sends and keep their text.
+        questionEl.value = "";
+        autosizeComposer();
+        updateCharNote();
+        try {
+          localStorage.removeItem("composerDraft");
+        } catch {}
+
+        // The one door, two modes (ADR-0015): armed, the question goes
+        // straight into the research conversation — no answer first.
+        if (researchMode) {
+          submitResearchAsk(query);
+          return;
+        }
+
         // A new ask opens a new thread entry: abort any in-flight phase
         // 2 of the previous one, stop the research poll loop, close the
         // previous research section, then rebuild the surface. The
@@ -3878,7 +4091,9 @@
           if (id) storeAppend("user", { text: query });
         });
         renderSessionList();
-        scrollThreadEnd();
+        // The send was the reader's own act: one instant jump to their
+        // exchange — instant, so the glide never fights their scroll.
+        scrollThreadEnd(false);
 
         buttonEl.disabled = true;
         stopBtn.hidden = false;
@@ -3923,9 +4138,7 @@
         waiting.className = "empty";
         waiting.textContent = "استناد پس از پاسخ می‌آید.";
         citationsEl.append(waiting);
-        try {
-          localStorage.removeItem("composerDraft");
-        } catch {}
+        // The draft store was cleared with the box at capture time.
 
         const textOf = (payload) =>
           Array.isArray(payload) ? payload[0]?.text || "" : payload.text || "";
@@ -4066,6 +4279,12 @@
               datasets: selectedDatasets(),
               includeReferences: true,
               stream: true,
+              // The sitting's id: the server reads the recent turns
+              // from its own store to rewrite a short follow-up into a
+              // self-contained search query (ADR-0015) — the id never
+              // rides to Cognee, and the displayed question stays the
+              // user's own words.
+              session_id: sessionState.storeId || undefined,
             }),
           });
           const ctype = res.headers.get("Content-Type") || "";

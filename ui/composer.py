@@ -47,6 +47,26 @@ COMPOSER_TIMEOUT = int(os.environ.get("COMPOSER_TIMEOUT", "240"))
 # reasoning planner carries the same ceiling. Pinned in source like the
 # model, never via env.
 COMPOSER_MAX_TOKENS = 16384
+# The follow-up rewrite's own budget (ADR-0015): one fast call that
+# must never hold an ask hostage — its own short timeout and a small
+# ceiling, both pinned like the model.
+REWRITE_TIMEOUT = 15
+REWRITE_MAX_TOKENS = 512
+
+
+def conversation_context(conversation_tail: str) -> str:
+    """The sitting's earlier turns as framing (the follow-up thread,
+    ADR-0015): empty when there is no tail; otherwise a section the
+    writer reads but never quotes — every Book claim still grounds in
+    the passages below."""
+    if not conversation_tail:
+        return ""
+    return (
+        "The sitting's earlier turns, oldest first (framing only — this "
+        "reply answers the CURRENT question and continues the thread "
+        "naturally; never quote from this section, ground every Book "
+        f"claim in the passages below):\n{conversation_tail}\n\n"
+    )
 
 
 def framing_context(answer: str, plan: str = "") -> str:
@@ -68,14 +88,18 @@ def framing_context(answer: str, plan: str = "") -> str:
     )
 
 
-def build_quoted_prompt(question: str, answer: str, sources, plan: str = "") -> str:
+def build_quoted_prompt(
+    question: str, answer: str, sources, plan: str = "", conversation_tail: str = ""
+) -> str:
     """Build the writer prompt."""
     passages = _numbered_passages(sources)
     context = framing_context(answer, plan)
+    tail = conversation_context(conversation_tail)
     return (
         "You are writing a Farsi Quoted answer for a Q&A sheet over one "
         "Book.\n\n"
         f"Question: {question}\n\n"
+        f"{tail}"
         f"{context}\n\n"
         "Passages (numbered, from the Book's retrieved Evidence; text-layer "
         "noise like \\b backspaces may appear between words):\n"
@@ -214,6 +238,8 @@ def _composer_reply(
     thinking_type: str,
     model: str = COMPOSER_MODEL,
     urlopen_fn=None,
+    timeout: int = COMPOSER_TIMEOUT,
+    max_tokens: int = COMPOSER_MAX_TOKENS,
 ):
     """One POST to the composer endpoint; raises on any failure.
 
@@ -240,7 +266,7 @@ def _composer_reply(
     thinking = _thinking_fields(thinking_type)
     payload = {
         "model": model,
-        "max_tokens": COMPOSER_MAX_TOKENS,
+        "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": message}],
     }
     payload.update(thinking)
@@ -254,7 +280,7 @@ def _composer_reply(
         method="POST",
     )
     with (urlopen_fn if urlopen_fn is not None else urlopen)(
-        request, timeout=COMPOSER_TIMEOUT
+        request, timeout=timeout
     ) as response:
         reply = json.load(response)
     # The tap fires after the with-block: the socket is closed, the reply
@@ -319,7 +345,9 @@ def continue_quoted_document(question, answer, sources, plan, blocks):
     return blocks + extra, reply["choices"][0].get("finish_reason") == "length"
 
 
-def compose_quoted_answer(question: str, answer: str, sources):
+def compose_quoted_answer(
+    question: str, answer: str, sources, conversation_tail: str = ""
+):
     """Write the Quoted answer blocks; ([], False) on writer failure or
     when the document misses the swap threshold (AC-4).
 
@@ -327,7 +355,9 @@ def compose_quoted_answer(question: str, answer: str, sources):
     reasoning planner first, then the non-reasoning writer. The planner
     is best-effort — on any planner failure the writer runs without a
     plan (the single-call shape), so the sheet is never left empty.
-    Each call gets its own COMPOSER_TIMEOUT.
+    Each call gets its own COMPOSER_TIMEOUT. The sitting's earlier
+    turns ride the writer only (conversation_tail, ADR-0015) — the
+    planner plans from the question and passages alone.
 
     Returns (blocks, truncated). A reply stopped by the output ceiling
     (finish_reason "length") dies mid-JSON — the live 2026-09-10 run
@@ -343,20 +373,29 @@ def compose_quoted_answer(question: str, answer: str, sources):
     attempt rides; both attempts failing keeps the honest fallback.
     """
     plan = plan_quoted_document(question, sources)
-    blocks, truncated = _write_quoted_once(question, answer, sources, plan)
+    blocks, truncated = _write_quoted_once(
+        question, answer, sources, plan, conversation_tail
+    )
     if blocks:
         return blocks, truncated
-    blocks, truncated = _write_quoted_once(question, answer, sources, plan)
+    blocks, truncated = _write_quoted_once(
+        question, answer, sources, plan, conversation_tail
+    )
     return blocks, truncated
 
 
-def _write_quoted_once(question: str, answer: str, sources, plan: str):
+def _write_quoted_once(
+    question: str, answer: str, sources, plan: str, conversation_tail: str = ""
+):
     """One writer attempt: call, parse, ONE length-cut continuation,
     guard. ([], False) on call failure or a guard that keeps nothing —
     the retry's unit."""
     try:
         reply = _composer_reply(
-            build_quoted_prompt(question, answer, sources, plan), "disabled"
+            build_quoted_prompt(
+                question, answer, sources, plan, conversation_tail
+            ),
+            "disabled",
         )
         content = _composer_content(reply)
     except (KeyError, ValueError, OSError):
@@ -368,3 +407,35 @@ def _write_quoted_once(question: str, answer: str, sources, plan: str):
         question, answer, sources, plan, blocks
     )
     return guard_blocks(blocks, sources), truncated
+
+
+def rewrite_followup_query(query: str, history: str) -> str:
+    """A short follow-up made self-contained for the searcher (the
+    follow-up thread, ADR-0015): ONE fast glm-5.3-flash call over the
+    sitting's recent turns. The retrieval's quality is only as good as
+    the query it sees — «بیشتر توضیح بده» alone retrieves noise, the
+    rewritten form retrieves the discussed subject. Raises on any
+    failure; the caller (serve.py's _contextual_query) falls back to
+    the raw question — the rewrite is a better retrieval hint, never a
+    gate."""
+    prompt = (
+        "You are making a follow-up question self-contained for a Book "
+        "search engine.\n\n"
+        "Earlier turns of the conversation, oldest first:\n"
+        f"{history}\n\n"
+        f"The user's new message: {query}\n\n"
+        "Task: rewrite the new message as ONE standalone Farsi search "
+        "query that carries the context it needs from the earlier turns "
+        "— name the subject it refers to, keep it a question or a short "
+        "keyword phrase, add nothing the turns do not support. Reply "
+        "with ONLY the rewritten query: no quotes, no explanation, no "
+        "extra words."
+    )
+    reply = _composer_reply(
+        prompt,
+        "disabled",
+        timeout=REWRITE_TIMEOUT,
+        max_tokens=REWRITE_MAX_TOKENS,
+    )
+    content = _composer_content(reply).strip().strip("\"«»").strip()
+    return content or query

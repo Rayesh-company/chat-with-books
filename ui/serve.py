@@ -78,6 +78,7 @@ try:
         build_planner_prompt,
         build_quoted_prompt,
         compose_quoted_answer,
+        rewrite_followup_query,
         set_meter,
     )
     from ui.ledger import (
@@ -211,6 +212,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         build_planner_prompt,
         build_quoted_prompt,
         compose_quoted_answer,
+        rewrite_followup_query,
         set_meter,
     )
     from ledger import (
@@ -576,6 +578,64 @@ def validated_datasets(raw):
     if not picked:
         return None
     return [dataset for dataset in BOOK_DATASETS if dataset in picked]
+
+
+# The follow-up thread's budget (ADR-0015): the sitting's recent turns
+# ride as framing only — a short question (at most this many words) is
+# what gets rewritten, and each earlier answer contributes a capped
+# connective text, so the prompts stay small.
+REWRITE_MAX_WORDS = 8
+_TAIL_TURNS = 3
+_TAIL_ANSWER_CHARS = 400
+
+
+def _article_connective_text(payload) -> str:
+    """A stored assistant payload's own writing — the blocks' text
+    parts only. The quote parts are the passages' job (the writer
+    re-copies them verbatim from the sources), so they never ride the
+    tail; the connective text is what tells the rewriter and the
+    phase-2 writer what the sitting has already covered."""
+    if not isinstance(payload, dict):
+        return ""
+    parts: list[str] = []
+    for block in payload.get("blocks") or []:
+        if not isinstance(block, dict) or block.get("type") != "paragraph":
+            continue
+        for part in block.get("parts") or []:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                parts.append(part["text"].strip())
+    return " ".join(p for p in parts if p)[:_TAIL_ANSWER_CHARS]
+
+
+def _conversation_tail(account: str, session_id) -> str:
+    """The sitting's recent turns (the Session store's own rows, the
+    same transcript the resume renders) as one context string — the
+    last few ask/answer pairs, oldest first. The follow-up rewrite and
+    the phase-2 framing read it; everything about it fails soft: no
+    sitting, an unreadable store, or no turns answer an empty string
+    and the callers ride without context."""
+    if not isinstance(session_id, int):
+        return ""
+    try:
+        session = session_store.get_session(account, session_id)
+    except Exception:
+        return ""
+    if not session:
+        return ""
+    lines: list[str] = []
+    for message in session.get("messages") or []:
+        if not isinstance(message, dict):
+            continue
+        payload = message.get("payload")
+        if message.get("role") == "user":
+            text = payload.get("text") if isinstance(payload, dict) else None
+            if isinstance(text, str) and text.strip():
+                lines.append(f"Q: {text.strip()[:_TAIL_ANSWER_CHARS]}")
+        else:
+            text = _article_connective_text(payload)
+            if text:
+                lines.append(f"A: {text}")
+    return "\n".join(lines[-_TAIL_TURNS * 2 :])
 
 
 class SessionHandler(SimpleHTTPRequestHandler):
@@ -962,6 +1022,23 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return None
         return account
 
+    def _research_account(self):
+        """The research gate (ADR-0015): the Account behind the login
+        cookie with a positive Balance — and nothing else. The old
+        minimum-of-one-chat precondition existed because research was
+        seeded from a prior ask's Evidence pool; the composer's research
+        toggle starts the conversation from the typed question alone
+        (the pool seed is optional), so the day's first act may be
+        research. The daily chat quota stays the normal ask's quota —
+        research turns record no chats and never burn it; the Balance
+        is the research spend's own prepaid stop."""
+        account = resolve_identity(self)
+        if account is None:
+            return None
+        if not self._balance_gate(account):
+            return None
+        return account
+
     # --- the Account endpoints (ADR-0013) -----------------------------------
     # Login is the one door; /auth/logout and /auth/me serve the sheet's
     # overlay; /auth/accounts is the Admin's issuance. All four stay open
@@ -1143,7 +1220,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             record_size_estimate(
                 account, "ask", int(self.headers.get("Content-Length", "0") or "0")
             )
-            self._proxy("POST")
+            self._proxy("POST", account)
             return
         if path == "/sessions":
             # The Session store's create (T27 stage 3): the sheet opens
@@ -1205,13 +1282,17 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self._evidence_fallback()
             return
         if path == "/research/message":
-            account = self._quoted_account()
+            account = self._research_account()
             if account is None:
                 return
             self._research_message(account)
             return
         if path == "/research/decide":
-            account = self._quoted_account()
+            # The same gate as the message start (ADR-0015): a
+            # toggle-first conversation's proposals must be decidable
+            # even when no normal ask ran today. Bookkeeping — no
+            # upstream call, nothing to meter.
+            account = self._research_account()
             if account is None:
                 return
             self._research_decide(account)
@@ -1260,9 +1341,22 @@ class SessionHandler(SimpleHTTPRequestHandler):
         except (ValueError, KeyError, TypeError):
             self.send_error(400, "Bad request")
             return
-        blocks, truncated = compose_quoted_answer(question, answer, sources)
+        # The sitting's earlier turns ride as framing (the follow-up
+        # thread, ADR-0015) — a stored snapshot contributes nothing
+        # (its parts are quotes only), so the parallel picker's row,
+        # if it settled first, never pollutes the writer's context.
+        tail = _conversation_tail(account, session_id)
+        blocks, truncated = compose_quoted_answer(
+            question, answer, sources, conversation_tail=tail
+        )
+        # The settle is gated on a written document (the other half of
+        # the arrive-order race, 2026-09-27 operator report): a failed
+        # phase 2 used to settle empty blocks and erase the snapshot
+        # the picker had already stored — the store refuses downgrades
+        # too, but the empty write never even starts here.
         if (
-            isinstance(session_id, int)
+            blocks
+            and isinstance(session_id, int)
             and isinstance(ask_key, str)
             and ask_key.strip()
         ):
@@ -1913,17 +2007,18 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _research_message(self, account: str) -> None:
-        """The Research Mode message start (ADR-0008): the gate is the
-        phase-2 shape exactly — the research conversation belongs to the
-        chat phase 1 recorded, so it needs an Account with at least
-        one chat today and never counts or checks the limit. The creating
-        call carries the ask's question and its phase-1 Evidence pool
-        (the session's founding goal and evidence); later calls carry
-        only the text. The turn runs on its own registry job and this
-        handler answers the turn identity immediately: 202 {"turn_id",
-        "session_id"} — the sheet polls /research/turn for state,
-        events, and the reply. Nothing is ever queued: a busy Account
-        (or a full registry) is rejected, not deferred."""
+        """The Research Mode message start (ADR-0008; gate per ADR-0015):
+        the Balance is the prepaid stop and nothing else — the research
+        conversation may be the sitting's (or the day's) first act, the
+        composer toggle routes the typed question straight here. It
+        never counts or checks the daily chat limit. The creating
+        call carries the question (the session's founding goal) and —
+        when a prior ask seeded one — its phase-1 Evidence pool; later
+        calls carry only the text. The turn runs on its own registry
+        job and this handler answers the turn identity immediately:
+        202 {"turn_id", "session_id"} — the sheet polls /research/turn
+        for state, events, and the reply. Nothing is ever queued: a
+        busy Account (or a full registry) is rejected, not deferred."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -2082,7 +2177,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(message)
 
-    def _proxy(self, method: str) -> None:
+    def _proxy(self, method: str, account: str = "") -> None:
         path = self.path.split("?", 1)[0]
         sys.stderr.write("%s - proxy %s %s\n" % (self.address_string(), method, path))
         sys.stderr.flush()
@@ -2096,8 +2191,19 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # The recall body is validated, not forwarded blind
             # (ADR-0010): the query is required and the datasets are the
             # ask's Book selection intersected with the Book set — a
-            # browser never names an upstream dataset outside it.
-            patched = self._validated_recall_body(body)
+            # browser never names an upstream dataset outside it. The
+            # account rides for the follow-up rewrite; the meter taps
+            # that one composer call (a rewrite is real spend and the
+            # ledger watches it like every other).
+            set_meter(
+                lambda prompt, reply: record_composer_call(
+                    account, "composer", prompt, reply
+                )
+            )
+            try:
+                patched = self._validated_recall_body(body, account)
+            finally:
+                set_meter(None)
             if patched is None:
                 return
             body = patched
@@ -2122,10 +2228,14 @@ class SessionHandler(SimpleHTTPRequestHandler):
         )
         self._relay(request, "cognee")
 
-    def _validated_recall_body(self, raw: bytes):
+    def _validated_recall_body(self, raw: bytes, account: str = ""):
         """The recall POST's patched body bytes, or None after answering
         400. The body is already read here, so rejections use _send_json
-        (never the draining _json_error — a second read would block)."""
+        (never the draining _json_error — a second read would block).
+        The sitting's id rides to the Session store, never to Cognee;
+        a short follow-up over an existing sitting is rewritten into a
+        self-contained query before the relay (ADR-0015) — any failure
+        answers the raw question."""
         try:
             payload = json.loads(raw or b"{}")
             query = payload["query"]
@@ -2134,10 +2244,33 @@ class SessionHandler(SimpleHTTPRequestHandler):
         except (ValueError, KeyError, TypeError):
             self._send_json(400, {"detail": "پرسش را بنویسید."})
             return None
+        session_id = payload.pop("session_id", None)
+        payload.pop("history", None)
+        query = self._contextual_query(account, session_id, query)
+        payload["query"] = query
         datasets = validated_datasets(payload.get("datasets"))
         if datasets is not None:
             payload["datasets"] = datasets
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    def _contextual_query(self, account: str, session_id, query: str) -> str:
+        """A follow-up's self-contained search query (ADR-0015): when
+        the sitting has earlier turns and the question is short, ONE
+        fast glm-5.3-flash call rewrites it over the sitting's recent
+        turns — «بیشتر توضیح بده» alone retrieves noise, the rewritten
+        form retrieves the subject under discussion. Every failure is
+        the raw question: the store silent, the endpoint down, the
+        short timeout — the rewrite is a retrieval hint, never a gate,
+        and the sheet's displayed question is always the user's own
+        words."""
+        history = _conversation_tail(account, session_id)
+        if not history or len(query.split()) > REWRITE_MAX_WORDS:
+            return query
+        try:
+            return rewrite_followup_query(query, history)
+        except Exception:
+            sys.stderr.write("follow-up rewrite failed; raw query rides\n")
+            return query
 
 
 # The embedder is frozen into the stored vectors (ADR-0004). The 2026-09-12

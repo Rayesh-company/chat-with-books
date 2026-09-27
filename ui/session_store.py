@@ -152,6 +152,41 @@ def append_message(
             con.close()
 
 
+def _settled_over(incoming: dict, existing_json: str) -> bool:
+    """True when the incoming settle would DOWNGRADE the stored answer
+    (the arrive-order race, 2026-09-27 operator report): the two phase
+    endpoints settle the same ask_key from two concurrent threads, and
+    whoever lands last used to win — so a slow picker's quote-only
+    snapshot could overwrite the settled article (the reload then
+    showed only quotes and page labels), and a failed phase 2's empty
+    blocks could erase the row entirely. The store now judges shapes,
+    not arrival: the article always upgrades the snapshot, an empty
+    write never erases a stored answer, and equal shapes keep
+    latest-wins. An unreadable stored payload is never a downgrade —
+    the incoming write proceeds."""
+    try:
+        existing = json.loads(existing_json)
+    except ValueError:
+        return False
+    if not isinstance(existing, dict):
+        return False
+    existing_blocks = existing.get("blocks")
+    existing_rich = isinstance(existing_blocks, list) and len(existing_blocks) > 0
+    incoming_blocks = incoming.get("blocks")
+    incoming_empty = not (
+        isinstance(incoming_blocks, list) and len(incoming_blocks) > 0
+    )
+    if incoming_empty and existing_rich:
+        return True
+    if (
+        incoming.get("selection_snapshot") is True
+        and existing_rich
+        and not existing.get("selection_snapshot")
+    ):
+        return True
+    return False
+
+
 def settle_ask(
     account: str, session_id: int, ask_key: str, payload: dict
 ) -> dict | None:
@@ -166,7 +201,10 @@ def settle_ask(
     snapshot) INSERTS the assistant row; a later settle for the SAME
     ask_key (the phase-2 article) UPDATES that row in place — the
     resumed transcript shows the same single answer per ask the live
-    sheet always did, now guaranteed to exist. A Session that is not
+    sheet always did, now guaranteed to exist. An UPDATE that would
+    downgrade the stored answer (a snapshot arriving after the article,
+    an empty write after any content — _settled_over) is refused: the
+    row keeps its richer shape. A Session that is not
     the caller's answers None; an empty ask_key is refused the same
     way (nothing to be idempotent about)."""
     if not isinstance(ask_key, str) or not ask_key.strip():
@@ -188,6 +226,16 @@ def settle_ask(
                 (session_id, ask_key),
             ).fetchone()
             if existing is not None:
+                current = con.execute(
+                    "SELECT payload FROM session_messages WHERE id = ?",
+                    (existing[0],),
+                ).fetchone()
+                if current is not None and _settled_over(
+                    payload, current[0]
+                ):
+                    # The downgrade keeps the stored answer whole; the
+                    # sitting's freshness still moves — the ask happened.
+                    return get_session(account, session_id, _con=con)
                 con.execute(
                     "UPDATE session_messages SET payload = ?, ts = ?"
                     " WHERE id = ?",
