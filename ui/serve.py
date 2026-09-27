@@ -934,9 +934,19 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         cache_key = f"{dataset}-p{page_number}-w{width}.png"
         cache_file = RENDER_CACHE_DIR / cache_key
+        started = time.monotonic()
         try:
             body = cache_file.read_bytes()
         except OSError:
+            body = None
+        if body is not None:
+            # The fast path's own witness (ADR-0017): a warm cache hit
+            # answers here, before the lock, and is logged like a miss.
+            sys.stderr.write(
+                f"render {dataset} p{page_number} w{width}"
+                f" hit {time.monotonic() - started:.3f}s\n"
+            )
+        else:
             body = self._render_book_page(dataset, page_number, width, cache_file)
             if body is None:
                 self._drain_request_body()
