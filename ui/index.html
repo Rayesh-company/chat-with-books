@@ -1783,8 +1783,20 @@
       }
 
       @media (max-width: 719.98px) {
-        .topbar p.status {
+        /* The service-ping line yields on a phone; the session's cost
+           never does (impeccable critique, 2026-09-28): every ask
+           spends, and a phone was the one surface where the money
+           moved invisibly. The cost line folds to a compact chip. */
+        .topbar p.status#status {
           display: none;
+        }
+
+        .topbar p.status#usage-live {
+          font-size: 0.72rem;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 9.5rem;
         }
 
         h1#session-title {
@@ -2457,7 +2469,9 @@
         if (elapsedEl) elapsedEl.hidden = true;
         if (ttftEl) ttftEl.hidden = true;
         sessionTitleEl.textContent = session.title || "نشست";
-        bookChipEl.textContent = "کتاب";
+        // The sitting's book is its identity (the critique's stub):
+        // the session row carries the book id — name it, never «کتاب».
+        bookChipEl.textContent = BOOK_TITLES[session.book] || session.book || "کتاب";
         bookChipEl.hidden = false;
         threadListEl.replaceChildren();
         for (const message of session.messages || []) {
@@ -2652,7 +2666,7 @@
         threadListEl.hidden = false;
         composerDock.hidden = false;
         sessionTitleEl.textContent = BOOK_TITLES[bookDoc] || bookDoc;
-        bookChipEl.textContent = "کتاب";
+        bookChipEl.textContent = BOOK_TITLES[bookDoc] || bookDoc;
         bookChipEl.hidden = false;
         if (seedQuestion) {
           questionEl.value = seedQuestion;
