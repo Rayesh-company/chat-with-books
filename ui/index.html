@@ -120,24 +120,15 @@
         --backdrop: rgba(4, 7, 12, 0.62);
       }
 
-      @media (prefers-color-scheme: dark) {
-        :root:not([data-theme="light"]) {
-          --bg: #101c1f;
-          --surface: #18292d;
-          --raised: #20343a;
-          --rule: #3a5054;
-          --ink: #e6eae0;
-          --mute: #9fb2a8;
-          --clay: #d9743a;
-          --clay-soft: rgba(217, 116, 58, 0.16);
-          --ok: #6cb28d;
-          --bad: #d68f8f;
-          --bad-soft: rgba(214, 143, 143, 0.12);
-          --focus: #8ec4de;
-          --shadow: rgba(0, 0, 0, 0.5);
-          --backdrop: rgba(4, 8, 8, 0.55);
-        }
-      }
+      /* No prefers-color-scheme block here, deliberately. The head boot
+         script maps the system preference onto data-theme before first
+         paint, and a media block at :root-specificity would tie with
+         :root[data-theme="dark"] and win by source order — the retired
+         stage-1 teal/orange palette rode exactly that tie over the
+         approved night manuscript on every system-dark device
+         (impeccable critique, 2026-09-28: computed --clay was #d9743a
+         with data-theme="dark" set). System dark reaches the tokens
+         above through the boot script alone. */
 
       * {
         box-sizing: border-box;
