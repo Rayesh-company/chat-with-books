@@ -6,12 +6,6 @@
     <meta name="theme-color" content="#d8cbae" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#141821" media="(prefers-color-scheme: dark)" />
     <title>نشست · طرح کلی اندیشۀ اسلامی در قرآن · انسان ۲۵۰ ساله</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;700&display=swap"
-      rel="stylesheet"
-    />
     <script>
       // The theme before first paint: no flash of the wrong paper.
       (function () {
@@ -30,6 +24,35 @@
       })();
     </script>
     <style>
+      /* The UI's own Vazirmatn, self-hosted: the Google-CDN link is
+         gone (impeccable critique, 2026-09-28) — an Iran-based audience
+         should not lean on fonts.googleapis.com when the woff2 files
+         already ride the app (the same copies the Books' substituted
+         families below resolve to). */
+      @font-face {
+        font-family: "Vazirmatn";
+        src: url("/vendor/fonts/Vazirmatn-Regular.woff2") format("woff2");
+        font-weight: 400;
+        font-style: normal;
+        font-display: swap;
+      }
+      /* The sheet's mid-weight rules map onto the Regular file: no
+         synthesis between the two vendored weights — faux-bold shatters
+         Persian counters, and the CDN's 500 is not worth a fetch. */
+      @font-face {
+        font-family: "Vazirmatn";
+        src: url("/vendor/fonts/Vazirmatn-Regular.woff2") format("woff2");
+        font-weight: 500;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "Vazirmatn";
+        src: url("/vendor/fonts/Vazirmatn-Bold.woff2") format("woff2");
+        font-weight: 700;
+        font-style: normal;
+        font-display: swap;
+      }
       /* The Books' non-embedded Iranian fonts, substituted with the
          vendored Vazirmatn under their ORIGINAL family names: pdf.js's
          canvas draws those pages with ctx.font = '"wNazanin", …' — the
@@ -743,6 +766,11 @@
 
       .doc-para {
         margin: 0 0 0.85rem;
+        /* The Quoted answer's document inherits nothing: without this
+           it sat at Vazirmatn's default leading — the tightest text on
+           the sheet while phase 1 reads at 1.85 (impeccable critique,
+           2026-09-28). Persian's ascenders/descenders need the room. */
+        line-height: 1.9;
       }
 
       .cite-pages {
@@ -832,7 +860,9 @@
         margin: 0;
         color: var(--clay);
         font-size: 0.8rem;
-        letter-spacing: 0.08em;
+        /* No letter-spacing: tracking breaks Persian's connected script
+           (impeccable critique, 2026-09-28) — cursive joins are the
+           letterforms, not decoration between them. */
       }
 
       .hero-title {
@@ -1170,7 +1200,6 @@
         display: block;
         color: var(--mute);
         font-size: 0.74rem;
-        letter-spacing: 0.02em;
       }
 
       .map-sec .map-lines {
