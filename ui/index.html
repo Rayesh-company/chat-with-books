@@ -674,6 +674,14 @@
         font-size: 0.95rem;
       }
 
+      /* The streaming draft (issue #28 revisited, 2026-09-28): the
+         deltas paint here while the run bills, visibly subordinate —
+         the settle's Quote selection / quoted-answer renderers retire
+         it and remain the only paths that present prose as the answer. */
+      .answer.draft-stream {
+        opacity: 0.72;
+      }
+
       .empty {
         color: var(--mute);
       }
@@ -4768,8 +4776,37 @@
           });
           const ctype = res.headers.get("Content-Type") || "";
           if (ctype.includes("text/event-stream")) {
+            let preview = "";
+            let draftTimer = null;
             let streamError = null;
             let gotFinal = false;
+            // The draft retires at the settle: whatever the delta paint
+            // shows is subordinate (.answer.draft-stream) and unverified —
+            // the Quote selection / quoted-answer renderers below remain
+            // the only paths that present prose as the answer. This
+            // revisits issue #28 deliberately: a frozen sheet read as a
+            // hang while the run billed (impeccable critique, 2026-09-28);
+            // the #28 contract itself — the settle paths own the answer —
+            // is untouched and still doc-locked.
+            const retireDraft = () => {
+              if (draftTimer) {
+                clearTimeout(draftTimer);
+                draftTimer = null;
+              }
+              answerEl.classList.remove("draft-stream");
+            };
+            const paintDraft = () => {
+              answerEl.classList.add("draft-stream");
+              renderMarkdown(answerEl, preview);
+              // Follow the growth only while the reader already sits at
+              // the bottom; a scrolled-up reader keeps their place.
+              if (
+                window.innerHeight + window.scrollY >=
+                document.documentElement.scrollHeight - 160
+              ) {
+                scrollThreadEnd(false);
+              }
+            };
             await readSse(res, (name, data) => {
               if (name === "stage") {
                 setText(
@@ -4780,19 +4817,29 @@
                   "empty"
                 );
               } else if (name === "delta") {
-                // The prose is not painted (issue #28): deltas still
-                // arrive and still drive the TTFT readout — «نخستین
-                // توکن» is first token ARRIVAL.
+                preview += JSON.parse(data).text || "";
                 markFirstToken();
+                if (draftTimer) return; // a throttled paint is already due
+                if (!answerEl.classList.contains("draft-stream")) {
+                  paintDraft(); // the first token paints at once
+                }
+                draftTimer = setTimeout(() => {
+                  draftTimer = null;
+                  paintDraft();
+                }, 200);
               } else if (name === "reset") {
+                preview = "";
+                retireDraft();
                 setText(answerEl, "در حال تولید پاسخ…", "empty");
               } else if (name === "error") {
                 streamError = new Error(JSON.parse(data).message || "خطا در جریان پاسخ.");
               } else if (name === "final") {
                 gotFinal = true;
+                retireDraft();
                 renderFinal(textOf(JSON.parse(data).results));
               }
             });
+            retireDraft();
             if (!gotFinal) {
               throw streamError || new Error("پاسخ نیامد.");
             }

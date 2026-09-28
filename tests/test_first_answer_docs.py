@@ -82,20 +82,31 @@ def test_sheet_calls_the_quote_selection_picker_with_the_pool():
     assert "در حال انتخاب نقل‌قول‌ها" in html
 
 
-def test_sheet_no_longer_paints_the_streamed_prose_as_the_phase1_answer():
-    # Issue #28: deltas still arrive and still drive the TTFT readout,
-    # but the prose preview is no longer painted; the prose is kept for
-    # /quoted-answer's answer field, never rendered as the first answer.
+def test_sheet_paints_the_streamed_prose_as_a_draft_the_settle_retires():
+    # Issue #28 revisited (impeccable critique, 2026-09-28): the frozen
+    # sheet read as a hang while the run billed, so the deltas paint —
+    # but as a visibly subordinate draft (.answer.draft-stream), never
+    # as the answer. The #28 contract stands unchanged: the settle paths
+    # (Quote selection / quoted-answer / prose fallback) own the answer,
+    # the draft retires when `final` lands, and TTFT still comes from
+    # markFirstToken on arrival.
     html = UI.read_text(encoding="utf-8")
-    assert "renderMarkdown(answerEl, preview)" not in html
-    # The write-only accumulator is gone entirely (full-spec review,
-    # 2026-09-12): nothing accumulates the prose, TTFT comes from
-    # markFirstToken alone.
-    assert "preview" not in html
+    # The delta branch accumulates the prose and paints it throttled.
+    assert "preview += JSON.parse(data).text" in html
+    assert "answerEl.classList.add(\"draft-stream\")" in html
+    assert "renderMarkdown(answerEl, preview)" in html
     assert "markFirstToken" in html
-    # The selection lands through the picker call; phase 2 keeps its
-    # exact payload (the raw split answer, locked verbatim in
-    # test_quoted_answer.py).
+    # The subordinate styling exists — the draft must never read as the
+    # finished answer.
+    assert ".answer.draft-stream" in html
+    # The retire points: `final` drops the class before the settle
+    # renderers run, and the SSE tail retires it unconditionally.
+    assert "retireDraft" in html
+    assert html.index("retireDraft") < html.index(
+        "renderFinal(textOf(JSON.parse(data).results))"
+    )
+    # The selection still lands through the picker call; phase 2 keeps
+    # its exact payload (locked verbatim in test_quoted_answer.py).
     assert "renderQuoteSelection(query, prose, citations)" in html
 
 
