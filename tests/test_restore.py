@@ -19,12 +19,14 @@ RESTORE_SCRIPT = REPO_ROOT / "scripts" / "restore.sh"
 README = REPO_ROOT / "README.md"
 DRILL_DOC = REPO_ROOT / "docs" / "restore-drill.md"
 
-# The six members a backup.sh archive must carry — a partial archive restores
-# a partial memory, so the drill refuses one and names what is missing.
+# The seven members a backup.sh archive must carry — a partial archive
+# restores a partial memory, so the drill refuses one and names what is
+# missing.
 ARCHIVE_MEMBERS = (
     "cognee_db.dump",
     "usage.sqlite3",
     "research.sqlite3",
+    "chats.sqlite3",
     "env/.env",
     "books/tarhe-kolli.pdf",
     "books/70143-336.pdf",
@@ -53,6 +55,7 @@ def make_archive(tmp_path: Path, missing: str | None = None) -> Path:
         "cognee_db.dump": b"PGDMP-stand-in",
         "usage.sqlite3": b"SQLite format 3\x00 stand-in",
         "research.sqlite3": b"SQLite format 3\x00 stand-in",
+        "chats.sqlite3": b"SQLite format 3\x00 stand-in",
         "env/.env": b"LLM_API_KEY=stand-in-not-a-real-key\n",
         "books/tarhe-kolli.pdf": b"%PDF-1.7 stand-in",
         "books/70143-336.pdf": b"%PDF-1.7 stand-in",
@@ -69,7 +72,7 @@ def make_archive(tmp_path: Path, missing: str | None = None) -> Path:
     return archive
 
 
-def test_dry_run_verifies_all_six_members_and_prints_the_plan(tmp_path):
+def test_dry_run_verifies_all_seven_members_and_prints_the_plan(tmp_path):
     """A complete archive passes the seam: every member named, the plan
     printed, and nothing anywhere touched."""
     archive = make_archive(tmp_path)

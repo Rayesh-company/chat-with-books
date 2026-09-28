@@ -63,10 +63,11 @@ case "${1:-}" in
     echo "plan: docker exec ${POSTGRES_CONTAINER} pg_dump -Fc -U ${POSTGRES_USER} ${POSTGRES_DB} -> cognee_db.dump"
     echo "plan: docker cp ${SESSION_CONTAINER}:/data/usage.sqlite3 -> usage.sqlite3"
     echo "plan: docker cp ${SESSION_CONTAINER}:/data/research.sqlite3 -> research.sqlite3"
+    echo "plan: docker cp ${SESSION_CONTAINER}:/data/chats.sqlite3 -> chats.sqlite3"
     echo "plan: .env -> env/.env"
     echo "plan: books/ -> books/"
     echo "plan: code -> code.tar.gz (git archive HEAD; a tree tar on a no-git VPS tree)"
-    echo "plan: tar czf the six into ${ARCHIVE_NAME}, then prune to ${RETENTION}"
+    echo "plan: tar czf the seven into ${ARCHIVE_NAME}, then prune to ${RETENTION}"
     check_prerequisites
     echo "backup: dry-run ok — prerequisites hold, nothing was touched"
     ;;
@@ -95,6 +96,7 @@ case "${1:-}" in
     # wrong drive. A subshell + relative path is portable on both.
     (cd "$TMPDIR_B" && docker cp "${SESSION_CONTAINER}:/data/usage.sqlite3" usage.sqlite3)
     (cd "$TMPDIR_B" && docker cp "${SESSION_CONTAINER}:/data/research.sqlite3" research.sqlite3)
+    (cd "$TMPDIR_B" && docker cp "${SESSION_CONTAINER}:/data/chats.sqlite3" chats.sqlite3)
 
     echo "backup: the keys, the Books, the code"
     cp "${REPO_DIR}/.env" "${TMPDIR_B}/env/.env"

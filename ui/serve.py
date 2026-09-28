@@ -102,6 +102,9 @@ try:
         run_dive_round,
     )
     from ui.report import research_session_report
+    from ui import chat_store
+    from ui.chat_store import latest_chat
+    from ui.ask import ask_pool
     from ui.research import (
         COMMAND_AUDIT,
         COMMAND_BRIEF,
@@ -180,6 +183,9 @@ except ImportError:  # the container runs this file as a script beside the modul
         verify_login,
     )
     from report import research_session_report
+    from ask import ask_pool
+    from chat_store import latest_chat
+    import chat_store
     from composer import (
         COMPOSER_MAX_TOKENS,
         COMPOSER_TIMEOUT,
@@ -531,6 +537,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         if path == "/usage/live":
             self._usage_live()
+            return
+        if path == "/chat/latest":
+            self._chat_latest()
             return
         if path.startswith("/books/"):
             self._book_file(path)
@@ -965,6 +974,21 @@ class SessionHandler(SimpleHTTPRequestHandler):
         if path == "/auth/accounts":
             self._auth_create_account()
             return
+        if path == "/ask":
+            phone = self._gate_phone()
+            if phone is None:
+                return
+            # A new ask owns the sheet exactly like the recall proxy
+            # before it (issue #26): the phone's in-flight research
+            # turns abort cooperatively and their sessions close.
+            abort_phone_research(phone)
+            # The ask's own ledger entry (T22): input-side size
+            # estimate, like the recall POST always recorded.
+            record_size_estimate(
+                phone, "ask", int(self.headers.get("Content-Length", "0") or "0")
+            )
+            self._ask(phone)
+            return
         if path == "/api/v1/recall":
             phone = self._gate_phone()
             if phone is None:
@@ -999,7 +1023,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 )
             )
             try:
-                self._quoted_answer()
+                self._quoted_answer(phone)
             finally:
                 set_meter(None)
             return
@@ -1013,7 +1037,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 )
             )
             try:
-                self._quote_selection()
+                self._quote_selection(phone)
             finally:
                 set_meter(None)
             return
@@ -1027,7 +1051,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 )
             )
             try:
-                self._recall_more()
+                self._recall_more(phone)
             finally:
                 set_meter(None)
             return
@@ -1056,7 +1080,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self._drain_request_body()
         self.send_error(404, "Not found")
 
-    def _quoted_answer(self) -> None:
+    def _quoted_answer(self, phone: str) -> None:
         """Compose the Quoted answer; empty blocks = fallback."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
@@ -1073,6 +1097,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 and isinstance(source.get("reference"), str)
                 and isinstance(source.get("passage"), str)
             ]
+            chat_id = payload.get("chat_id")
+            if not isinstance(chat_id, str):
+                chat_id = ""
             if not isinstance(question, str) or not question.strip() or not sources:
                 raise ValueError("question and sources are required")
             if not isinstance(answer, str):
@@ -1081,6 +1108,11 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self.send_error(400, "Bad request")
             return
         blocks, truncated = compose_quoted_answer(question, answer, sources)
+        if chat_id:
+            # The reload's record (ADR-0014): the guarded document that
+            # rendered is the document the restore re-renders — a
+            # phone-guarded write, so a foreign chat_id lands nowhere.
+            chat_store.update_quoted(chat_id, phone, blocks, truncated)
         body = json.dumps(
             {"blocks": blocks, "truncated": truncated}, ensure_ascii=False
         ).encode("utf-8")
@@ -1089,6 +1121,49 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _ask(self, phone: str) -> None:
+        """The retrieval-only ask (ADR-0014): the first answer's Evidence
+        pool with NO LLM completion in the loop — one only_context search
+        per selected Book over the main Cognee service, so the pool is
+        the hybrid retrieval's own passages every time, in seconds. The
+        sheet's first answer stays retrieval (the Quote selection over
+        this pool) and can never arrive as a conclusive essay. The ask
+        mints its chat row here — the picker, the Quoted answer, and the
+        widen update it by the chat_id this reply carries, and a reload
+        restores the whole sheet from it. A malformed body answers 400; a
+        searcher that finds nothing answers 200 {"sources": []} — the
+        honest empty the sheet's no-citation note consumes, never a
+        5xx."""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            query = payload["query"]
+            if not isinstance(query, str) or not query.strip():
+                raise ValueError("query is required")
+            datasets = validated_datasets(payload.get("datasets"))
+        except (ValueError, KeyError, TypeError):
+            # The body is already read above, so _send_json is safe.
+            self._send_json(400, {"detail": "پرسش را بنویسید."})
+            return
+        sources = ask_pool(query.strip(), datasets)
+        chat_id = secrets.token_hex(8)
+        chat_store.create_chat(chat_id, phone, query.strip(), datasets, sources)
+        self._send_json(
+            200,
+            {"chat_id": chat_id, "sources": sources, "pool_size": len(sources)},
+        )
+
+    def _chat_latest(self) -> None:
+        """The reload's restore read (ADR-0014): the phone's newest ask
+        row — question, Book selection, pool, Quote selection, and the
+        Quoted answer's blocks — or null when the Account never asked.
+        No LLM, no side effects; the identity comes from the login
+        cookie (ADR-0013)."""
+        phone = resolve_identity(self)
+        if phone is None:
+            return
+        self._send_json(200, {"chat": latest_chat(phone)})
 
     def _evidence_fallback(self) -> None:
         """The phase-1 citation fallback (ADR-0011): the first message's
@@ -1115,7 +1190,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
         sources = dive_recall(question.strip(), datasets)
         self._send_json(200, {"sources": sources})
 
-    def _recall_more(self) -> None:
+    def _recall_more(self, phone: str) -> None:
         """The «جست‌وجوی بیشتر» operation (ADR-0010): one broaden call
         reasons out the question's not-yet-covered facets, the dive
         kernel's pinned searchers run them on the second service, and
@@ -1151,6 +1226,16 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self._send_json(400, {"detail": "پرسش و شواهد فعلی را بفرستید."})
             return
         fresh = recall_more(question.strip(), sources, datasets)
+        if fresh:
+            # The widen's growth is part of the ask's record (ADR-0014):
+            # the restored sheet's pool is the merged one, so the store
+            # grows by the same fresh passages the reply carries —
+            # phone-guarded, keyed by the chat_id the ask minted.
+            chat_id = payload.get("chat_id")
+            if isinstance(chat_id, str) and chat_id:
+                chat_store.update_pool(
+                    chat_id, phone, sources + fresh
+                )
         body = json.dumps({"sources": fresh}, ensure_ascii=False).encode(
             "utf-8"
         )
@@ -1160,17 +1245,19 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _quote_selection(self) -> None:
+    def _quote_selection(self, phone: str) -> None:
         """Pick the Quote selection (ADR-0006, issue #28): the pool
         exactly as the sheet parsed it, one picker call, the guarded
         selections back. The gate is phase 2's shape — the picker
         belongs to the chat phase 1 recorded — so it needs a phone with
-        at least one chat today and never records or counts one. A
-        malformed body or an empty pool answers 400 (a JSON detail, the
-        gate's shape) before any upstream call; a picker failure or a
-        below-floor selection answers 200 {"selections": []} — the one
-        uniform empty shape the sheet's prose fallback consumes, never
-        a 5xx."""
+        at least one chat today and never records or counts one. The
+        kept selections are the ask's record too (ADR-0014): keyed by
+        the body's chat_id, phone-guarded, so a reload re-renders the
+        same first answer. A malformed body or an empty pool answers
+        400 (a JSON detail, the gate's shape) before any upstream call;
+        a picker failure or a below-floor selection answers 200
+        {"selections": []} — the one uniform empty shape the sheet's
+        honest note consumes, never a 5xx."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -1185,6 +1272,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 and isinstance(source.get("reference"), str)
                 and isinstance(source.get("passage"), str)
             ]
+            chat_id = payload.get("chat_id")
+            if not isinstance(chat_id, str):
+                chat_id = ""
             if not isinstance(question, str) or not question.strip() or not sources:
                 raise ValueError("question and sources are required")
         except (ValueError, KeyError, TypeError):
@@ -1195,6 +1285,8 @@ class SessionHandler(SimpleHTTPRequestHandler):
             )
             return
         selections = pick_quote_selection(question, sources)
+        if chat_id and selections:
+            chat_store.update_selections(chat_id, phone, selections)
         self._send_json(200, {"selections": selections, "pool_size": len(sources)})
 
     def _research_turn_status(self) -> None:

@@ -1,13 +1,14 @@
 # The Session sheet: stdlib-only, so the image is a bare interpreter plus
 # the sheet it serves and the modules serve.py facades (guard, quotas,
-# composer, picker, dive, research, research_store, accounts, report).
+# composer, picker, dive, ask, chat_store, research, research_store,
+# accounts, report).
 # COGNEE_URL / NEXT_TIER_URL are set in compose to the container-network
 # service names; the sheet must bind 0.0.0.0 to be reachable through the
 # published port.
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY serve.py guard.py quotas.py composer.py picker.py dive.py research.py research_store.py recall_more.py page_resolver.py accounts.py report.py ledger.py index.html ./
+COPY serve.py guard.py quotas.py composer.py picker.py dive.py ask.py chat_store.py research.py research_store.py recall_more.py page_resolver.py accounts.py report.py ledger.py index.html ./
 # The reader's client-side PDF engine (pdf.js, Apache-2.0) — vendored so
 # the sheet works on a LAN with no CDN (ADR-0007).
 COPY vendor /app/vendor

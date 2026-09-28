@@ -11,7 +11,7 @@ from tests.conftest import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from ui import serve  # noqa: E402
+from ui import picker, serve  # noqa: E402
 from tests.helpers import (  # noqa: E402
     OTHER_PASSAGE,
     POOL,
@@ -131,12 +131,45 @@ def test_pick_caps_survivors_at_twelve():
     assert len(selections) == 12
 
 
-def test_pick_below_the_floor_returns_empty():
-    # One verbatim survivor is under the floor of four — the sheet falls
-    # back to the prose render, so the picker replies nothing.
-    reply = [{"text": SENTENCES[0], "source": 0}, {"text": PARAPHRASE, "source": 0}]
-    selections, _ = run_pick_with_replies([picker_reply(reply)])
+def test_picker_prompt_windows_long_passages():
+    # ADR-0014: the picker reads a bounded window of each passage — the
+    # full-chunk pool overloaded the model into degenerate replies —
+    # while the guard and phase 2 keep the full text.
+    long_passage = POOL_PASSAGE + ("تک" * 2000)
+    pool = [
+        {"reference": POOL[0]["reference"], "passage": long_passage},
+        POOL[1],
+    ]
+    prompt = serve.build_picker_prompt("پرسش؟", pool)
+    assert picker.PICKER_PASSAGE_WINDOW == 1200
+    # The window rides (the head of the passage), the bulk does not.
+    assert long_passage[:100] in prompt
+    assert "تک" * 1300 not in prompt
+    # Numbering is unchanged — the selections' indices stay the pool's.
+    assert "[0]" in prompt and "[1]" in prompt
+
+
+def test_pick_below_the_floor_gets_one_repair_call_then_empty():
+    # One verbatim survivor is under the floor of four: the picker gets
+    # EXACTLY ONE repair call (the writer's repair shape, ADR-0010) —
+    # two below-floor reads still answer empty, now after two calls.
+    below_floor = [{"text": SENTENCES[0], "source": 0}, {"text": PARAPHRASE, "source": 0}]
+    selections, captured = run_pick_with_replies(
+        [picker_reply(below_floor), picker_reply(below_floor)]
+    )
     assert selections == []
+    assert len(captured["payloads"]) == 2
+
+
+def test_pick_repair_call_can_clear_the_floor():
+    # A below-floor first read and a floor-clearing repair: the better
+    # attempt rides, labeled like any other keep.
+    below_floor = [{"text": SENTENCES[0], "source": 0}, {"text": PARAPHRASE, "source": 0}]
+    selections, captured = run_pick_with_replies(
+        [picker_reply(below_floor), picker_reply(verbatim_selections(4))]
+    )
+    assert selections == KEPT_WITH_LABELS
+    assert len(captured["payloads"]) == 2
 
 
 def test_pick_failure_returns_empty():
@@ -265,7 +298,10 @@ def test_quote_selection_picker_failure_answers_empty_with_200(tmp_path):
 
 def test_quote_selection_below_the_floor_answers_empty_with_200(tmp_path):
     composer = FakeComposer(
-        [picker_reply([{"text": SENTENCES[0], "source": 0}, {"text": PARAPHRASE, "source": 0}])]
+        [
+            picker_reply([{"text": SENTENCES[0], "source": 0}, {"text": PARAPHRASE, "source": 0}]),
+            picker_reply([{"text": SENTENCES[0], "source": 0}, {"text": PARAPHRASE, "source": 0}]),
+        ]
     )
     base, server, original = with_gate(tmp_path, composer)
     phone = "09120000025"

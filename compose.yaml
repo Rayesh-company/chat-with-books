@@ -203,6 +203,10 @@ services:
       # other stores on the same volume — a container rebuild must not
       # throw the Accounts' نشست history away.
       SESSIONS_DB: /data/sessions.sqlite3
+      # The ask chat store (ADR-0014): the reload's restore row -
+      # question, pool, Quote selection, Quoted answer - on the same
+      # persisted volume, beside the research store it mirrors.
+      SESSION_CHAT_DB: /data/chats.sqlite3
     volumes:
       - session_quota:/data
       # The Book set's PDFs + page indexes (ADR-0007), served by

@@ -187,6 +187,64 @@
         margin: 1rem 0 0;
       }
 
+      /* The Research Mode switch (default off): a track-and-knob toggle
+         on the sheet's own palette — ink track when off, clay when on —
+         with a real checkbox underneath for keyboard and screen readers
+         (:focus-visible rings the track). */
+      .research-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 1rem 0 0;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .research-toggle input {
+        position: absolute;
+        opacity: 0;
+        width: 1px;
+        height: 1px;
+      }
+
+      .research-toggle .toggle-track {
+        display: inline-flex;
+        align-items: center;
+        width: 2.4rem;
+        height: 1.25rem;
+        padding: 0.15rem;
+        background: var(--rule);
+        border-radius: 999px;
+        transition: background 0.15s ease;
+      }
+
+      .research-toggle .toggle-knob {
+        width: 0.95rem;
+        height: 0.95rem;
+        border-radius: 50%;
+        background: var(--sheet);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+        transition: transform 0.15s ease;
+      }
+
+      .research-toggle input:checked + .toggle-track {
+        background: var(--clay);
+      }
+
+      .research-toggle input:checked + .toggle-track .toggle-knob {
+        transform: translateX(-1.15rem);
+      }
+
+      .research-toggle input:focus-visible + .toggle-track {
+        outline: 2px solid var(--focus);
+        outline-offset: 3px;
+      }
+
+      .research-toggle .toggle-name {
+        font-size: 0.85rem;
+        color: var(--mute);
+      }
+
       button {
         font: inherit;
         font-weight: 700;
@@ -1150,10 +1208,20 @@
           maxlength="2000"
           placeholder="پرسش خود را بنویسید"
         ></textarea>
+        <!-- The Research Mode switch (the operator's 2026-09-23 call):
+             OFF — the ask answers with the retrieval phases only; ON —
+             the ask also opens the guided research conversation on the
+             same Evidence pool. The default is off: research stays an
+             opt-in mode, never a longer first answer (CONTEXT.md's
+             حالت پژوهش). -->
+        <label class="research-toggle" for="research-mode">
+          <input type="checkbox" id="research-mode" />
+          <span class="toggle-track" aria-hidden="true"><span class="toggle-knob"></span></span>
+          <span class="toggle-name">حالت پژوهش</span>
+        </label>
         <div class="actions">
           <button type="submit" id="ask-btn">بپرس</button>
           <span class="elapsed" id="elapsed" hidden></span>
-          <span class="elapsed" id="ttft" hidden></span>
         </div>
       </form>
 
@@ -1320,7 +1388,7 @@
       const questionEl = document.getElementById("question");
       const buttonEl = document.getElementById("ask-btn");
       const elapsedEl = document.getElementById("elapsed");
-      const ttftEl = document.getElementById("ttft");
+      const researchModeEl = document.getElementById("research-mode");
       const answerEl = document.getElementById("answer");
       const citationsEl = document.getElementById("citations");
       const citationsHeadingEl = document.getElementById("citations-heading");
@@ -1340,9 +1408,10 @@
       let citationRun = 0; // In-flight phase 2 fetches; aborted when a new ask starts.
       let quotedAbort = null;
       // The current ask's own state for «جست‌وجوی بیشتر» (ADR-0010):
-      // question, streamed prose (phase 2's framing), and the pool
-      // locator lines so far — grown when the widen returns fresh
-      // passages, then both answers re-run over the merged pool.
+      // question, the pool locator lines so far, the ask's chat_id (the
+      // store row the reload restores, ADR-0014), and whether this ask
+      // runs in Research Mode — grown when the widen returns fresh
+      // passages, then the first answer re-runs over the merged pool.
       let askState = null;
       let recallMoreBusy = false;
       // The current ask's question and Evidence pool — the seed of the
@@ -1443,66 +1512,17 @@
         localStorage.setItem("sessionPhone", phoneEl.value);
       });
       const phoneHeader = () => ({ "X-Session-Phone": phoneEl.value.trim() });
+      // The Research Mode switch starts OFF every first visit and keeps
+      // the operator's last choice after that — research is an opt-in
+      // mode, never a slower default first answer (2026-09-23 call).
+      researchModeEl.checked = localStorage.getItem("researchMode") === "on";
+      researchModeEl.addEventListener("change", () => {
+        localStorage.setItem("researchMode", researchModeEl.checked ? "on" : "off");
+      });
 
       function setText(el, text, className) {
         el.className = className;
         el.textContent = text;
-      }
-
-      // Phase-1 answers arrive as markdown (headings, bold, bullets);
-      // render that structure, never the literal #/** characters.
-      function markBold(el, text) {
-        const parts = String(text).split(/\*\*(.+?)\*\*/g);
-        parts.forEach((part, index) => {
-          if (index % 2) {
-            const strong = document.createElement("strong");
-            strong.textContent = part;
-            el.append(strong);
-          } else if (part) {
-            el.append(part);
-          }
-        });
-      }
-
-      function renderMarkdown(container, text) {
-        container.replaceChildren();
-        for (const block of String(text).split(/\n{2,}/)) {
-          const lines = block.split("\n").filter((line) => line.trim());
-          if (!lines.length) continue;
-          if (lines.every((line) => /^\s*[-*]\s+/.test(line))) {
-            const ul = document.createElement("ul");
-            for (const line of lines) {
-              const li = document.createElement("li");
-              markBold(li, line.replace(/^\s*[-*]\s+/, ""));
-              ul.append(li);
-            }
-            container.append(ul);
-            continue;
-          }
-          for (const line of lines) {
-            const heading = line.match(/^(#{1,4})\s+(.*)$/);
-            const el = document.createElement(
-              heading ? "h" + Math.min(heading[1].length + 2, 6) : "p"
-            );
-            markBold(el, heading ? heading[2] : line);
-            container.append(el);
-          }
-        }
-      }
-
-      function splitCitation(text) {
-        const marker = "Evidence:";
-        const at = text.indexOf(marker);
-        if (at === -1) {
-          return { answer: text.trim(), citations: [] };
-        }
-        const answer = text.slice(0, at).trim();
-        const rest = text.slice(at + marker.length).trim();
-        const citations = rest
-          .split(/\n-\s+/)
-          .map((item) => item.replace(/^[-\s]+/, "").trim())
-          .filter(Boolean);
-        return { answer, citations };
       }
 
       // An Evidence bullet is `locator: "quoted passage"`. The quoted
@@ -1694,7 +1714,7 @@
         return note;
       }
 
-      async function renderQuotedAnswer(question, answer, citations, onSettled) {
+      async function renderQuotedAnswer(question, chatId, citations, onSettled) {
         const run = citationRun;
         const sources = evidenceSources(citations);
         if (!sources.length) {
@@ -1719,7 +1739,11 @@
               "Content-Type": "application/json; charset=utf-8",
               ...phoneHeader(),
             },
-            body: JSON.stringify({ question, answer, sources }),
+            // No draft rides: the ask carries no streamed prose anymore
+            // (ADR-0014) — the writer frames from its own plan and the
+            // passages. The chat_id keys the store row the reload
+            // restores (the server keeps the guarded document).
+            body: JSON.stringify({ question, sources, chat_id: chatId }),
             signal: quotedAbort.signal,
           });
           refreshUsageLive();
@@ -1775,16 +1799,18 @@
         }
       }
 
-      // The Quote selection (ADR 0006, issue #28): the first answer is
-      // the Evidence pool's verbatim Book sentences — ten aimed,
-      // guarded 4-12 — picked server-side by EXACTLY ONE glm-5.3-flash
-      // call. The streamed prose is no longer the displayed answer (it
-      // still feeds the Quoted answer's framing), and an empty or
-      // failed selection falls back to the prose render: the sheet is
-      // never left empty. This runs in parallel with phase 2, which
-      // receives the same pool as its payload; each lands in its own
-      // tab. A new ask aborts this fetch with the rest (quotedAbort).
-      async function renderQuoteSelection(question, prose, citations) {
+      // The Quote selection (ADR 0006, issue #28; ADR 0014): the first
+      // answer is the Evidence pool's verbatim Book sentences — ten
+      // aimed, guarded 4-12 — picked server-side by EXACTLY ONE
+      // glm-5.3-flash call, and it is the ONLY first answer the sheet
+      // can show. There is no streamed prose to fall back to: an empty
+      // or failed selection lands the honest note and the pool's own
+      // citations stay visible below — a conclusive model answer never
+      // takes the first answer's place. This runs in parallel with
+      // phase 2, which receives the same pool as its payload; each
+      // lands in its own tab. A new ask aborts this fetch with the rest
+      // (quotedAbort).
+      async function renderQuoteSelection(question, chatId, citations) {
         const run = citationRun;
         const sources = evidenceSources(citations);
         answerEl.replaceChildren();
@@ -1792,12 +1818,12 @@
         status.className = "composer-status";
         status.textContent = "در حال انتخاب نقل‌قول‌ها…";
         answerEl.append(status);
-        const fallbackToProse = () => {
+        const selectionMissed = () => {
           answerEl.className = "answer";
-          renderMarkdown(answerEl, prose);
+          answerEl.replaceChildren();
           const note = document.createElement("p");
           note.className = "empty";
-          note.textContent = "انتخاب نقل‌قول‌ها آماده نشد؛ پاسخ جریان‌یافته به‌جای آن می‌ماند.";
+          note.textContent = "انتخاب نقل‌قول‌ها آماده نشد؛ استنادهای بازیابی‌شده زیر همان پاسخ‌اند.";
           answerEl.append(note);
         };
         try {
@@ -1807,7 +1833,7 @@
               "Content-Type": "application/json; charset=utf-8",
               ...phoneHeader(),
             },
-            body: JSON.stringify({ question, sources }),
+            body: JSON.stringify({ question, sources, chat_id: chatId }),
             signal: quotedAbort.signal,
           });
           refreshUsageLive();
@@ -1822,7 +1848,7 @@
             ? payload.selections
             : [];
           if (!selections.length) {
-            fallbackToProse();
+            selectionMissed();
             return;
           }
           const doc = document.createDocumentFragment();
@@ -1855,7 +1881,7 @@
           if (run !== citationRun) {
             return;
           }
-          fallbackToProse();
+          selectionMissed();
         }
       }
 
@@ -2310,11 +2336,18 @@
         poll();
       }
 
-      async function sendResearchMessage() {
-        if (!researchQuery || researchInputEl.disabled) return;
-        const text = researchInputEl.value.trim();
+      // One research message — typed, or seeded by the ask when the
+      // Research Mode switch is on (the seed is the ask's own question:
+      // the creating call carries it with the Evidence pool, ADR 0008).
+      async function sendResearchMessage(seedText) {
+        const seed = typeof seedText === "string" && seedText.trim() ? seedText.trim() : null;
+        if (!researchQuery) return;
+        if (!seed && researchInputEl.disabled) return;
+        const text = seed !== null ? seed : researchInputEl.value.trim();
         if (!text) return;
-        researchInputEl.value = "";
+        if (seed === null) {
+          researchInputEl.value = "";
+        }
         researchInputEl.disabled = true;
         researchSendEl.disabled = true;
         researchSuggestEl.replaceChildren();
@@ -2488,33 +2521,115 @@
         })();
       })();
 
-      async function readSse(res, onEvent) {
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        const dispatch = (frame) => {
-          let name = "message";
-          let data = "";
-          for (const line of frame.split("\n")) {
-            if (!line || line.startsWith(":")) continue;
-            if (line.startsWith("event:")) name = line.slice(6).trim();
-            else if (line.startsWith("data:")) data += line.slice(5).trim();
+      // The ask's reload restore (ADR-0014): the newest ask row —
+      // question, pool, Quote selection, Quoted answer — is re-fetched
+      // from the server's chat store and re-rendered, so a refresh
+      // never throws the conversation away. The research conversation
+      // reconnects separately through its own stored identity above;
+      // this restore only rebuilds phases 1 and 2 and re-arms the
+      // research seed from the stored pool. A missing body (the
+      // Account never asked, or the gate answers 401) leaves the idle
+      // sheet untouched.
+      (function restoreAsk() {
+        (async () => {
+          let payload = null;
+          try {
+            const res = await fetch("/chat/latest", {
+              headers: phoneHeader(),
+              cache: "no-store",
+            });
+            if (res.ok) {
+              payload = await res.json();
+            }
+          } catch {
+            return;
           }
-          if (data) onEvent(name, data);
-        };
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          let at;
-          while ((at = buffer.indexOf("\n\n")) !== -1) {
-            dispatch(buffer.slice(0, at));
-            buffer = buffer.slice(at + 2);
+          const chat = payload && payload.chat;
+          if (!chat || !chat.question) return;
+          const lines = (Array.isArray(chat.sources) ? chat.sources : []).map(
+            (s) => `${s.reference}: "${s.passage}"`
+          );
+          const selections = Array.isArray(chat.selections) ? chat.selections : [];
+          const blocks = Array.isArray(chat.blocks) ? chat.blocks : [];
+          askState = {
+            question: chat.question,
+            lines,
+            datasets: Array.isArray(chat.datasets) ? chat.datasets : null,
+            chatId: chat.id,
+            research: false,
+          };
+          questionEl.value = chat.question;
+          // Phase 1: the stored pool and, when the picker had landed,
+          // its selection — the same first answer, re-rendered.
+          setPhaseState(1, "done");
+          citationsEl.replaceChildren();
+          if (selections.length) {
+            answerEl.className = "answer";
+            const doc = document.createDocumentFragment();
+            for (const item of selections) {
+              const sentence = document.createElement("p");
+              sentence.className = "doc-para";
+              const span = document.createElement("span");
+              span.className = "cite-sent";
+              span.tabIndex = 0;
+              span.textContent = item.text;
+              span.dataset.ref = citationRef(item);
+              const located = parseReference(item.reference);
+              wireQuoteSpan(
+                span,
+                located.doc,
+                located.first ? `${located.first}-${located.last}` : ""
+              );
+              sentence.append(span);
+              if (item.pages_label) {
+                const pages = document.createElement("span");
+                pages.className = "cite-pages";
+                pages.textContent = ` [${item.pages_label}]`;
+                sentence.append(pages);
+              }
+              doc.append(sentence);
+            }
+            answerEl.replaceChildren(doc);
+          } else if (lines.length) {
+            answerEl.className = "answer";
+            const note = document.createElement("p");
+            note.className = "empty";
+            note.textContent = "انتخاب نقل‌قول‌ها آماده نشد؛ استنادهای بازیابی‌شده زیر همان پاسخ‌اند.";
+            answerEl.append(note);
           }
-        }
-        buffer += decoder.decode();
-        if (buffer.trim()) dispatch(buffer);
-      }
+          for (const item of lines) {
+            const p = document.createElement("p");
+            p.className = "cite";
+            p.textContent = item;
+            citationsEl.append(p);
+          }
+          // Phase 2: the stored guarded document, or the honest skip.
+          if (blocks.length) {
+            const doc = document.createDocumentFragment();
+            if (chat.truncated) {
+              doc.append(truncatedNote());
+            }
+            for (const block of blocks) {
+              if (block.type === "heading") {
+                const heading = document.createElement("h3");
+                heading.className = "doc-heading";
+                heading.textContent = block.text;
+                doc.append(heading);
+              } else if (block.type === "paragraph") {
+                doc.append(paragraphNode(block));
+              }
+            }
+            quotedDocEl.replaceChildren(doc);
+            setPhaseState(2, "done");
+          } else if (lines.length) {
+            skipQuotedPhase();
+          }
+          if (lines.length) {
+            armResearch(chat.question, chat.sources || []);
+            showRecallMore();
+          }
+        })();
+      })();
 
       async function ping() {
         try {
@@ -2610,6 +2725,7 @@
               question: askState.question,
               sources: evidenceSources(askState.lines),
               datasets: askState.datasets,
+              chat_id: askState.chatId,
             }),
           });
           const payload = await res.json().catch(() => ({}));
@@ -2633,8 +2749,10 @@
           if (quotedAbort) quotedAbort.abort();
           quotedAbort = new AbortController();
           citationRun += 1;
-          renderQuotedAnswer(askState.question, askState.answer, askState.lines, () => {});
-          renderQuoteSelection(askState.question, askState.prose, askState.lines);
+          renderQuoteSelection(askState.question, askState.chatId, askState.lines);
+          if (!askState.research) {
+            renderQuotedAnswer(askState.question, askState.chatId, askState.lines, () => {});
+          }
         } catch {
           if (quotedAbort && quotedAbort.signal.aborted) return;
           recallMoreStatus.textContent = "گسترش جست‌وجو انجام نشد؛ دوباره تلاش کنید.";
@@ -2658,23 +2776,15 @@
 
         buttonEl.disabled = true;
         elapsedEl.hidden = false;
-        ttftEl.hidden = false;
-        ttftEl.textContent = "نخستین توکن: …";
         const started = Date.now();
-        let firstTokenAt = null;
-        const markFirstToken = () => {
-          if (firstTokenAt !== null) return;
-          firstTokenAt = Date.now();
-          ttftEl.textContent = `نخستین توکن: ${((firstTokenAt - started) / 1000).toFixed(1)} ثانیه`;
-        };
         const tick = setInterval(() => {
           const seconds = Math.round((Date.now() - started) / 1000);
           elapsedEl.textContent = `${seconds} ثانیه`;
         }, 250);
-        // The clock times the whole pipeline — stream and the composer
-        // phase — and stops when phase 2 settles (PM call, 2026-09-10).
-        // Issue #25: the pipeline ends there — the research turns are
-        // timed by phase 3's own chip, started on each message.
+        // The clock times the retrieval pipeline and stops when the
+        // ask's phases settle — phase 2's landing, or right here when
+        // the Research Mode switch hands the question to phase 3 (whose
+        // turns time their own chip, issue #25).
         const stopTimer = () => {
           clearInterval(tick);
           const seconds = Math.round((Date.now() - started) / 1000);
@@ -2683,7 +2793,7 @@
 
         // A new ask owns the sheet: abort any in-flight phase 2 of the
         // previous one and reset all three sections to idle. The
-        // research turn's server-side abort rides this ask's own recall
+        // research turn's server-side abort rides this ask's own /ask
         // POST (ADR 0008) — here the client only stops polling and
         // drops the stored session identity.
         if (quotedAbort) quotedAbort.abort();
@@ -2695,11 +2805,12 @@
           if (phaseEls[n].timer) phaseEls[n].timer.hidden = true;
           setPhaseState(n, "idle");
         }
+        const researchAsked = researchModeEl.checked;
         setPhaseState(1, "running");
         setRunningPhase(1);
         selectPhase(1);
         quotedDocEl.replaceChildren();
-        setText(answerEl, "در حال پرسیدن…", "empty");
+        setText(answerEl, "در حال بازیابی نقل‌قول‌ها…", "empty");
         citationRun += 1;
         const run = citationRun;
         // The collapsed pool starts the ask closed — a previous ask's
@@ -2710,192 +2821,108 @@
         hideRecallMore();
         const waiting = document.createElement("p");
         waiting.className = "empty";
-        waiting.textContent = "استناد پس از پاسخ می‌آید.";
+        waiting.textContent = "در حال بازیابی استنادها…";
         citationsEl.append(waiting);
-
-        const textOf = (payload) =>
-          Array.isArray(payload) ? payload[0]?.text || "" : payload.text || "";
-
-        // The phase-1 citation fallback (ADR-0011): the first message's
-        // role is to FIND CITATIONS. When the streamed reply carries no
-        // Evidence block, ONE pinned reference-on search over the
-        // question (the ask's selected Books) fetches the pool so the
-        // Quote selection and phase 2 still run; nothing found lands
-        // the honest no-citation note, never a generic answer.
-        async function fetchFallbackPool() {
-          try {
-            const res = await fetch("/evidence-fallback", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json; charset=utf-8",
-                ...phoneHeader(),
-              },
-              body: JSON.stringify({
-                question: query,
-                datasets: selectedDatasets(),
-              }),
-            });
-            const payload = await res.json().catch(() => ({}));
-            return Array.isArray(payload.sources) ? payload.sources : [];
-          } catch {
-            return [];
-          }
-        }
-
-        const renderFinal = (text) => {
-          if (!text) {
-            throw new Error("پاسخ خالی برگشت.");
-          }
-          const { answer, citations } = splitCitation(text);
-          // The prose is kept for phase 2's framing — it is no longer
-          // the displayed first answer (issue #28).
-          const prose = answer || text;
-          markFirstToken();
-          setPhaseState(1, "done");
-          // The first answer exists — the ask has a question and pool
-          // to seed Research Mode with. From here the research
-          // conversation is the operator's call, never automatic (the
-          // dive's rule, kept; ADR 0008).
-          setPhaseState(3, "ready");
-          citationsEl.replaceChildren();
-          if (!citations.length) {
-            // No Evidence block in the stream: the pinned searcher gets
-            // ONE chance to fetch the citation pool before the sheet
-            // concedes (ADR-0011).
-            const status = document.createElement("p");
-            status.className = "composer-status";
-            status.textContent = "استناد در پاسخ نبود؛ مستقیم از کتاب‌ها جست‌وجو می‌کنیم…";
-            citationsEl.append(status);
-            fetchFallbackPool().then((sources) => {
-              if (run !== citationRun) return;
-              citationsEl.replaceChildren();
-              const lines = sources.map(
-                (s) => `${s.reference}: "${s.passage}"`
-              );
-              if (!lines.length) {
-                // No pool anywhere: the streamed prose stays the answer,
-                // exactly as before the Quote selection (issue #28).
-                answerEl.className = "answer";
-                renderMarkdown(answerEl, prose);
-                const missing = document.createElement("p");
-                missing.className = "error";
-                missing.textContent = "استنادی از کتاب‌ها پیدا نشد.";
-                citationsEl.append(missing);
-                // The failure note must stay readable — open the collapsed
-                // pool for it, then close again on the next ask.
-                evidencePoolEl.open = true;
-                // No Evidence pool means no Quoted answer, but the research
-                // session never needed one — the operator may still start
-                // it (its gathers search for their own evidence).
-                skipQuotedPhase();
-                armResearch(query, []);
-                // Without a phase-2 run the pipeline still ends here.
-                stopTimer();
-                return;
-              }
-              // The fetched pool drives the normal path: pool lines,
-              // research seed, phase 2 in parallel with the picker.
-              for (const item of lines) {
-                const p = document.createElement("p");
-                p.className = "cite";
-                p.textContent = item;
-                citationsEl.append(p);
-              }
-              armResearch(query, evidenceSources(lines));
-              askState = {
-                question: query,
-                prose,
-                answer,
-                lines,
-                datasets: selectedDatasets(),
-              };
-              showRecallMore();
-              renderQuotedAnswer(query, answer, lines, stopTimer);
-              renderQuoteSelection(query, prose, lines);
-            });
-          } else {
-            for (const item of citations) {
-              const p = document.createElement("p");
-              p.className = "cite";
-              p.textContent = item;
-              citationsEl.append(p);
-            }
-            armResearch(query, evidenceSources(citations));
-            // The widen (ADR-0010) works on this ask's state: question,
-            // prose, and the pool lines it can grow.
-            askState = {
-              question: query,
-              prose,
-              answer,
-              lines: citations.slice(),
-              datasets: selectedDatasets(),
-            };
-            showRecallMore();
-            // Phase 2 starts right here on the same pool (its exact
-            // payload) and runs in PARALLEL with the picker (issue #28):
-            // each lands in its own tab.
-            renderQuotedAnswer(query, answer, citations, stopTimer);
-            // The Quote selection replaces the prose as the first
-            // answer (issue #28).
-            renderQuoteSelection(query, prose, citations);
-          }
-        };
 
         try {
           refreshUsageLive();
-          const res = await fetch("/api/v1/recall", {
+          // The ask (ADR-0014): retrieval only. The Evidence pool comes
+          // straight from the Books' hybrid retrieval — one only_context
+          // search per selected Book, NO LLM completion in the loop — so
+          // the first answer can never arrive as a conclusive model
+          // essay, and the pool lands in seconds, not minutes.
+          const res = await fetch("/ask", {
             method: "POST",
             headers: {
               "Content-Type": "application/json; charset=utf-8",
               ...phoneHeader(),
             },
             body: JSON.stringify({
-              searchType: "HYBRID_COMPLETION",
               query,
               datasets: selectedDatasets(),
-              includeReferences: true,
-              stream: true,
             }),
           });
-          const ctype = res.headers.get("Content-Type") || "";
-          if (ctype.includes("text/event-stream")) {
-            let streamError = null;
-            let gotFinal = false;
-            await readSse(res, (name, data) => {
-              if (name === "stage") {
-                setText(
-                  answerEl,
-                  JSON.parse(data).stage === "generating"
-                    ? "در حال تولید پاسخ…"
-                    : "در حال بازیابی…",
-                  "empty"
-                );
-              } else if (name === "delta") {
-                // The prose is no longer painted (issue #28): deltas
-                // still arrive and still drive the TTFT readout —
-                // «نخستین توکن» is first token ARRIVAL.
-                markFirstToken();
-              } else if (name === "reset") {
-                setText(answerEl, "در حال تولید پاسخ…", "empty");
-              } else if (name === "error") {
-                streamError = new Error(JSON.parse(data).message || "خطا در جریان پاسخ.");
-              } else if (name === "final") {
-                gotFinal = true;
-                renderFinal(textOf(JSON.parse(data).results));
-              }
-            });
-            if (!gotFinal) {
-              throw streamError || new Error("پاسخ نیامد.");
-            }
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const detail = Array.isArray(payload.detail)
+              ? payload.detail.join(" ")
+              : payload.detail;
+            throw new Error(detail || "پاسخ نیامد.");
+          }
+          if (run !== citationRun) {
+            return;
+          }
+          const sources = Array.isArray(payload.sources) ? payload.sources : [];
+          const chatId =
+            typeof payload.chat_id === "string" ? payload.chat_id : "";
+          const lines = sources.map(
+            (s) => `${s.reference}: "${s.passage}"`
+          );
+          askState = {
+            question: query,
+            lines,
+            datasets: selectedDatasets(),
+            chatId,
+            research: researchAsked,
+          };
+          setPhaseState(1, "done");
+          // The pool exists — the ask has a question and citations to
+          // seed Research Mode with. With the switch off, the research
+          // conversation still stays the operator's call (ADR 0008).
+          setPhaseState(3, "ready");
+          citationsEl.replaceChildren();
+          if (!lines.length) {
+            // No pool anywhere: the honest no-citation note. The sheet
+            // never paints a model-written answer over an empty pool —
+            // there is no prose to fall back to (ADR-0014).
+            answerEl.className = "answer";
+            answerEl.replaceChildren();
+            const note = document.createElement("p");
+            note.className = "empty";
+            note.textContent = "استنادی از کتاب‌ها پیدا نشد.";
+            answerEl.append(note);
+            const missing = document.createElement("p");
+            missing.className = "error";
+            missing.textContent = "استنادی از کتاب‌ها پیدا نشد.";
+            citationsEl.append(missing);
+            // The failure note must stay readable — open the collapsed
+            // pool for it, then close again on the next ask.
+            evidencePoolEl.open = true;
+            // No Evidence pool means no Quoted answer, but the research
+            // session never needed one — the operator may still start
+            // it (its gathers search for their own evidence).
+            skipQuotedPhase();
+            armResearch(query, []);
+            // Without a phase-2 run the pipeline still ends here.
+            stopTimer();
+            return;
+          }
+          for (const item of lines) {
+            const p = document.createElement("p");
+            p.className = "cite";
+            p.textContent = item;
+            citationsEl.append(p);
+          }
+          armResearch(query, sources);
+          showRecallMore();
+          // The Quote selection — the retrieval's own verbatim
+          // sentences — IS the first answer (ADR 0006); the picker runs
+          // on the pool the ask just fetched.
+          renderQuoteSelection(query, chatId, lines);
+          if (researchAsked) {
+            // The switch is on: the ask itself opens the guided research
+            // conversation on the same pool — the creating call rides
+            // the ask's question and Evidence pool (ADR 0008) — and the
+            // pipeline clock stops here; the research turns run on
+            // phase 3's own chip.
+            stopTimer();
+            selectPhase(3);
+            sendResearchMessage(query);
           } else {
-            const payload = await res.json();
-            if (!res.ok) {
-              const detail = Array.isArray(payload.detail)
-                ? payload.detail.join(" ")
-                : payload.detail;
-              throw new Error(detail || "پاسخ نیامد.");
-            }
-            renderFinal(textOf(payload));
+            // Phase 2 starts right here on the same pool (its exact
+            // payload) and runs in PARALLEL with the picker (issue #28):
+            // each lands in its own tab.
+            renderQuotedAnswer(query, chatId, lines, stopTimer);
           }
         } catch (err) {
           setText(
@@ -2914,9 +2941,6 @@
           citationsEl.append(missing);
           stopTimer();
         } finally {
-          if (firstTokenAt === null) {
-            ttftEl.hidden = true;
-          }
           buttonEl.disabled = false;
         }
       });

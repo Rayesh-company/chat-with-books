@@ -694,14 +694,16 @@ def test_session_ui_keeps_citations_in_the_first_phase_section():
     assert "citationsEl.hidden" not in html
 
 
-def test_session_ui_renders_the_streamed_answer_as_markdown():
-    # Phase 1 (the streamed answer) arrives as markdown — headings, bold,
-    # bullets — and the sheet renders that structure during the live
-    # preview and at final, never the literal #/** characters (PM call,
-    # 2026-09-10).
+def test_session_ui_renders_only_verbatim_book_sentences_in_phase_1():
+    # ADR-0014: the ask is retrieval-only — there is no streamed prose
+    # and no markdown renderer on the sheet any more. Phase 1 shows the
+    # Quote selection (guarded verbatim sentences) or the honest
+    # selection-missed note; a model-written essay can never render as
+    # the first answer.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
-    assert "function renderMarkdown" in html
-    assert "function markBold" in html
+    assert "function renderMarkdown" not in html
+    assert "function markBold" not in html
+    assert "انتخاب نقل‌قول‌ها آماده نشد" in html
 
 
 def test_session_ui_shows_the_composer_phase_and_times_the_whole_pipeline():
@@ -717,8 +719,9 @@ def test_session_ui_shows_the_composer_phase_and_times_the_whole_pipeline():
     assert "composer-pulse" in html
     assert "const stopTimer" in html
     assert "clearInterval(tick)" in html
-    # Phase 2 settles and the pipeline clock stops — no phase-3 auto-start.
-    assert "renderQuotedAnswer(query, answer, citations, stopTimer)" in html
+    # Phase 2 settles and the pipeline clock stops — no phase-3 auto-start
+    # (ADR-0014: the call carries the ask's chat_id, not a draft answer).
+    assert "renderQuotedAnswer(query, chatId, lines, stopTimer)" in html
     # Per-phase machinery: the running-phase line, and the timer chips on
     # the phase 2 and 3 tabs.
     assert 'id="phase-now"' in html
@@ -780,13 +783,15 @@ def test_the_sheet_carries_the_round_two_contract():
 
 def test_the_sheet_carries_the_round_three_contract():
     # ADR-0011: the single-pick Book gate (radio, persisted, ask
-    # disabled until picked), the phase-1 evidence fallback, and the
-    # transcript re-fetch.
+    # disabled until picked) and the transcript re-fetch. The phase-1
+    # evidence fallback endpoint is retired from the sheet (ADR-0014:
+    # the ask itself is the retrieval — an empty pool lands the honest
+    # note directly), but its Farsi failure text still names the truth.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
     assert 'role="radiogroup"' in html
     assert 'localStorage.setItem("selectedBook"' in html
     assert "اول یک کتاب انتخاب کنید" in html
-    assert "/evidence-fallback" in html
+    assert "/evidence-fallback" not in html
     assert "استنادی از کتاب‌ها پیدا نشد" in html
     assert "/research/messages" in html
 

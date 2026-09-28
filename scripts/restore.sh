@@ -22,7 +22,7 @@
 #              start the throwaway pgvector Postgres, wait for pg_isready,
 #              docker cp the dump in, pg_restore with the HANDOFF flags,
 #              run the checks, print the report — and ALWAYS clean up
-#   --dry-run  verify the archive (all six members, tar -tzf) and print the
+#   --dry-run  verify the archive (all seven members, tar -tzf) and print the
 #              plan — NO Docker, nothing touched: the test suite's seam
 #
 # Usage: restore.sh <archive.tar.gz> [--dry-run]
@@ -49,9 +49,9 @@ CHUNK_TABLE="${CHUNK_TABLE:-DocumentChunk_text}"
 # tarhe-kolli 243 + 70143-336 98 = 341. A drift here is a finding, not noise.
 EXPECTED_CHUNKS="${EXPECTED_CHUNKS:-341}"
 
-# The six members a backup.sh archive must carry; the drill refuses anything
+# The seven members a backup.sh archive must carry; the drill refuses anything
 # less, because a partial archive restores a partial memory.
-REQUIRED_MEMBERS="cognee_db.dump usage.sqlite3 research.sqlite3 env/.env code.tar.gz"
+REQUIRED_MEMBERS="cognee_db.dump usage.sqlite3 research.sqlite3 chats.sqlite3 env/.env code.tar.gz"
 REQUIRED_DIR_PREFIX="books/"
 
 die() { echo "restore: $*" >&2; exit 1; }
@@ -217,6 +217,7 @@ main_drill() {
 
   check_sqlite "$DRILL_TMP_NATIVE/usage.sqlite3" "usage.sqlite3"
   check_sqlite "$DRILL_TMP_NATIVE/research.sqlite3" "research.sqlite3"
+  check_sqlite "$DRILL_TMP_NATIVE/chats.sqlite3" "chats.sqlite3"
 
   PDFS="$(find "$DRILL_TMP/books" -maxdepth 1 -type f -name '*.pdf' 2>/dev/null | wc -l | tr -d ' ')"
   if [ -f "$DRILL_TMP/books/tarhe-kolli.pdf" ] && [ -f "$DRILL_TMP/books/70143-336.pdf" ]; then
@@ -259,7 +260,7 @@ case "${2:-}" in
     echo "plan: verify both SQLite stores open with python sqlite3; books/ holds both Book PDFs; env/.env present by filename only (contents never printed)"
     echo "plan: docker rm -f the throwaway + rm -rf the temp dir — the EXIT trap, even on failure"
     echo ""
-    echo "restore: dry-run ok — all six members verified, nothing was touched"
+    echo "restore: dry-run ok — all seven members verified, nothing was touched"
     ;;
   "")
     main_drill

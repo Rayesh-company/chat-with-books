@@ -24,6 +24,10 @@ _Avoid_: Chat, demo (showing the product at an expo is not automatically a Sessi
 The guided research conversation (حالت پژوهش) of the same Session, started by the Session operator on the same question: a multi-turn chat that maintains the Research state, gathers evidence with its own searches of the Book set, refines the research question through approved proposals, and closes with a citation-backed Brief. A gather may feel slow. It is not a longer first answer, and it is not a new question. (Supersedes the Deep dive, the one-shot study.)
 _Avoid_: deep study, wizard, questionnaire (it keeps conversational freedom), COT (the Cognee type is not the domain name)
 
+**Research Mode switch (کلید حالت پژوهش)**:
+The on/off control in the ask box (ADR-0014, the operator's 2026-09-23 call): off — the ask answers with the retrieval phases only; on — the ask itself opens the Research Mode conversation on the same Evidence pool. The default is off; the choice persists on the operator's browser. The toggle reuses the Research Mode name — it is a door to the conversation, not a new product surface.
+_Avoid_: research toggle button (a switch, not a button), auto-research (the off default is the product's promise), deep mode
+
 **Research state**:
 The persistent record behind a Research Mode conversation: the versioned research question, scope, sub-questions, evidence ledger, claim ledger, gaps, and decisions. Research-question changes append versions through accepted proposals; they never silently replace.
 _Avoid_: chat history, cache, context window

@@ -19,6 +19,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from ui import (  # noqa: E402
     accounts,
+    ask,
+    chat_store,
     composer,
     dive,
     picker,
@@ -366,11 +368,12 @@ def with_gate(tmp_path, upstream):
     server restart is what empties it in production."""
     quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
     research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
+    chat_store.CHAT_DB = tmp_path / "chats.sqlite3"
     patch_accounts(tmp_path)
     research.RESEARCH_REGISTRY.clear()
     originals = [
         (module, module.urlopen)
-        for module in (serve, composer, picker, dive, research, recall_more)
+        for module in (serve, composer, picker, dive, research, recall_more, ask)
     ]
     for module, _ in originals:
         module.urlopen = upstream
