@@ -330,12 +330,24 @@
 
       .session-item-del {
         align-self: flex-start;
-        font-size: 0.68rem;
-        padding: 0 0.45rem;
+        /* 12px functional text — the detector measured the old 0.68rem
+           at 10.88px, below the 11px floor (impeccable critique). */
+        font-size: 0.75rem;
+        padding: 0.1rem 0.5rem;
         border-color: transparent;
         background: transparent;
         color: var(--mute);
         opacity: 0;
+      }
+
+      /* The armed two-step confirm (impeccable critique, 2026-09-28):
+         the row asks before it deletes — the armed state reads as the
+         destructive act it is one click from. */
+      .session-item-del.confirm {
+        opacity: 1;
+        color: var(--bad);
+        border-color: var(--bad);
+        background: var(--bad-soft);
       }
 
       .session-item:hover .session-item-del,
@@ -2241,6 +2253,11 @@
       // the compass/rail redesign added, pinned here for the PM.
       const MAP_MORE_LABEL = "نمایش بیشتر";
       const MAP_LESS_LABEL = "نمایش کمتر";
+      // The session row's delete (impeccable critique, 2026-09-28):
+      // «حذف» existed on the sheet already (now pinned); the two-step
+      // confirm's armed label is a NEW draft string, pinned for the PM.
+      const SESSION_DELETE_LABEL = "حذف";
+      const SESSION_DELETE_CONFIRM_LABEL = "حذف نشست؟";
 
       const BOOK_TITLES = {
         "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
@@ -2358,10 +2375,32 @@
               const del = document.createElement("button");
               del.type = "button";
               del.className = "session-item-del";
-              del.textContent = "حذف";
+              del.textContent = SESSION_DELETE_LABEL;
               del.setAttribute("aria-label", "حذف نشست");
+              let disarmTimer = null;
+              const disarm = () => {
+                del.classList.remove("confirm");
+                del.textContent = SESSION_DELETE_LABEL;
+                if (disarmTimer) {
+                  clearTimeout(disarmTimer);
+                  disarmTimer = null;
+                }
+              };
               del.addEventListener("click", (event) => {
                 event.stopPropagation();
+                // Two-step confirm (impeccable critique, 2026-09-28):
+                // the sitting is the durable artifact of paid work, and
+                // the always-visible touch target sat one scroll-tap
+                // from destroying it. First click arms — the row's own
+                // label asks — the second, deliberate click deletes;
+                // the arm decays after a few seconds. Re-render disarms.
+                if (!del.classList.contains("confirm")) {
+                  del.classList.add("confirm");
+                  del.textContent = SESSION_DELETE_CONFIRM_LABEL;
+                  disarmTimer = setTimeout(disarm, 4000);
+                  return;
+                }
+                disarm();
                 fetch(`/sessions/${row.id}`, { method: "DELETE" })
                   .catch(() => {})
                   .finally(() => {
@@ -2682,6 +2721,7 @@
         if (
           event.key === "Enter" &&
           !event.shiftKey &&
+          !event.isComposing && // an IME's Enter confirms its own composition, never sends
           !window.matchMedia("(pointer: coarse)").matches
         ) {
           event.preventDefault();
@@ -3488,9 +3528,9 @@
           sendResearchMessage();
         });
         // Enter sends (Shift+Enter breaks a line) — a chat box, not a
-        // document editor.
+        // document editor. An IME's Enter confirms its composition.
         researchInputEl.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
+          if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
             event.preventDefault();
             researchFormEl.requestSubmit();
           }
@@ -3966,8 +4006,13 @@
         if (researchSendEl) researchSendEl.disabled = false;
         // The one door (ADR-0015): when the toggle routed the ask
         // here, the shell composer's send re-arms with the settle —
-        // every settle path funnels through this function.
-        if (researchMode) buttonEl.disabled = false;
+        // every settle path funnels through this function. The re-arm
+        // is unconditional: the research turn is the only live run
+        // when it fires, so a toggle flipped off mid-turn used to
+        // leave the send disabled forever (impeccable critique,
+        // 2026-09-28) — the settle must free the composer regardless
+        // of the mode the toggle now shows.
+        buttonEl.disabled = false;
       }
 
       function settleResearchTurn(message) {
