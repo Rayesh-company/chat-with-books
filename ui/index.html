@@ -5238,6 +5238,22 @@
             reader.baseWidth = vp1.width;
             reader.baseRatio = vp1.height / vp1.width;
 
+            // The placeholder sheet was built on the hardcoded count
+            // (BOOK_PAGE_COUNTS) — the parse's real numPages usually
+            // differs (807 vs 862) — so rebuild it on the true count:
+            // otherwise the tail pages have no placeholders at all and
+            // cannot be scrolled to. Re-land wherever the reader stood.
+            if (reader.recs.size && reader.recs.size !== pdf.numPages) {
+              const anchor = Math.min(
+                reader.stick ?? reader.current ?? 1,
+                pdf.numPages
+              );
+              reader.recs.clear();
+              readerPagesEl.replaceChildren();
+              buildPlaceholders();
+              gotoPage(anchor);
+            }
+
             // Upgrade any already-rendered visible pages with text layers
             for (const [n, rec] of reader.recs) {
               if (rec.rendered && !rec.el.querySelector(".textLayer")) {
@@ -5379,6 +5395,22 @@
           } else {
             img.src = fullSrc;
           }
+          // A failed raster must not read as a silently blank page (the
+          // 09-28 outage: the server 404'd every cold render and the
+          // panel just stayed white). One cache-busted retry, then the
+          // reader says so — and the page stays un-rendered so a later
+          // ensureRendered/observer pass can try it again.
+          let imgRetried = false;
+          img.addEventListener("error", () => {
+            if (gen !== reader.gen) return;
+            if (!imgRetried) {
+              imgRetried = true;
+              img.src = `${fullSrc}&retry=1`;
+              return;
+            }
+            rec.rendered = false;
+            showReaderNote("رندر صفحه ناموفق بود", "error");
+          });
           rec.el.replaceChildren(img);
           rec.el.style.height = `${heightPx}px`;
 

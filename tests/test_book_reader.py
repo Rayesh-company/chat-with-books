@@ -203,6 +203,35 @@ def test_book_page_route_renders_and_caches(tmp_path):
         serve.RENDER_CACHE_DIR = original_cache
 
 
+@pytest.mark.skipif(
+    serve._pdfium is None, reason="pypdfium2 not installed in this env"
+)
+def test_book_page_route_missing_pdf_is_404_not_500(tmp_path):
+    # The 09-28 regression shape: books/ holds the tracked .pages.json
+    # sidecars while the gitignored PDFs never arrived (the deploy swap
+    # dropped them). Every cold page render must answer a plain 404 —
+    # never a 500 — and the boot check is what says the rest loudly.
+    books = tmp_path / "books"
+    books.mkdir()
+    (books / "tarhe-kolli.pages.json").write_text("{}", encoding="utf-8")
+    cache = tmp_path / "render-cache"
+    cache.mkdir()
+    original_dir = serve.BOOKS_DIR
+    original_cache = serve.RENDER_CACHE_DIR
+    serve.BOOKS_DIR = books
+    serve.RENDER_CACHE_DIR = cache
+    base, server, originals = with_gate(tmp_path, None)
+    try:
+        status, _, _ = _get_raw(base, "/books/tarhe-kolli/page/572.png?w=640")
+        assert status == 404
+        status2, _, _ = _get_raw(base, "/books/tarhe-kolli/book")
+        assert status2 == 404
+    finally:
+        stop_gate(server, originals)
+        serve.BOOKS_DIR = original_dir
+        serve.RENDER_CACHE_DIR = original_cache
+
+
 def test_book_page_route_rejects_bad_input(tmp_path):
     books = tmp_path / "books"
     books.mkdir()

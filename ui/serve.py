@@ -2507,6 +2507,16 @@ def main() -> None:
     # ADR-0013's contract step, run loudly.
     report = migrate.rekey_stores()
     sys.stderr.write(f"store migration: {report}\n")
+    # The Book PDFs' presence at boot (the 09-28 regression: a deploy
+    # swap dropped the gitignored PDFs and every cold page render 404'd
+    # while the warm render-cache pages kept drawing — say so loudly).
+    for dataset in BOOK_DATASETS:
+        if (BOOKS_DIR / f"{dataset}.pdf").exists():
+            sys.stderr.write(f"book pdf ok: {dataset}\n")
+        else:
+            sys.stderr.write(
+                f"BOOK PDF MISSING: {dataset} — the reader can draw only already-cached pages\n"
+            )
     server = ThreadingHTTPServer((HOST, PORT), SessionHandler)
     print(f"Session sheet http://{HOST}:{PORT}", flush=True)
     print(f"Proxying /api/v1/recall and /health to {COGNEE_URL}", flush=True)
