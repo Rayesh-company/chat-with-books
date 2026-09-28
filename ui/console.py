@@ -94,8 +94,18 @@ def _action_label(action) -> str:
     return _ACTION_LABELS.get(str(action), str(action))
 
 
+_FA_DIGITS = str.maketrans("0123456789,", "۰۱۲۳۴۵۶۷۸۹٬")
+
+
+def _fa_digits(text) -> str:
+    """Persian digits with the Persian thousands separator — the shell's
+    own fa-IR policy (impeccable critique, 2026-09-28): the operator's
+    two surfaces speak one digit language."""
+    return str(text).translate(_FA_DIGITS)
+
+
 def _toman(value) -> str:
-    return f"{int(value):,}"
+    return _fa_digits(f"{int(value):,}")
 
 
 def _table(headers, rows_html) -> str:
@@ -132,7 +142,7 @@ def _accounts_table(rows) -> str:
             f"<td class=\"num\">{_toman(row.get('balance_toman', 0))}</td>"
             f"<td class=\"num\">{_toman(row.get('yesterday_spend_toman', 0))}</td>"
             f"<td class=\"num\">{_toman(row.get('today_spend_toman', 0))}</td>"
-            f"<td class=\"num\">{chats} از {limit}</td>"
+            f"<td class=\"num\">{_fa_digits(chats)} از {_fa_digits(limit)}</td>"
             "</tr>"
         )
     return _table(
@@ -158,7 +168,7 @@ def _live_table(turns) -> str:
             f"<td class=\"mono\">{_esc(turn.get('id', ''))}</td>"
             f"<td class=\"email\">{_esc(turn.get('account', ''))}</td>"
             f"<td>{_esc(_state_label(turn.get('state', '')))}</td>"
-            f"<td class=\"num\">{elapsed:,.0f} ثانیه</td>"
+            f"<td class=\"num\">{_fa_digits(f'{elapsed:,.0f}')} ثانیه</td>"
             "</tr>"
         )
     return _table(
@@ -193,7 +203,7 @@ def _settled_table(turns) -> str:
             "</tr>"
         )
     table = _table(
-        ("شناسۀ پیام", "شماره", "وضعیت", "جزئیات"),
+        ("شناسۀ پیام", "حساب", "وضعیت", "جزئیات"),
         rows_html,
     )
     if failures:
@@ -288,7 +298,7 @@ def console_html(
     rows = [
         {**row, "quota_limit": row.get("quota_limit", limit)} for row in accounts_rows
     ]
-    stamp = f" · {_esc(generated)}" if generated else ""
+    stamp = f" · {_fa_digits(_esc(generated))}" if generated else ""
     error_note = _ERROR_NOTES.get(str(error_code or ""), "")
     writes = _write_forms(accounts_rows, error_note)
     return f"""<!DOCTYPE html>
@@ -332,61 +342,79 @@ def console_html(
 
 
 _STYLE = """
-  :root { color-scheme: light; }
+  /* The console wears the shell's approved world (v2 «دفترِ نسخ»,
+     the critique's third-identity fix, 2026-09-28): parchment desk,
+     surface sheets, lapis headings, gold illumination — the same
+     tokens ui/index.html carries, self-hosted Vazirmatn included.
+     Light-only by design: the console is an operator's desk mirror. */
+  @font-face { font-family: "Vazirmatn"; src: url("/vendor/fonts/Vazirmatn-Regular.woff2") format("woff2");
+               font-weight: 400; font-style: normal; font-display: swap; }
+  @font-face { font-family: "Vazirmatn"; src: url("/vendor/fonts/Vazirmatn-Bold.woff2") format("woff2");
+               font-weight: 700; font-style: normal; font-display: swap; }
+  :root {
+    color-scheme: light;
+    --desk: #d8cbae; --surface: #f3ead6; --raised: #faf4e6; --rule: #cdbf9f;
+    --ink: #2e2417; --mute: #6d5e48; --lapis: #1f4a78; --lapis-deep: #16375a;
+    --gold: #a67c2e; --gold-soft: rgba(166, 124, 46, 0.16);
+    --bad: #9c3529; --bad-soft: rgba(156, 53, 41, 0.08);
+    --shadow: rgba(46, 36, 24, 0.22);
+  }
   * { box-sizing: border-box; }
   body { font-family: Vazirmatn, Tahoma, "Segoe UI", sans-serif; margin: 0;
-         background: #f2f0eb; color: #26211d; line-height: 1.9; }
-  :focus-visible { outline: 2px solid #8a3d20; outline-offset: 2px; }
+         background: var(--desk); color: var(--ink); line-height: 1.9; }
+  :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
   .page { max-width: 1080px; margin: 0 auto; padding: 28px 32px 56px; }
-  header.console { border-bottom: 3px solid #8a3d20; padding-bottom: 10px;
+  header.console { border-bottom: 3px solid var(--gold); padding-bottom: 10px;
                    margin-bottom: 18px; }
-  header.console h1 { font-size: 26px; margin: 0 0 4px; color: #8a3d20; }
-  header.console .meta { font-size: 13px; color: #75695f; }
-  .draft { font-size: 12px; background: #f3e2c7; color: #7a5a20;
-           border: 1px dashed #b4552d; border-radius: 8px;
+  header.console h1 { font-size: 26px; margin: 0 0 4px; color: var(--lapis); }
+  header.console .meta { font-size: 13px; color: var(--mute); }
+  .draft { font-size: 12px; background: var(--gold-soft); color: var(--gold);
+           border: 1px dashed var(--gold); border-radius: 8px;
            padding: 1px 10px; vertical-align: middle; }
-  h2 { font-size: 18px; color: #6e3418; border-right: 4px solid #b4552d;
+  h2 { font-size: 18px; color: var(--lapis-deep); border-right: 4px solid var(--gold);
        padding-right: 10px; margin: 26px 0 8px; }
-  .append-only { font-size: 12px; background: #e8efe6; color: #2f5d3a;
+  .append-only { font-size: 12px; background: rgba(62, 107, 79, 0.12); color: #3e6b4f;
                  border-radius: 8px; padding: 1px 8px; }
   .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch;
                border-radius: 8px; }
-  table { width: 100%; border-collapse: collapse; background: #fff;
-          border: 1px solid #e0d8ca; border-radius: 8px; font-size: 14px; }
-  th { background: #efe8dc; color: #5c4a3d; font-weight: 600;
-       padding: 6px 10px; text-align: right; border-bottom: 2px solid #e0d8ca; }
-  td { padding: 5px 10px; border-bottom: 1px dashed #ece5d8;
+  table { width: 100%; border-collapse: collapse; background: var(--raised);
+          border: 1px solid var(--rule); border-radius: 8px; font-size: 14px; }
+  th { background: var(--surface); color: var(--lapis-deep); font-weight: 700;
+       padding: 6px 10px; text-align: right; border-bottom: 2px solid var(--rule); }
+  td { padding: 5px 10px; border-bottom: 1px dashed rgba(205, 191, 159, 0.55);
        vertical-align: top; }
   tr:last-child td { border-bottom: none; }
   td.num { direction: ltr; text-align: right; }
   td.mono { direction: ltr; text-align: right;
             font-family: "Courier New", monospace; font-size: 12.5px; }
   td.email { direction: ltr; text-align: right; }
-  td.empty { text-align: center; color: #9a8d80; }
-  td.detail { color: #8a2b20; }
-  tr.failed-row { background: #fdf1ee; }
-  tr.failed-row td { border-bottom: 1px solid #f0d5cd; }
-  .failure-count { font-size: 13px; color: #8a2b20; margin: 4px 0 8px; }
-  .write-note { font-size: 12px; background: #f3e2c7; color: #7a5a20;
+  td.empty { text-align: center; color: var(--mute); }
+  td.detail { color: var(--bad); }
+  tr.failed-row { background: rgba(156, 53, 41, 0.07); }
+  tr.failed-row td { border-bottom: 1px solid rgba(156, 53, 41, 0.18); }
+  .failure-count { font-size: 13px; color: var(--bad); margin: 4px 0 8px; }
+  .write-note { font-size: 12px; background: var(--gold-soft); color: var(--gold);
                 border-radius: 8px; padding: 1px 8px; }
-  .write-error { background: #fdf1ee; color: #8a2b20;
-                 border: 1px solid #e5b8ad; border-radius: 8px;
+  .write-error { background: rgba(156, 53, 41, 0.07); color: var(--bad);
+                 border: 1px solid rgba(156, 53, 41, 0.35); border-radius: 8px;
                  padding: 6px 12px; font-size: 13.5px; margin: 8px 0; }
   .writes { display: flex; gap: 18px; flex-wrap: wrap; }
-  form.write { background: #fff; border: 1px solid #e0d8ca;
+  form.write { background: var(--raised); border: 1px solid var(--rule);
                border-radius: 8px; padding: 12px 16px 14px; flex: 1 1 300px; }
-  form.write h3 { margin: 0 0 10px; font-size: 15px; color: #6e3418; }
-  form.write label { display: block; font-size: 13px; color: #5c4a3d;
+  form.write h3 { margin: 0 0 10px; font-size: 15px; color: var(--lapis-deep); }
+  form.write label { display: block; font-size: 13px; color: var(--mute);
                      margin-bottom: 8px; }
   form.write input, form.write select { display: block; width: 100%;
                      margin-top: 3px; padding: 5px 8px; font-size: 14px;
-                     border: 1px solid #d8cfc0; border-radius: 6px;
-                     background: #fbfaf7; box-sizing: border-box; }
-  form.write button { margin-top: 4px; background: #8a3d20; color: #fff;
+                     border: 1px solid var(--rule); border-radius: 6px;
+                     background: var(--surface); box-sizing: border-box;
+                     font-family: inherit; }
+  form.write button { margin-top: 4px; background: var(--lapis); color: #fff;
                       border: none; border-radius: 6px; padding: 7px 18px;
                       font-size: 14px; font-family: inherit; cursor: pointer; }
-  footer.note { margin-top: 30px; font-size: 12.5px; color: #75695f;
-                border-top: 1px solid #e0d8ca; padding-top: 10px; }
+  form.write button:hover { background: var(--lapis-deep); }
+  footer.note { margin-top: 30px; font-size: 12.5px; color: var(--mute);
+                border-top: 1px solid var(--rule); padding-top: 10px; }
   /* The phone: the page's gutter narrows and the tables keep a
      readable width inside their swipe wrapper, never crushed into
      illegibility (the mobile audit). */

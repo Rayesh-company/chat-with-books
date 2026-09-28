@@ -164,11 +164,13 @@ def test_the_console_renders_the_system_for_the_admin():
         # chat count against the daily limit — and the Admin's own row
         # beside it.
         assert f"{phone}@sheet.test" in html
-        assert "999,982" in html
+        # The console speaks the shell's digit language (fa-IR): Persian
+        # digits with the Persian thousands separator.
+        assert "۹۹۹٬۹۸۲" in html
         assert "خرج دیروز (تومان)" in html
-        assert '<td class="num">6</td>' in html
-        assert "<td class=\"num\">18</td>" in html
-        assert "1 از 5" in html
+        assert '<td class="num">۶</td>' in html
+        assert "<td class=\"num\">۱۸</td>" in html
+        assert "۱ از ۵" in html
         assert ADMIN_EMAIL in html
         # The live turn rides with its id and its Farsi state.
         assert turn.id in html
@@ -249,7 +251,7 @@ def test_the_console_page_is_pure_over_its_inputs():
         quota_limit=5,
     )
     assert CONSOLE_TITLE in html and "پیش‌نویس" in html
-    assert "500,000" in html and "40" in html and "120" in html and "2 از 5" in html
+    assert "۵۰۰٬۰۰۰" in html and "۴۰" in html and "۱۲۰" in html and "۲ از ۵" in html
     assert "خرج دیروز (تومان)" in html and "خرج امروز (تومان)" in html
     assert "اپراتور نشست" in html
     assert "turn1" in html and "نوشتن پاسخ" in html
@@ -435,7 +437,7 @@ def test_the_admin_tops_a_balance_up_from_the_console():
         # The console's own mirror re-renders it, and the audit table
         # names the action in Farsi.
         _, _, html = get_html(base, "/admin", cookie=admin_cookie)
-        assert "1,120,000" in html
+        assert "۱٬۱۲۰٬۰۰۰" in html
         assert "شارژ اعتبار" in html
     finally:
         stop_gate(server, originals)
