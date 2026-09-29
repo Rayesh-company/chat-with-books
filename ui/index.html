@@ -545,10 +545,31 @@
         display: flex;
         flex-direction: column;
         gap: 1.2rem;
+        /* The sitting swap (2026-09-29 UX pass): a sidebar click dims
+           the outgoing thread while its replacement loads, so the cut
+           reads as a crossfade instead of a freeze-then-pop. */
+        transition: opacity 0.18s ease;
+      }
+
+      .thread-list.thread-switching {
+        opacity: 0.45;
+        pointer-events: none;
       }
 
       .thread-list[hidden] {
         display: none;
+      }
+
+      /* The one motion off-switch: a reader who asked for stillness
+         gets stillness — both the popover's entrance and the swap dim. */
+      @media (prefers-reduced-motion: reduce) {
+        #profile:not([hidden]) {
+          animation: none;
+        }
+
+        .thread-list {
+          transition: none;
+        }
       }
 
       .msg-user-row {
@@ -1465,36 +1486,48 @@
         flex-shrink: 0;
       }
 
-      /* ===== The profile (T24, GitLab #27) — kept self-contained; the
-         honesty badges are styled apart — dashed and muted for an
-         estimate, so an estimate never looks measured. DRAFT labels,
-         pending PM approval (see the section's comment in the body). */
+      /* ===== The profile (T24, GitLab #27) — a small card anchored
+         under its own topbar button (JS sets the physical offsets from
+         the button's rect, so it lands beside its toggle at every
+         breakpoint). The honesty badges are styled apart — dashed and
+         muted for an estimate, so an estimate never looks measured.
+         DRAFT labels, pending PM approval (see the section's comment
+         in the body). */
       #profile {
+        position: fixed;
+        z-index: 60;
+        width: min(21rem, calc(100vw - 1.6rem));
         border: 1px solid var(--rule);
+        outline: 1px solid var(--gold-soft);
+        outline-offset: -6px;
+        border-radius: 12px;
         background: var(--raised);
+        box-shadow: 0 18px 40px var(--shadow);
         padding: 1rem 1.25rem;
-        margin: 0 auto 1.6rem;
-        width: calc(100% - 2.2rem);
-        max-width: 46rem;
+        margin: 0;
       }
 
-      #profile h2 {
-        margin: 0 0 0.5rem;
-        font-size: 1rem;
+      #profile:not([hidden]) {
+        animation: profile-in 0.16s ease-out;
       }
 
-      /* The profile (T24 restage, the journey prototype #39): a hero
-         balance card and the Sessions' spend as stacked paper sheets —
-         the meter's verdict rides as a status dot (green = measured,
-         gold = estimated), never as a button. */
+      /* Slide only — the entrance must never hold the card at opacity
+         0: a tab whose animations are suspended (backgrounded, or a
+         renderer that never ticks the clock) would otherwise keep the
+         open card invisible. A paused slide costs six pixels; a paused
+         fade costs the whole card. */
+      @keyframes profile-in {
+        from {
+          transform: translateY(-6px);
+        }
+      }
+
       .profile-hero {
         display: flex;
         align-items: center;
         gap: 1rem;
         flex-wrap: wrap;
         border: 1px solid var(--rule);
-        outline: 1px solid var(--gold-soft);
-        outline-offset: -6px;
         border-radius: 12px;
         background: var(--raised);
         padding: 0.9rem 1.25rem;
@@ -2196,20 +2229,21 @@
           </form>
         </div>
 
-        <!-- The profile (T24, GitLab #27): the Account's own view — the
-             Balance (اعتبار), today's spend, and the Sessions' spend
-             history, newest Session first. The section never computes
-             Toman itself: /profile/data carries the numbers and each
-             entry's honesty badge. DRAFT display vocabulary, pending PM
-             approval (2026-09-19, CONTEXT.md's draft roster discipline) —
-             the two badges «اندازه‌گیری‌شده» (metered) and «تخمینی»
-             (estimated) live in ONE server constant pair, ui/serve.py's
-             PROFILE_METERED_BADGE / PROFILE_ESTIMATED_BADGE, and ride the
-             payload, so the PM's approval renames them in one line and
-             this file's render stays name-blind (the source-lock test
-             pins the strings together on both sides). -->
-        <section id="profile" hidden aria-label="پروفایل">
-          <h2>پروفایل</h2>
+        <!-- The profile (T24, GitLab #27): the Account's own view — a
+             small card anchored under its own topbar button (the old
+             in-flow section at the page's end answered a top-row click
+             with a panel rows below the fold — the 2026-09-29 UX fix).
+             The section never computes Toman itself: /profile/data
+             carries the numbers and each entry's honesty badge. DRAFT
+             display vocabulary, pending PM approval (2026-09-19,
+             CONTEXT.md's draft roster discipline) — the two badges
+             «اندازه‌گیری‌شده» (metered) and «تخمینی» (estimated) live in
+             ONE server constant pair, ui/serve.py's
+             PROFILE_METERED_BADGE / PROFILE_ESTIMATED_BADGE, and ride
+             the payload, so the PM's approval renames them in one line
+             and this file's render stays name-blind (the source-lock
+             test pins the strings together on both sides). -->
+        <section id="profile" hidden aria-label="پروفایل" tabindex="-1">
           <div class="profile-hero" id="profile-numbers">…</div>
           <div id="profile-sessions"></div>
         </section>
@@ -2405,6 +2439,7 @@
               item.className =
                 "session-item" +
                 (row.id === sessionState.storeId ? " active" : "");
+              item.dataset.storeId = String(row.id);
               item.setAttribute("role", "button");
               item.tabIndex = 0;
               const title = document.createElement("div");
@@ -2464,13 +2499,44 @@
           .catch(() => {});
       }
 
+      // One switching token per open attempt: a fast sidebar click-walk
+      // abandons each superseded load instead of letting the slowest
+      // fetch win the sheet (the 2026-09-29 smoothness pass).
+      let sessionSwitchSeq = 0;
+
+      function paintSessionListActive(id) {
+        // Instant active feedback: the highlight moves on click, not
+        // when the sitting's fetch and render finish.
+        for (const item of sessionItemsEl.querySelectorAll(".session-item")) {
+          item.classList.toggle(
+            "active",
+            item.dataset.storeId === String(id)
+          );
+        }
+      }
+
       async function openStoreSession(id) {
+        // Re-clicking the open sitting is not a reload request — the
+        // jolt (refetch, re-render, scroll) taught nothing new.
+        if (sessionState.active && sessionState.storeId === id && !threadListEl.hidden) {
+          setSidebar(false);
+          return;
+        }
+        const token = ++sessionSwitchSeq;
+        paintSessionListActive(id);
+        const switching =
+          sessionState.active && !threadListEl.hidden && threadListEl.childElementCount > 0;
+        if (switching) threadListEl.classList.add("thread-switching");
         let session = null;
         try {
           const res = await fetch(`/sessions/${id}`, { cache: "no-store" });
           session = res.ok ? await res.json() : null;
         } catch {}
-        if (!session) return;
+        if (!session) {
+          threadListEl.classList.remove("thread-switching");
+          return;
+        }
+        if (token !== sessionSwitchSeq) return;
         if (quotedAbort) quotedAbort.abort();
         resetResearch();
         setResearchMode(false);
@@ -2502,6 +2568,14 @@
         // the session row carries the book id — name it, never «کتاب».
         bookChipEl.textContent = BOOK_TITLES[session.book] || session.book || "کتاب";
         bookChipEl.hidden = false;
+        // The draft is the sitting's, not the shell's: each Session
+        // keeps its own half-asked question under its own key, so
+        // switching sittings never carries book A's words into book B.
+        try {
+          questionEl.value = localStorage.getItem(draftKey()) || "";
+          autosizeComposer();
+          updateCharNote();
+        } catch {}
         threadListEl.replaceChildren();
         for (const message of session.messages || []) {
           if (message.role === "user") {
@@ -2625,7 +2699,11 @@
           storeResearch({ session_id: researchSessionId });
           hydrateResearch(researchSessionId);
         }
-        scrollThreadEnd();
+        threadListEl.classList.remove("thread-switching");
+        // Land at the end with a cut, not a glide: the swap already
+        // moved the reader's ground once; a smooth swoosh on top of it
+        // reads as losing the page under their hand.
+        scrollThreadEnd(false);
       }
 
       // Multi-device: the sidebar refetches when the tab regains focus —
@@ -2701,6 +2779,14 @@
           questionEl.value = seedQuestion;
           autosizeComposer();
           updateCharNote();
+        } else {
+          // A fresh sitting starts from its own (empty) draft, never
+          // from the words a previous sitting left in the box.
+          try {
+            questionEl.value = localStorage.getItem(draftKey()) || "";
+          } catch {}
+          autosizeComposer();
+          updateCharNote();
         }
         renderSessionList();
         if (!window.matchMedia("(pointer: coarse)").matches) {
@@ -2733,6 +2819,15 @@
 
       // ===== The composer: autosize, the counter near the ceiling, the
       // per-Session draft, Enter-to-send on a pointer device only.
+      // The draft's storage key follows the sitting: an open Session's
+      // half-asked question lives under its own key, the anonymous
+      // new-Session draft under the legacy one — switching sittings
+      // never trades words behind the operator's back.
+      function draftKey() {
+        return sessionState.storeId
+          ? `composerDraft:s:${sessionState.storeId}`
+          : "composerDraft";
+      }
       function autosizeComposer() {
         questionEl.style.height = "auto";
         // border-box: hide the scrollbar until the ceiling clips the
@@ -2754,7 +2849,7 @@
         autosizeComposer();
         updateCharNote();
         try {
-          localStorage.setItem("composerDraft", questionEl.value);
+          localStorage.setItem(draftKey(), questionEl.value);
         } catch {}
       });
       try {
@@ -4631,7 +4726,7 @@
         autosizeComposer();
         updateCharNote();
         try {
-          localStorage.removeItem("composerDraft");
+          localStorage.removeItem(draftKey());
         } catch {}
 
         // The one door, two modes (ADR-0015): armed, the question goes
@@ -6134,10 +6229,71 @@
         }
 
         toggleBtn.addEventListener("click", function () {
-          const open = section.hidden;
-          section.hidden = !open;
-          toggleBtn.setAttribute("aria-expanded", String(open));
-          if (open) refreshProfile();
+          setOpen(section.hidden);
+        });
+
+        // The card anchors to its own button (physical offsets from the
+        // button's rect: it lands beside the toggle at every breakpoint
+        // and both directions), focus moves in, and the open card
+        // closes on Escape, an outside click, or a resize — the
+        // popover's contract, not a page section's.
+        let outsideClose = null;
+        let escapeClose = null;
+        function place() {
+          const rect = toggleBtn.getBoundingClientRect();
+          section.style.top = Math.round(rect.bottom + 8) + "px";
+          // Anchor to the button's edge, then keep the card inside the
+          // viewport: the wrapped topbar can carry the button to the
+          // physical left, where right-anchoring alone would push the
+          // card out past the other edge.
+          const cardW = Math.min(336, innerWidth - 16);
+          if (rect.right - cardW < 8) {
+            section.style.right = "auto";
+            section.style.left = Math.max(8, Math.round(rect.left)) + "px";
+          } else {
+            section.style.left = "auto";
+            section.style.right =
+              Math.max(8, Math.round(innerWidth - rect.right)) + "px";
+          }
+        }
+        function close() {
+          section.hidden = true;
+          toggleBtn.setAttribute("aria-expanded", "false");
+          if (outsideClose) {
+            document.removeEventListener("click", outsideClose, true);
+            outsideClose = null;
+          }
+          if (escapeClose) {
+            document.removeEventListener("keydown", escapeClose, true);
+            escapeClose = null;
+          }
+          toggleBtn.focus();
+        }
+        function setOpen(open) {
+          if (!open) {
+            close();
+            return;
+          }
+          place();
+          section.hidden = false;
+          toggleBtn.setAttribute("aria-expanded", "true");
+          refreshProfile();
+          outsideClose = (event) => {
+            if (!section.contains(event.target) && event.target !== toggleBtn)
+              close();
+          };
+          escapeClose = (event) => {
+            if (event.key === "Escape") close();
+          };
+          document.addEventListener("click", outsideClose, true);
+          document.addEventListener("keydown", escapeClose, true);
+          section.focus();
+        }
+        // A resize re-anchors instead of closing: phones resize
+        // constantly (URL bar, keyboard) — a card that died on every
+        // resize would never survive a scroll.
+        window.addEventListener("resize", () => {
+          if (!section.hidden) place();
         });
 
         // The Admin's door: /auth/me names the role on load; only the

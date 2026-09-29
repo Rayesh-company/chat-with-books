@@ -170,3 +170,56 @@ def test_session_ui_never_serves_from_stale_cache():
     assert "Cache-Control" in text
     assert 'getattr(self, "_cache_policy", None) or "no-cache"' in text
     assert '"max-age=604800, immutable"' in text
+
+
+def test_switching_a_sitting_is_instant_and_guarded():
+    # The 2026-09-29 smoothness pass: a sidebar click used to freeze the
+    # old thread through the fetch, swap it in one frame, then swoosh
+    # the view to the bottom — with the highlight waiting for the whole
+    # render and a fast click-walk letting the slowest fetch win.
+    html = UI.read_text(encoding="utf-8")
+    # The highlight moves on click, before the fetch; the active row
+    # rides the row's own dataset.
+    assert "item.dataset.storeId" in html
+    assert "function paintSessionListActive" in html
+    assert html.index("paintSessionListActive(id);") < html.index(
+        "fetch(`/sessions/${id}`"
+    )
+    # A superseded load is abandoned, not merged.
+    assert "sessionSwitchSeq" in html
+    assert "if (token !== sessionSwitchSeq) return;" in html
+    # Re-clicking the open sitting refetches nothing.
+    assert "sessionState.active && sessionState.storeId === id" in html
+    # The swap dims the outgoing thread (a crossfade, not a freeze-pop)
+    # and lands at the end with a cut, not a glide.
+    assert "thread-switching" in html
+    assert "scrollThreadEnd(false);" in html
+
+
+def test_the_draft_belongs_to_the_sitting():
+    # Switching sittings never trades words behind the operator's back:
+    # the half-asked question is stored under the sitting's own key and
+    # restored on resume; the anonymous new-Session draft keeps the
+    # legacy key.
+    html = UI.read_text(encoding="utf-8")
+    assert "function draftKey()" in html
+    assert "`composerDraft:s:${sessionState.storeId}`" in html
+    assert "localStorage.setItem(draftKey(), questionEl.value)" in html
+    assert "localStorage.removeItem(draftKey())" in html
+    assert "questionEl.value = localStorage.getItem(draftKey())" in html
+
+
+def test_the_profile_is_a_card_at_its_own_button():
+    # The old in-flow section sat at the page's end: a top-row toggle
+    # answered with a panel rows below the fold. The card anchors to
+    # its own button (physical offsets from the rect), focuses in, and
+    # closes on Escape, an outside click, or a resize.
+    html = UI.read_text(encoding="utf-8")
+    assert 'aria-label="پروفایل" tabindex="-1"' in html
+    assert "#profile:not([hidden])" in html
+    assert "function place()" in html
+    assert "outsideClose" in html
+    assert "escapeClose" in html
+    # The card is named by its toggle; the redundant visible heading is
+    # gone with the old section.
+    assert "<h2>پروفایل</h2>" not in html
