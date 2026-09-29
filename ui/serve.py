@@ -1760,8 +1760,10 @@ class SessionHandler(SimpleHTTPRequestHandler):
         """The sheet header's live read (T22, GitLab #24): the open
         Session's running Toman total — everything since this Account's
         newest `ask` entry inclusive — plus the server-local day's
-        spend. The tariff is config's business; this endpoint only
-        reports what the ledger already recorded."""
+        spend, and the Account's Balance beside them (2026-09-29): the
+        cost chip shows the sitting against the credit it spends, and
+        one read answers all three. The tariff is config's business;
+        this endpoint only reports what the ledger already recorded."""
         account = resolve_identity(self)
         if account is None:
             return
@@ -1770,6 +1772,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             {
                 "session_toman": session_total(account),
                 "today_toman": today_total(account),
+                "balance_toman": get_balance(account),
             },
         )
 

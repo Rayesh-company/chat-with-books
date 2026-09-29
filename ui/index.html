@@ -503,6 +503,60 @@
         color: var(--ok);
       }
 
+      /* ===== The cost chip as a credit meter (2026-09-29): the
+         sitting's spend against the credit it spends — a thin gold
+         ribbon fills across a rule-colored track, the percentage sits
+         beside it, the absolute Toman follows. The meter and the
+         percentage exist only once a balance is known (has-credit);
+         without one the chip keeps its honest absolute-only text. */
+      #usage-live {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+      }
+
+      .usage-meter {
+        display: none;
+        width: 56px;
+        height: 4px;
+        border-radius: 999px;
+        background: var(--rule);
+        overflow: hidden;
+        flex: none;
+      }
+
+      #usage-live.has-credit .usage-meter {
+        display: inline-block;
+      }
+
+      #usage-meter-fill {
+        display: block;
+        height: 100%;
+        width: 0%;
+        border-radius: inherit;
+        background: var(--gold);
+        transition: width 0.4s ease;
+      }
+
+      .usage-pct {
+        color: var(--gold);
+        font-weight: 500;
+      }
+
+      .usage-credit-note {
+        color: var(--mute);
+      }
+
+      .usage-cost-short {
+        display: none;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #usage-meter-fill {
+          transition: none;
+        }
+      }
+
       p.status[data-state="down"] {
         color: var(--bad);
       }
@@ -1848,7 +1902,9 @@
         /* The service-ping line yields on a phone; the session's cost
            never does (impeccable critique, 2026-09-28): every ask
            spends, and a phone was the one surface where the money
-           moved invisibly. The cost line folds to a compact chip. */
+           moved invisibly. The chip folds to its compact body — meter,
+           percentage, credit note, bare Toman all fit (measured 169px
+           at 390); only the long «هزینۀ نشست:» label yields. */
         .topbar p.status#status {
           display: none;
         }
@@ -1857,8 +1913,19 @@
           font-size: 0.72rem;
           white-space: nowrap;
           overflow: hidden;
-          text-overflow: ellipsis;
-          max-width: 9.5rem;
+          max-width: 11rem;
+        }
+
+        #usage-live .usage-note {
+          display: none;
+        }
+
+        #usage-live .usage-cost-short {
+          display: inline;
+        }
+
+        #usage-live .usage-meter {
+          width: 40px;
         }
 
         h1#session-title {
@@ -2113,7 +2180,7 @@
           <div class="topbar-actions">
             <p class="status" id="status" data-state="unknown">در حال بررسی سرویس…</p>
             <!-- The live session price (T22, GitLab #24): the tariff is config's business; this chip only reads the ledger. -->
-            <p class="status" id="usage-live" data-state="idle" title="هزینۀ این نشست از آغاز آخرین پرسش">هزینۀ نشست: —</p>
+            <p class="status" id="usage-live" data-state="idle" title="هزینۀ این نشست از آغاز آخرین پرسش"><span class="usage-meter" aria-hidden="true"><span id="usage-meter-fill"></span></span><span class="usage-note" id="usage-note">هزینۀ نشست: —</span><span class="usage-pct" id="usage-pct" hidden></span><span class="usage-credit-note" id="usage-credit-note" hidden></span><span class="usage-cost-short" id="usage-cost-short" hidden>—</span></p>
             <button type="button" id="reader-browse" class="browse-btn">کتاب‌ها</button>
             <!-- The profile toggle (T24, GitLab #27): «پروفایل» is the
                  Account's own view of its Balance and its Sessions' spend
@@ -2333,6 +2400,10 @@
       // confirm's armed label is a NEW draft string, pinned for the PM.
       const SESSION_DELETE_LABEL = "حذف";
       const SESSION_DELETE_CONFIRM_LABEL = "حذف نشست؟";
+      // The cost chip's credit note (2026-09-29): the percentage beside
+      // the meter reads «…٪ از اعتبار» — composed of the roster's
+      // approved word (اعتبار), pinned here as a NEW draft phrase.
+      const USAGE_CREDIT_NOTE = "از اعتبار";
 
       const BOOK_TITLES = {
         "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
@@ -4017,6 +4088,12 @@
       // shell renames nothing (see the draft marker on #research-suggest).
       // The live session price (T22, GitLab #24): one read after each
       // phase lands — the ledger holds the truth, this only renders it.
+      // The chip speaks credit (2026-09-29): beside the absolute Toman,
+      // a gold ribbon meter and the sitting's share of the Account's
+      // Balance (٪). The percentage exists only while a balance is
+      // known — an unknown credit renders no share, never a made-up
+      // one; a nonzero spend keeps a sliver of fill so the ribbon
+      // never reads as empty against an exact ~0٪.
       async function refreshUsageLive() {
         try {
           const res = await fetch("/usage/live");
@@ -4024,7 +4101,44 @@
           const data = await res.json();
           const el = document.getElementById("usage-live");
           if (!el) return;
-          el.textContent = `هزینۀ نشست: ${(data.session_toman ?? 0).toLocaleString("fa-IR")} تومان · امروز: ${(data.today_toman ?? 0).toLocaleString("fa-IR")}`;
+          const sessionToman = data.session_toman ?? 0;
+          const costText = sessionToman.toLocaleString("fa-IR");
+          const note = document.getElementById("usage-note");
+          if (note)
+            note.textContent = `هزینۀ نشست: ${costText} تومان`;
+          const short = document.getElementById("usage-cost-short");
+          if (short) short.textContent = `${costText} تومان`;
+          const balance = data.balance_toman;
+          const hasCredit = typeof balance === "number" && balance > 0;
+          el.classList.toggle("has-credit", hasCredit);
+          const pctEl = document.getElementById("usage-pct");
+          const fill = document.getElementById("usage-meter-fill");
+          if (hasCredit) {
+            const share = Math.min(100, (sessionToman / balance) * 100);
+            const shown =
+              share >= 10
+                ? Math.round(share)
+                : Math.round(share * 10) / 10;
+            if (pctEl) {
+              pctEl.textContent =
+                shown.toLocaleString("fa-IR", { maximumFractionDigits: 1 }) +
+                "٪";
+              pctEl.hidden = false;
+            }
+            if (fill)
+              fill.style.width =
+                (share > 0 ? Math.max(6, share) : 0) + "%";
+            const creditNote = document.getElementById(
+              "usage-credit-note"
+            );
+            if (creditNote) {
+              creditNote.textContent = USAGE_CREDIT_NOTE;
+              creditNote.hidden = false;
+            }
+          } else {
+            if (pctEl) pctEl.hidden = true;
+            if (fill) fill.style.width = "0%";
+          }
           el.dataset.state = "live";
         } catch (_) {
           // The chip is decoration — a failed read leaves the last value.

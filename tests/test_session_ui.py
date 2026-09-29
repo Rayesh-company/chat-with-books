@@ -223,3 +223,22 @@ def test_the_profile_is_a_card_at_its_own_button():
     # The card is named by its toggle; the redundant visible heading is
     # gone with the old section.
     assert "<h2>پروفایل</h2>" not in html
+
+
+def test_the_cost_chip_speaks_credit():
+    # 2026-09-29: absolute Toman alone says nothing about how much of
+    # the credit a sitting burns. The chip carries a gold ribbon meter
+    # and the sitting's share of the Account's Balance — the percentage
+    # exists only while a balance is known (an unknown credit renders
+    # no share, never a made-up one), and the phone keeps the compact
+    # body: meter, percentage, bare Toman; the long label and the
+    # credit note wait for the desktop's room.
+    html = UI.read_text(encoding="utf-8")
+    assert 'id="usage-meter-fill"' in html
+    assert "usage-cost-short" in html
+    assert "USAGE_CREDIT_NOTE" in html
+    assert "has-credit" in html
+    assert 'fetch("/usage/live")' in html
+    assert "balance_toman" in html
+    # The pinned credit note and its DRAFT row travel together.
+    assert "از اعتبار" in html
