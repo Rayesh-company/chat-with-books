@@ -6,6 +6,47 @@ SERVE = REPO_ROOT / "ui" / "serve.py"
 COMPOSE = REPO_ROOT / "compose.yaml"
 
 
+def test_selection_popover_pins_the_notebook_draft_strings():
+    # The selection map's variant A toolbar (2026-10-01): a live selection
+    # inside a chat message or the book's text layer opens the one door to
+    # the notebook; the note quick-saves with defaults and the toast tells
+    # so. The ask verb is staged disabled — it joins with the in-book chat
+    # drawer (ticket 09) — and reads on the book only.
+    html = UI.read_text(encoding="utf-8")
+    assert 'id="selection-pop"' in html
+    assert 'id="note-toast"' in html
+    assert 'id="selection-add"' in html
+    assert 'id="selection-ask"' in html
+    assert 'ADD_TO_NOTE_LABEL = "افزودن به یادداشت"' in html
+    assert 'ASK_FROM_SELECTION_LABEL = "پرسش از این متن"' in html
+    assert 'NOTE_SAVED_TOAST = "به دفتر یادداشت اضافه شد"' in html
+    assert 'NOTE_VIEW_ACTION = "مشاهده"' in html
+    assert "selectionAskBtn.disabled = true" in html
+    assert "selectionAskBtn.hidden" in html
+
+
+def test_selection_to_note_maps_through_the_normalized_stream():
+    # The note's durable shape: selected spans re-read in the page's own
+    # geometric order (the layer's DOM order is extraction scatter), text
+    # via cleanFarsi, and a text-ref per page (at/len) in the page's
+    # normalized stream — the coordinate matchOnPage/paintMatch consume,
+    # never raw DOM order; a chat-surface note snapshots the sitting's
+    # store id as its source.
+    html = UI.read_text(encoding="utf-8")
+    assert "function selectionToNote()" in html
+    assert "noteStaging" in html
+    assert "p.top - q.top || q.left - p.left" in html
+    assert "normStream(pageRaw)" in html
+    assert "matchOnPage(rec, needle)" in html
+    assert "note.refs.push(" in html
+    assert 'kind: "book"' in html
+    assert 'kind: "session"' in html
+    assert "sessionState.storeId" in html
+    assert "cleanFarsi(pageRaw)" in html
+    # The buttons must not collapse the selection they are about to capture.
+    assert 'selectionPopEl.addEventListener("mousedown"' in html
+
+
 def test_session_ui_is_farsi_first_rtl():
     html = UI.read_text(encoding="utf-8")
     assert 'lang="fa"' in html

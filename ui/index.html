@@ -1851,6 +1851,65 @@
         background: rgba(46, 76, 134, 0.3);
       }
 
+      /* The selection popover (variant A): a small dark toolbar riding
+         beside a live selection — the one door to the notebook. It reads
+         like pointer UI, so it keeps its ink-on-parchment inverse in both
+         themes instead of tracking tokens. */
+      #selection-pop {
+        position: fixed;
+        z-index: 70;
+        display: none;
+        gap: 2px;
+        background: #2e2417;
+        border-radius: 9px;
+        padding: 4px;
+        box-shadow: 0 8px 26px rgba(28, 20, 10, 0.4);
+      }
+      #selection-pop.show {
+        display: flex;
+      }
+      #selection-pop button {
+        border: 0;
+        background: transparent;
+        color: #f3ead6;
+        font: inherit;
+        font-size: 13.5px;
+        padding: 7px 12px;
+        border-radius: 7px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      #selection-pop button:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.14);
+      }
+      #selection-pop button:disabled {
+        color: rgba(243, 234, 214, 0.45);
+        cursor: default;
+      }
+      #selection-pop button + button {
+        border-inline-start: 1px solid rgba(255, 255, 255, 0.12);
+      }
+
+      /* The quick-save toast; its «مشاهده» action joins with the
+         notebook panel. */
+      #note-toast {
+        position: fixed;
+        z-index: 80;
+        inset-inline-start: 50%;
+        transform: translateX(50%);
+        bottom: 84px;
+        background: #2e2417;
+        color: #f3ead6;
+        font-size: 13.5px;
+        padding: 10px 18px;
+        border-radius: 10px;
+        box-shadow: 0 8px 24px rgba(28, 20, 10, 0.35);
+        display: none;
+      }
+      #note-toast.show {
+        display: block;
+      }
+
       /* The located quotation: a clay band over the raster, positioned
          from the PDF's own glyph geometry (percentages of the page, so
          zoom and resize keep it glued). */
@@ -2374,6 +2433,16 @@
       <p class="reader-note" id="reader-note" hidden></p>
     </aside>
 
+    <!-- The selection popover (variant A): the one door from a live
+         selection — a chat message or the book's text layer — to the
+         notebook. The ask verb is staged here and joins the flow with
+         the in-book chat drawer. -->
+    <div id="selection-pop" role="toolbar" aria-label="کار با متن انتخاب‌شده">
+      <button type="button" id="selection-add"></button>
+      <button type="button" id="selection-ask" disabled></button>
+    </div>
+    <div id="note-toast" role="status" aria-live="polite"></div>
+
     <script>
       // ===== The chat shell (ADR-0014, T27 stage 1) =====
       // DRAFT display strings pending PM approval (CONTEXT.md's naming
@@ -2429,6 +2498,15 @@
       // the meter reads «…٪ از اعتبار» — composed of the roster's
       // approved word (اعتبار), pinned here as a NEW draft phrase.
       const USAGE_CREDIT_NOTE = "از اعتبار";
+      // The selection popover + notebook (selection map, 2026-10-01): the
+      // toolbar's two verbs and the quick-save toast are NEW draft
+      // strings, pinned here for the PM. «مشاهده» rides with the
+      // notebook panel — the constant exists so a PM rename lands in
+      // one line when the panel does.
+      const ADD_TO_NOTE_LABEL = "افزودن به یادداشت";
+      const ASK_FROM_SELECTION_LABEL = "پرسش از این متن";
+      const NOTE_SAVED_TOAST = "به دفتر یادداشت اضافه شد";
+      const NOTE_VIEW_ACTION = "مشاهده";
 
       const BOOK_TITLES = {
         "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
@@ -5853,6 +5931,221 @@
         e.preventDefault();
         e.clipboardData.setData("text/plain", cleanFarsi(sel.toString()));
       });
+
+      // ---- The selection popover (variant A, the selection map 2026-10-01) ----
+      // A live selection inside a chat message or the book's text layer is
+      // the one door to the researcher's notebook: a small floating
+      // toolbar rides beside the selection and the note quick-saves with
+      // defaults — capture first, edit later in the panel. The ask verb
+      // is staged disabled here and joins with the in-book chat drawer.
+      const selectionPopEl = document.getElementById("selection-pop");
+      const selectionAddBtn = document.getElementById("selection-add");
+      const selectionAskBtn = document.getElementById("selection-ask");
+      selectionAddBtn.textContent = ADD_TO_NOTE_LABEL;
+      selectionAskBtn.textContent = ASK_FROM_SELECTION_LABEL;
+      // The notebook store replaces this staging list; until then
+      // quick-saved notes wait here and nothing is lost in-session.
+      const noteStaging = [];
+      let selectionSurface = null; // "book" | "chat" | null
+      let selectionSyncTimer = null;
+
+      const noteToastEl = document.getElementById("note-toast");
+      let noteToastTimer = null;
+      function showToast(message) {
+        noteToastEl.textContent = message;
+        noteToastEl.classList.add("show");
+        clearTimeout(noteToastTimer);
+        noteToastTimer = setTimeout(
+          () => noteToastEl.classList.remove("show"),
+          2600
+        );
+      }
+
+      function selectionSurfaceOf(node) {
+        const el = node && (node.nodeType === 1 ? node : node.parentElement);
+        if (!el || !el.closest) return null;
+        if (el.closest(".textLayer")) return "book";
+        if (el.closest(".msg-user, .msg-assistant")) return "chat";
+        return null;
+      }
+
+      function hideSelectionPop() {
+        selectionPopEl.classList.remove("show");
+        selectionSurface = null;
+      }
+
+      function placeSelectionPop(rect) {
+        const pop = selectionPopEl;
+        pop.classList.add("show");
+        const margin = 10;
+        const w = pop.offsetWidth;
+        const h = pop.offsetHeight;
+        let top = rect.top - h - margin;
+        if (top < 8) {
+          top = Math.min(rect.bottom + margin, window.innerHeight - h - 8);
+        }
+        let left = rect.left + rect.width / 2 - w / 2;
+        left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+        pop.style.top = `${top}px`;
+        pop.style.left = `${left}px`;
+      }
+
+      function syncSelectionPop() {
+        const sel = document.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) {
+          hideSelectionPop();
+          return;
+        }
+        const startSurface = selectionSurfaceOf(sel.anchorNode);
+        if (!startSurface || startSurface !== selectionSurfaceOf(sel.focusNode)) {
+          hideSelectionPop();
+          return;
+        }
+        selectionSurface = startSurface;
+        // The ask verb only reads on the book — a chat answer already
+        // came from the assistant — and joins the flow with the drawer.
+        selectionAskBtn.hidden = startSurface !== "book";
+        selectionAskBtn.disabled = true;
+        const rect = sel.getRangeAt(0).getBoundingClientRect();
+        if (rect.width || rect.height) placeSelectionPop(rect);
+      }
+
+      // The book's selection → the note's durable shape: per-page clamped
+      // text via cleanFarsi, and a text-ref per page in the page's
+      // normalized stream — the exact coordinate matchOnPage/paintMatch
+      // consume, so a stored note re-highlights deterministically later.
+      function selectionToNote() {
+        const sel = document.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+        if (!selectionSurface) return null;
+        const note = {
+          doc: null,
+          pages: [],
+          text: "",
+          refs: [],
+          source: null,
+          created: Date.now(),
+        };
+        if (selectionSurface === "book") {
+          const range = sel.getRangeAt(0);
+          note.doc = reader.doc;
+          note.source = {
+            kind: "book",
+            doc: reader.doc,
+            title: BOOK_TITLES[reader.doc] || reader.doc,
+          };
+          const pageEls = [
+            ...readerPagesEl.querySelectorAll(".reader-page"),
+          ].filter(
+            (el) =>
+              range.intersectsNode(el) && el.querySelector(".textLayer")
+          );
+          for (const pageEl of pageEls) {
+            const n = Number(pageEl.dataset.page);
+            const rec = reader.recs.get(n);
+            const spans = pageEl.querySelectorAll(".textLayer span");
+            if (!spans.length) continue;
+            let pageText;
+            if (sel.containsNode(pageEl, false)) {
+              pageText = [...spans].map((s) => s.textContent).join("");
+            } else {
+              const r = range.cloneRange();
+              try {
+                if (pageEl.contains(range.startContainer)) {
+                  r.setStart(range.startContainer, range.startOffset);
+                } else {
+                  r.setStartBefore(spans[0]);
+                }
+                if (pageEl.contains(range.endContainer)) {
+                  r.setEnd(range.endContainer, range.endOffset);
+                } else {
+                  r.setEndAfter(spans[spans.length - 1]);
+                }
+                pageText = r.toString();
+              } catch (err) {
+                pageText = sel.toString();
+              }
+            }
+            // Reading order, not DOM order: the layer's spans carry the
+            // extraction scatter, so the note text and its ref needle are
+            // re-read in the stream's own geometric order (top-to-bottom,
+            // then right-to-left — the order buildPageParts speaks).
+            const selSpans = [...spans].filter((s) =>
+              range.intersectsNode(s)
+            );
+            const reading = selSpans
+              .map((s) => ({
+                s,
+                top: parseFloat(s.style.top) || 0,
+                left: parseFloat(s.style.left) || 0,
+              }))
+              .sort((p, q) => p.top - q.top || q.left - p.left)
+              .map((p) => p.s.textContent)
+              .join("");
+            const pageRaw = reading || pageText;
+            note.text += (note.text ? "\n" : "") + cleanFarsi(pageRaw);
+            // The ref lives in the page's normalized stream — never raw
+            // DOM order, whose extraction scatter and backspace noise
+            // never match. Whole-page notes skip the re-read (already in
+            // reading order via the stream itself) and match directly.
+            const needle = normStream(pageRaw);
+            const m =
+              needle.length >= 8 && rec && rec.stream
+                ? matchOnPage(rec, needle)
+                : null;
+            note.pages.push(n);
+            note.refs.push({
+              page: n,
+              at: m ? m.at : null,
+              len: m ? m.len : null,
+              full: m ? m.full : false,
+            });
+          }
+          if (!note.pages.length) return null;
+        } else {
+          note.text = cleanFarsi(sel.toString());
+          note.source = {
+            kind: "session",
+            session_id: sessionState.storeId,
+            title: null,
+          };
+        }
+        return note;
+      }
+
+      // Pressing a toolbar button must not collapse the selection the
+      // note is about to capture.
+      selectionPopEl.addEventListener("mousedown", (e) => e.preventDefault());
+      selectionAddBtn.addEventListener("click", () => {
+        const note = selectionToNote();
+        hideSelectionPop();
+        if (!note) return;
+        noteStaging.unshift(note);
+        showToast(NOTE_SAVED_TOAST);
+      });
+
+      document.addEventListener("mouseup", () => {
+        clearTimeout(selectionSyncTimer);
+        selectionSyncTimer = setTimeout(syncSelectionPop, 0);
+      });
+      document.addEventListener("touchend", () => {
+        clearTimeout(selectionSyncTimer);
+        selectionSyncTimer = setTimeout(syncSelectionPop, 250);
+      });
+      document.addEventListener("selectionchange", () => {
+        const sel = document.getSelection();
+        if (!sel || sel.isCollapsed) hideSelectionPop();
+        clearTimeout(selectionSyncTimer);
+        selectionSyncTimer = setTimeout(syncSelectionPop, 220);
+      });
+      window.addEventListener("scroll", hideSelectionPop, true);
+      document.addEventListener("mousedown", (e) => {
+        if (!selectionPopEl.contains(e.target)) hideSelectionPop();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") hideSelectionPop();
+      });
+
 
       // Reading-order item parts: the matcher's ground truth. Each part
       // keeps its normalized stream, its norm→raw index map inside the
