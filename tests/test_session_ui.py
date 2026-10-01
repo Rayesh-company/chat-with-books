@@ -21,8 +21,11 @@ def test_selection_popover_pins_the_notebook_draft_strings():
     assert 'ASK_FROM_SELECTION_LABEL = "پرسش از این متن"' in html
     assert 'NOTE_SAVED_TOAST = "به دفتر یادداشت اضافه شد"' in html
     assert 'NOTE_VIEW_ACTION = "مشاهده"' in html
-    assert "selectionAskBtn.disabled = true" in html
+    # The ask verb graduated from its staged disable (ticket 09 wired it
+    # to the in-book drawer): it now reads on the book.
+    assert "selectionAskBtn.disabled = false;" in html
     assert "selectionAskBtn.hidden" in html
+    assert "selectionAskBtn.addEventListener" in html
 
 
 def test_selection_to_note_maps_through_the_normalized_stream():
@@ -126,6 +129,59 @@ def test_notebook_store_serves_the_panel():
     store_py = (REPO_ROOT / "ui" / "note_store.py").read_text(encoding="utf-8")
     assert "NOTES_DB" in store_py
     assert "DELETE FROM notes WHERE account = ?" in store_py
+
+
+def test_in_book_chat_drawer_pins_the_draft_strings():
+    # Ticket 09: the drawer is «پرسش از متن» — deliberately not «حالت
+    # پژوهش» (taken) and never the forbidden گفتگو/چت; the prefill seeds
+    # the question and the handoff rides the roster's own words. The
+    # send word and the cost line reuse the sheet's pinned phrasing.
+    html = UI.read_text(encoding="utf-8")
+    assert 'IN_BOOK_CHAT_TITLE = "پرسش از متن"' in html
+    assert 'NB_CHAT_PREFILL = "این متن یعنی چه؟"' in html
+    assert 'NB_CHAT_HANDOFF = "ادامه در چت اصلی"' in html
+    assert "taSendEl.textContent = ASK_SEND_LABEL;" in html
+    assert "هزینۀ نشست:" in html
+    assert '"گفتگو' not in html.replace('»گفتگو', "")
+
+
+def test_in_book_chat_drawer_is_a_real_session_surface():
+    # The ticket-03 shape: every fresh selection opens a REAL Session
+    # (titled by the selection, bound to the open Book); the first user
+    # message carries the selection's provenance; the SAME pipeline
+    # endpoints run with the sitting's id and ask key — the picker and
+    # the writer settle SERVER-SIDE, so the drawer's compact render and
+    # the main thread's resume show one stored shape; the cost line
+    # reads /usage/live; the handoff jumps the main thread into that
+    # sitting with the composer armed.
+    html = UI.read_text(encoding="utf-8")
+    for marker in (
+        'id="text-ask"',
+        'id="ta-chip"',
+        'id="ta-thread"',
+        'id="ta-cost"',
+        'id="ta-form"',
+        'id="ta-input"',
+        'id="ta-handoff"',
+        "async function openTextAsk(",
+        "async function taAsk(",
+        'fetch("/sessions", {',
+        "title: truncateTitle(selCtx.text)",
+        "payload.selection = {",
+        'fetch("/api/v1/recall", {',
+        "datasets: [reader.doc]",
+        "session_id: taSession || undefined",
+        "ask_key: askKey",
+        "/quote-selection",
+        "/quoted-answer",
+        "async function taRefreshCost(",
+        'fetch("/usage/live")',
+        "openStoreSession(sid);",
+    ):
+        assert marker in html, marker
+    # The research toggle does not exist in the drawer (v1).
+    ta_block = html[html.index('id="text-ask"') : html.index('id="selection-pop"')]
+    assert "research-mode-btn" not in ta_block
 
 
 def test_session_ui_is_farsi_first_rtl():

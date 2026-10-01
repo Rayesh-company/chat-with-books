@@ -2122,6 +2122,145 @@
         cursor: pointer;
       }
 
+      /* The in-book chat drawer (variant A): docked at the inline end —
+         the reading column stays open beside it; full-width sheet on
+         phones. Token-driven like the notebook. */
+      #text-ask {
+        position: fixed;
+        z-index: 66;
+        inset-block: 0;
+        inset-inline-end: 0;
+        width: min(400px, 100%);
+        background: var(--surface);
+        border-inline-start: 1px solid var(--rule);
+        box-shadow: 0 0 40px var(--shadow);
+        display: flex;
+        flex-direction: column;
+        animation: nb-in 0.22s ease-out;
+      }
+      #text-ask[hidden] {
+        display: none;
+      }
+      .ta-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--rule);
+      }
+      .ta-head h2 {
+        margin: 0;
+        font-size: 0.95rem;
+        color: var(--clay);
+      }
+      .ta-head button {
+        border: 0;
+        background: transparent;
+        color: var(--mute);
+        font-size: 16px;
+        cursor: pointer;
+      }
+      .ta-chip {
+        margin: 10px 16px 0;
+        font-size: 12.5px;
+        background: var(--gold-soft);
+        border: 1px solid var(--rule);
+        border-radius: 8px;
+        padding: 8px 12px;
+        color: var(--ink);
+        max-height: 72px;
+        overflow: hidden;
+      }
+      .ta-thread {
+        flex: 1;
+        overflow: auto;
+        padding: 12px 16px;
+      }
+      .ta-m {
+        font-size: 13.5px;
+        background: var(--raised);
+        border: 1px solid var(--rule);
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+      }
+      .ta-m.q {
+        margin-inline-start: 44px;
+        background: var(--gold-soft);
+      }
+      .ta-m.a {
+        margin-inline-end: 44px;
+        border-inline-start: 3px solid var(--gold);
+      }
+      .ta-m .answer {
+        background: transparent;
+        border: 0;
+        padding: 0;
+        margin: 0;
+      }
+      .ta-m .doc-para {
+        font-size: 13.5px;
+      }
+      .ta-m .doc-heading {
+        font-size: 14px;
+      }
+      .ta-cost {
+        margin: 0 16px 6px;
+        font-size: 11.5px;
+        color: var(--mute);
+      }
+      .ta-cost[hidden] {
+        display: none;
+      }
+      .ta-composer {
+        display: flex;
+        gap: 8px;
+        padding: 10px 14px;
+        border-top: 1px solid var(--rule);
+      }
+      .ta-composer input {
+        flex: 1;
+        min-width: 0;
+        font: inherit;
+        font-size: 13.5px;
+        border: 1px solid var(--rule);
+        border-radius: 8px;
+        padding: 8px 12px;
+        background: var(--raised);
+        color: var(--ink);
+      }
+      .ta-composer input:disabled {
+        color: var(--mute);
+      }
+      .ta-composer button {
+        font: inherit;
+        font-size: 13.5px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--clay);
+        color: var(--surface);
+        padding: 8px 18px;
+        cursor: pointer;
+      }
+      .ta-composer button:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+      .ta-handoff {
+        padding: 0 14px 12px;
+        text-align: center;
+      }
+      .ta-handoff button {
+        font: inherit;
+        font-size: 12.5px;
+        background: transparent;
+        color: var(--clay);
+        border: 1px dashed var(--clay);
+        border-radius: 8px;
+        padding: 7px 16px;
+        cursor: pointer;
+      }
+
       /* The located quotation: a clay band over the raster, positioned
          from the PDF's own glyph geometry (percentages of the page, so
          zoom and resize keep it glued). */
@@ -2677,6 +2816,27 @@
       <div class="nb-list" id="nb-list"></div>
     </aside>
 
+    <!-- The in-book chat (variant A, ticket 03): a drawer over the
+         reader — the selection's own Q&A surface. Every ask is a REAL
+         Session in the store; the handoff jumps the main thread into
+         that sitting. -->
+    <aside id="text-ask" hidden>
+      <header class="ta-head">
+        <h2 id="ta-title"></h2>
+        <button type="button" id="ta-close" aria-label="بستن">✕</button>
+      </header>
+      <div class="ta-chip" id="ta-chip" hidden></div>
+      <div class="ta-thread" id="ta-thread"></div>
+      <p class="ta-cost" id="ta-cost" hidden></p>
+      <form class="ta-composer" id="ta-form">
+        <input id="ta-input" autocomplete="off">
+        <button type="submit" id="ta-send"></button>
+      </form>
+      <div class="ta-handoff">
+        <button type="button" id="ta-handoff"></button>
+      </div>
+    </aside>
+
     <!-- The selection popover (variant A): the one door from a live
          selection — a chat message or the book's text layer — to the
          notebook. The ask verb is staged here and joins the flow with
@@ -2777,6 +2937,17 @@
       const NB_SAVE = "ذخیره";
       const NB_COPIED = "منتخب‌ها کپی شد.";
       const NOTE_CATEGORIES = [NOTE_UNCATEGORIZED];
+      // The in-book chat (ticket 03/09): the drawer's own NEW draft
+      // strings — the title takes the name the PM batch already met as
+      // the toolbar's verb's sibling, deliberately NOT «حالت پژوهش»
+      // (taken) and never «گفتگو/چت» (forbidden). The prefill seeds the
+      // question about the selection; the handoff jump's label rides
+      // the roster's own words. The send word reuses ASK_SEND_LABEL
+      // («بپرس»), the cost line reuses the sheet's «هزینۀ نشست:»
+      // phrasing verbatim.
+      const IN_BOOK_CHAT_TITLE = "پرسش از متن";
+      const NB_CHAT_PREFILL = "این متن یعنی چه؟";
+      const NB_CHAT_HANDOFF = "ادامه در چت اصلی";
 
       const BOOK_TITLES = {
         "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
@@ -6286,9 +6457,9 @@
         }
         selectionSurface = startSurface;
         // The ask verb only reads on the book — a chat answer already
-        // came from the assistant — and joins the flow with the drawer.
+        // came from the assistant.
         selectionAskBtn.hidden = startSurface !== "book";
-        selectionAskBtn.disabled = true;
+        selectionAskBtn.disabled = false;
         const rect = sel.getRangeAt(0).getBoundingClientRect();
         if (rect.width || rect.height) placeSelectionPop(rect);
       }
@@ -6451,6 +6622,369 @@
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape") hideSelectionPop();
       });
+
+      // ---- The in-book chat (variant A, ticket 03/09) ----
+      // The selection's own Q&A drawer. It drives the SAME pipeline the
+      // main thread does — /api/v1/recall then the picker and the
+      // writer with the sitting's id and ask key — because the PHASE
+      // ENDPOINTS settle the answer SERVER-SIDE (the vanishing-content
+      // fix): whatever shape the drawer paints, the store holds the
+      // exact same article the main thread's resume renders. The
+      // drawer's render is only a compact view. Metering is identical:
+      // the recall rides the same gate (Balance + the day's cap), the
+      // phases ride the composer tap, and the cost line reads
+      // /usage/live after each settle. The research toggle does not
+      // exist here (v1).
+      const textAskEl = document.getElementById("text-ask");
+      const taTitleEl = document.getElementById("ta-title");
+      const taCloseEl = document.getElementById("ta-close");
+      const taChipEl = document.getElementById("ta-chip");
+      const taThreadEl = document.getElementById("ta-thread");
+      const taCostEl = document.getElementById("ta-cost");
+      const taFormEl = document.getElementById("ta-form");
+      const taInputEl = document.getElementById("ta-input");
+      const taSendEl = document.getElementById("ta-send");
+      const taHandoffEl = document.getElementById("ta-handoff");
+      taTitleEl.textContent = IN_BOOK_CHAT_TITLE;
+      textAskEl.setAttribute("aria-label", IN_BOOK_CHAT_TITLE);
+      taSendEl.textContent = ASK_SEND_LABEL;
+      taInputEl.placeholder = NB_CHAT_PREFILL;
+      taHandoffEl.textContent = NB_CHAT_HANDOFF;
+      let taSession = null;
+      let taBusy = false;
+      let taSelection = null;
+      // The recall payload's text, the main ask's own shape (a Cognee
+      // results array or a bare object) — mirrored here because the
+      // original rides the main ask's closure.
+      const taTextOf = (payload) =>
+        Array.isArray(payload) ? payload[0]?.text || "" : payload.text || "";
+
+      function closeTextAsk() {
+        textAskEl.hidden = true;
+      }
+      taCloseEl.addEventListener("click", closeTextAsk);
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !textAskEl.hidden) closeTextAsk();
+      });
+      // A quote click leaves for the Book — the drawer steps aside.
+      textAskEl.addEventListener("click", (e) => {
+        if (e.target.closest && e.target.closest(".cite-sent")) {
+          closeTextAsk();
+        }
+      });
+
+      async function taRefreshCost() {
+        try {
+          const res = await fetch("/usage/live");
+          if (!res.ok) return;
+          const data = await res.json();
+          const sessionToman = data.session_toman ?? 0;
+          taCostEl.textContent = `هزینۀ نشست: ${sessionToman.toLocaleString(
+            "fa-IR"
+          )} تومان`;
+          taCostEl.hidden = false;
+        } catch (err) {}
+      }
+
+      selectionAskBtn.addEventListener("click", () => {
+        const note = selectionToNote();
+        hideSelectionPop();
+        if (!note || !note.doc) return;
+        openTextAsk({
+          text: note.text,
+          doc: note.doc,
+          pages: note.pages,
+          refs: note.refs,
+        });
+      });
+
+      async function openTextAsk(selCtx) {
+        taSelection = selCtx;
+        taChipEl.textContent = `«${selCtx.text.slice(0, 160)}${
+          selCtx.text.length > 160 ? "…" : ""
+        }»`;
+        taChipEl.hidden = false;
+        taThreadEl.replaceChildren();
+        taCostEl.hidden = true;
+        taSession = null;
+        taInputEl.value = NB_CHAT_PREFILL;
+        textAskEl.hidden = false;
+        taSendEl.disabled = true;
+        try {
+          // Each fresh selection opens a REAL Session (the ticket-03
+          // shape): titled by the selection, bound to the open Book.
+          const res = await fetch("/sessions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              book: selCtx.doc,
+              title: truncateTitle(selCtx.text),
+            }),
+          });
+          if (res.ok) {
+            const created = await res.json();
+            taSession = created.id || null;
+          }
+        } catch (err) {}
+        taSendEl.disabled = false;
+        taInputEl.focus();
+      }
+
+      taFormEl.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const query = taInputEl.value.trim();
+        if (!query || taBusy || !taSession) return;
+        taInputEl.value = "";
+        taAsk(query);
+      });
+
+      async function taAsk(query) {
+        taBusy = true;
+        taSendEl.disabled = true;
+        const askKey = "ask-" + Date.now();
+        // The operator's turn lands like the main thread's — and the
+        // first message of a selection-bound sitting carries the
+        // selection's provenance ({doc, pages, refs}) in its payload.
+        const payload = { text: query };
+        if (taSelection) {
+          payload.selection = {
+            doc: taSelection.doc,
+            pages: taSelection.pages,
+            refs: taSelection.refs,
+          };
+          taSelection = null; // only the ask that opened the sitting carries it
+        }
+        fetch(`/sessions/${taSession}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: "user", payload }),
+        }).catch(() => {});
+        const userP = document.createElement("div");
+        userP.className = "ta-m q";
+        userP.textContent = query;
+        taThreadEl.append(userP);
+        const answerEl = document.createElement("div");
+        answerEl.className = "ta-m a";
+        const answerBody = document.createElement("div");
+        answerBody.className = "answer";
+        answerEl.append(answerBody);
+        taThreadEl.append(answerEl);
+        taThreadEl.scrollTop = taThreadEl.scrollHeight;
+        setText(answerBody, "در حال بازیابی…", "empty");
+        // The selection grounds the retrieval: the passage rides the
+        // query so the Books' own words steer the search, and the
+        // displayed question stays the operator's own.
+        const recallQuery = taChipEl.hidden
+          ? query
+          : `${taChipEl.textContent}\n${query}`;
+        let finalText = null;
+        try {
+          refreshUsageLive();
+          const res = await fetch("/api/v1/recall", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({
+              searchType: "HYBRID_COMPLETION",
+              query: recallQuery,
+              datasets: [reader.doc],
+              includeReferences: true,
+              stream: true,
+              session_id: taSession || undefined,
+            }),
+          });
+          const ctype = res.headers.get("Content-Type") || "";
+          if (ctype.includes("text/event-stream")) {
+            let preview = "";
+            let draftTimer = null;
+            let gotFinal = false;
+            let streamError = null;
+            const paintDraft = () => {
+              answerBody.classList.add("draft-stream");
+              renderMarkdown(answerBody, preview);
+              taThreadEl.scrollTop = taThreadEl.scrollHeight;
+            };
+            await readSse(res, (name, data) => {
+              if (name === "stage") {
+                setText(
+                  answerBody,
+                  JSON.parse(data).stage === "generating"
+                    ? "در حال تولید پاسخ…"
+                    : "در حال بازیابی…",
+                  "empty"
+                );
+              } else if (name === "delta") {
+                preview += JSON.parse(data).text || "";
+                if (draftTimer) return;
+                paintDraft();
+                draftTimer = setTimeout(() => {
+                  draftTimer = null;
+                  paintDraft();
+                }, 200);
+              } else if (name === "reset") {
+                preview = "";
+                setText(answerBody, "در حال تولید پاسخ…", "empty");
+              } else if (name === "error") {
+                streamError = new Error(
+                  JSON.parse(data).message || "خطا در جریان پاسخ."
+                );
+              } else if (name === "final") {
+                gotFinal = true;
+                if (draftTimer) clearTimeout(draftTimer);
+                answerBody.classList.remove("draft-stream");
+                finalText = taTextOf(JSON.parse(data).results);
+              }
+            });
+            if (!gotFinal) throw streamError || new Error("پاسخ نیامد.");
+          } else {
+            const data = await res.json();
+            if (!res.ok) {
+              const detail = Array.isArray(data.detail)
+                ? data.detail.join(" ")
+                : data.detail;
+              throw new Error(detail || "پاسخ نیامد.");
+            }
+            finalText = taTextOf(data);
+          }
+        } catch (err) {
+          // The gate's own Persian detail (zero Balance, the day's cap)
+          // rides err.message — the drawer says exactly what the main
+          // thread would.
+          answerBody.replaceChildren();
+          const note = document.createElement("p");
+          note.className = "empty";
+          note.textContent =
+            err && err.message ? err.message : "ارتباط با سرویس پاسخ قطع شد.";
+          answerBody.append(note);
+          taBusy = false;
+          taSendEl.disabled = false;
+          return;
+        }
+        const { answer, citations } = splitCitation(finalText);
+        const prose = answer || finalText;
+        const sources = evidenceSources(citations);
+        const fallbackToProse = () => {
+          answerBody.classList.remove("draft-stream");
+          renderMarkdown(answerBody, prose);
+        };
+        // Phase 1 — the picker's verbatim sentences are the first
+        // answer, exactly as the main thread shows them; the picker
+        // settles the ask's snapshot SERVER-SIDE.
+        (async () => {
+          try {
+            const res = await fetch("/quote-selection", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                question: query,
+                sources,
+                session_id: taSession || undefined,
+                ask_key: askKey,
+              }),
+            });
+            refreshUsageLive();
+            taRefreshCost();
+            const data = res.ok ? await res.json() : {};
+            const selections = Array.isArray(data.selections)
+              ? data.selections
+              : [];
+            if (!selections.length) {
+              fallbackToProse();
+              return;
+            }
+            const doc = document.createDocumentFragment();
+            for (const item of selections) {
+              const sentence = document.createElement("p");
+              sentence.className = "doc-para";
+              const span = document.createElement("span");
+              span.className = "cite-sent";
+              span.tabIndex = 0;
+              span.textContent = cleanFarsi(item.text);
+              span.dataset.ref = citationRef(item);
+              const located = parseReference(item.reference);
+              wireQuoteSpan(
+                span,
+                located.doc,
+                located.first ? `${located.first}-${located.last}` : ""
+              );
+              sentence.append(span);
+              if (item.pages_label) {
+                const pages = document.createElement("span");
+                pages.className = "cite-pages";
+                pages.textContent = ` [${item.pages_label}]`;
+                sentence.append(pages);
+              }
+              doc.append(sentence);
+            }
+            answerBody.classList.remove("draft-stream");
+            answerBody.replaceChildren(doc);
+          } catch (err) {
+            fallbackToProse();
+          }
+        })();
+        // Phase 2 — the cited document under the first answer; the
+        // writer settles the article SERVER-SIDE, so the handoff's
+        // resume renders the very same document.
+        (async () => {
+          const docWrap = document.createElement("div");
+          docWrap.className = "ta-doc";
+          answerEl.append(docWrap);
+          try {
+            const res = await fetch("/quoted-answer", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                question: query,
+                answer: prose,
+                sources,
+                session_id: taSession || undefined,
+                ask_key: askKey,
+              }),
+            });
+            refreshUsageLive();
+            taRefreshCost();
+            if (!res.ok) return;
+            const data = await res.json();
+            const blocks = Array.isArray(data.blocks) ? data.blocks : [];
+            const doc = document.createDocumentFragment();
+            if (data.truncated) {
+              const note = document.createElement("p");
+              note.className = "empty";
+              note.textContent = truncatedNote().textContent;
+              doc.append(note);
+            }
+            for (const block of blocks) {
+              if (block.type === "heading") {
+                const heading = document.createElement("h3");
+                heading.className = "doc-heading";
+                heading.textContent = block.text;
+                doc.append(heading);
+              } else if (block.type === "paragraph") {
+                doc.append(paragraphNode(block));
+              }
+            }
+            if (blocks.length) docWrap.replaceChildren(doc);
+            taThreadEl.scrollTop = taThreadEl.scrollHeight;
+          } catch (err) {}
+        })();
+        taBusy = false;
+        taSendEl.disabled = false;
+      }
+
+      // The handoff (the ticket-03 shape): the armed jump — the drawer
+      // and the reader step aside and the main thread opens THE SAME
+      // sitting from the store, composer armed; the walk back to the
+      // Book is any citation click.
+      taHandoffEl.addEventListener("click", () => {
+        const sid = taSession;
+        closeTextAsk();
+        if (!sid) return;
+        const readerClose = document.getElementById("reader-close");
+        if (readerClose && !document.getElementById("reader").hidden) {
+          readerClose.click();
+        }
+        openStoreSession(sid);
+      });
+
 
       // ---- The Notebook panel (ticket 02's shape, ticket 08's body) ----
       // The researcher's surface: grouped by category, searched, filtered,
