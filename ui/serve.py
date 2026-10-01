@@ -92,6 +92,7 @@ try:
     )
     from ui import ledger
     from ui import session_store
+    from ui import note_store
     from ui import research_store
     from ui.picker import (
         QUOTE_SELECTION_FLOOR,
@@ -229,6 +230,7 @@ except ImportError:  # the container runs this file as a script beside the modul
     )
     import ledger
     import session_store
+    import note_store
     import research_store
     from picker import (
         QUOTE_SELECTION_FLOOR,
@@ -741,6 +743,11 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # The Session store's list (T27 stage 3, GitLab #40): the
             # sidebar's read, the caller's own Sessions only.
             self._sessions_list()
+            return
+        if path == "/notes":
+            # The Notebook's read (the selection map, ticket 08): the
+            # panel's list, the caller's own notes only.
+            self._notes_list()
             return
         if path.startswith("/sessions/"):
             rest = path[len("/sessions/"):]
@@ -1309,13 +1316,19 @@ class SessionHandler(SimpleHTTPRequestHandler):
 
     def do_DELETE(self):
         """DELETE: the Session store's one destructive verb (T27 stage
-        3, the list-v1 shape — delete only). A Session that is not the
-        caller's is a 404, never an erase."""
+        3, the list-v1 shape — delete only) and the Notebook's single
+        delete. A row that is not the caller's is a 404, never an
+        erase."""
         path = self.path.split("?", 1)[0]
         if path.startswith("/sessions/"):
             rest = path[len("/sessions/"):]
             if rest.isdigit():
                 self._session_delete(int(rest))
+                return
+        if path.startswith("/notes/"):
+            rest = path[len("/notes/"):]
+            if rest.isdigit():
+                self._note_delete(int(rest))
                 return
         self.send_error(404, "Not found")
 
@@ -1376,6 +1389,19 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # the sitting on its first ask.
             self._session_create()
             return
+        if path == "/notes":
+            # The Notebook's quick-save (the selection map, ticket 08):
+            # the popover's capture lands here with its defaults.
+            self._note_create()
+            return
+        if path == "/notes/bulk-delete":
+            self._note_bulk_delete()
+            return
+        if path.startswith("/notes/"):
+            rest = path[len("/notes/"):]
+            if rest.isdigit():
+                self._note_update(int(rest))
+                return
         if path.startswith("/sessions/"):
             rest = path[len("/sessions/"):]
             if rest.endswith("/messages") and rest[: -len("/messages")].isdigit():
@@ -2126,6 +2152,116 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self._json_error(404, "نشست پیدا نشد.")
             return
         self._send_json(200, {"deleted": True})
+
+    # ---- The Notebook (the selection map, ticket 08) ----
+    # The researcher's capture: the popover quick-saves, the panel
+    # reads/edits/deletes. Ownership is the cookie, as everywhere.
+
+    @staticmethod
+    def _note_fields(payload: dict) -> dict:
+        """The create payload's shape: the quote is required; the book
+        side (doc/pages/refs/source) and the editable defaults ride
+        optional. Anything else the client sends is ignored — the store
+        judges the shapes it knows."""
+        text = payload.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError
+        doc = payload.get("doc")
+        if doc is not None and not isinstance(doc, str):
+            raise ValueError
+        pages = payload.get("pages") or []
+        refs = payload.get("refs") or []
+        source = payload.get("source") or {}
+        category = payload.get("category") or ""
+        opinion = payload.get("opinion") or ""
+        if not isinstance(pages, list) or not isinstance(refs, list):
+            raise ValueError
+        if not isinstance(source, dict):
+            raise ValueError
+        if not isinstance(category, str) or not isinstance(opinion, str):
+            raise ValueError
+        return {
+            "text": text,
+            "doc": doc,
+            "pages": pages,
+            "refs": refs,
+            "source": source,
+            "category": category,
+            "opinion": opinion,
+        }
+
+    def _notes_list(self) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        self._send_json(200, {"notes": note_store.list_notes(account)})
+
+    def _note_create(self) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            fields = self._note_fields(payload)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            # The body is already read, so _send_json is safe (the
+            # _evidence_fallback rule).
+            self._send_json(400, {"detail": "درخواست نادرست است."})
+            return
+        self._send_json(200, note_store.create_note(account, **fields))
+
+    def _note_update(self, note_id: int) -> None:
+        """Edit the editable fields (category / opinion); the quote is
+        fixed. A foreign note is 404."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            category = payload.get("category")
+            opinion = payload.get("opinion")
+            if category is not None and not isinstance(category, str):
+                raise ValueError
+            if opinion is not None and not isinstance(opinion, str):
+                raise ValueError
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json(400, {"detail": "درخواست نادرست است."})
+            return
+        note = note_store.update_note(
+            account, note_id, category=category, opinion=opinion
+        )
+        if note is None:
+            self._send_json(404, {"detail": "یادداشت پیدا نشد."})
+            return
+        self._send_json(200, note)
+
+    def _note_delete(self, note_id: int) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        if not note_store.delete_note(account, note_id):
+            self._json_error(404, "یادداشت پیدا نشد.")
+            return
+        self._send_json(200, {"deleted": True})
+
+    def _note_bulk_delete(self) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            ids = payload.get("ids")
+            if not isinstance(ids, list):
+                raise ValueError
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json(400, {"detail": "درخواست نادرست است."})
+            return
+        deleted = note_store.delete_notes_many(account, ids)
+        self._send_json(200, {"deleted": deleted})
+
 
     def _research_report(self) -> None:
         """The Session report's read (T18, GitLab #19): one session's

@@ -1909,6 +1909,218 @@
       #note-toast.show {
         display: block;
       }
+      #note-toast-act {
+        border: 0;
+        background: transparent;
+        color: var(--gold);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        margin-inline-start: 12px;
+      }
+
+      /* The Notebook panel (ticket 02's shape): a slide-over beside the
+         thread in the reader's visual language — token-driven, so both
+         themes dress it; full-width under 640px. */
+      #notebook {
+        position: fixed;
+        z-index: 65;
+        inset-block: 0;
+        inset-inline-start: 0;
+        width: min(440px, 100%);
+        background: var(--surface);
+        border-inline-end: 1px solid var(--rule);
+        box-shadow: 0 0 40px var(--shadow);
+        display: flex;
+        flex-direction: column;
+        animation: nb-in 0.22s ease-out;
+      }
+      #notebook[hidden] {
+        display: none;
+      }
+      @keyframes nb-in {
+        from {
+          opacity: 0;
+          transform: translateX(28px);
+        }
+      }
+      .nb-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--rule);
+      }
+      .nb-head h2 {
+        margin: 0;
+        font-size: 1rem;
+        color: var(--clay);
+      }
+      .nb-head button {
+        border: 0;
+        background: transparent;
+        color: var(--mute);
+        font-size: 16px;
+        cursor: pointer;
+      }
+      .nb-tools {
+        display: flex;
+        gap: 8px;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--rule);
+      }
+      .nb-tools input[type="search"] {
+        flex: 1;
+        min-width: 0;
+        font: inherit;
+        font-size: 13px;
+        border: 1px solid var(--rule);
+        border-radius: 7px;
+        padding: 6px 10px;
+        background: var(--raised);
+        color: var(--ink);
+      }
+      .nb-tools select {
+        font: inherit;
+        font-size: 12.5px;
+        border: 1px solid var(--rule);
+        border-radius: 7px;
+        padding: 6px 6px;
+        background: var(--raised);
+        color: var(--ink);
+      }
+      .nb-bulk {
+        display: flex;
+        gap: 8px;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--rule);
+        background: var(--gold-soft);
+      }
+      .nb-bulk[hidden] {
+        display: none;
+      }
+      .nb-bulk button {
+        font: inherit;
+        font-size: 12.5px;
+        padding: 6px 12px;
+        border-radius: 7px;
+        border: 1px solid var(--rule);
+        background: var(--raised);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      .nb-bulk .nb-danger {
+        color: var(--bad);
+      }
+      .nb-list {
+        overflow: auto;
+        flex: 1;
+        padding: 12px 18px 24px;
+      }
+      .nb-group {
+        font-size: 12px;
+        color: var(--mute);
+        margin: 10px 0;
+      }
+      .nb-empty {
+        color: var(--mute);
+        font-size: 13.5px;
+        text-align: center;
+        margin-top: 40px;
+      }
+      .nb-note {
+        background: var(--raised);
+        border: 1px solid var(--rule);
+        border-radius: 9px;
+        padding: 12px 14px;
+        margin-bottom: 10px;
+      }
+      .nb-note .nb-row {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+      }
+      .nb-note .nb-row input[type="checkbox"] {
+        margin-top: 6px;
+        accent-color: var(--clay);
+      }
+      .nb-note .nb-body {
+        flex: 1;
+        min-width: 0;
+      }
+      .nb-note .nb-quote {
+        font-size: 13.5px;
+        border-inline-start: 3px solid var(--clay);
+        padding-inline-start: 10px;
+      }
+      .nb-note .nb-op {
+        font-size: 13px;
+        color: var(--ink);
+        margin-top: 8px;
+      }
+      .nb-note .nb-meta {
+        font-size: 11.5px;
+        color: var(--mute);
+        margin-top: 8px;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .nb-note .nb-meta button {
+        border: 0;
+        background: transparent;
+        font: inherit;
+        font-size: 11.5px;
+        color: var(--clay);
+        cursor: pointer;
+        text-decoration: underline;
+        padding: 0;
+      }
+      .nb-note .nb-meta button:disabled {
+        color: var(--mute);
+        cursor: default;
+        text-decoration: none;
+      }
+      .nb-note .nb-meta .nb-del {
+        color: var(--bad);
+        margin-inline-start: auto;
+      }
+      .nb-note .nb-editor {
+        display: none;
+        margin-top: 10px;
+        border-top: 1px dashed var(--rule);
+        padding-top: 10px;
+      }
+      .nb-note .nb-editor.open {
+        display: block;
+      }
+      .nb-note .nb-editor select,
+      .nb-note .nb-editor textarea {
+        width: 100%;
+        font: inherit;
+        font-size: 13px;
+        border: 1px solid var(--rule);
+        border-radius: 7px;
+        padding: 6px 8px;
+        background: var(--surface);
+        color: var(--ink);
+        margin-bottom: 8px;
+      }
+      .nb-note .nb-editor textarea {
+        min-height: 60px;
+        resize: vertical;
+      }
+      .nb-note .nb-editor .nb-save {
+        font: inherit;
+        font-size: 12.5px;
+        padding: 6px 16px;
+        border-radius: 7px;
+        border: 1px solid var(--clay);
+        background: var(--clay);
+        color: var(--surface);
+        cursor: pointer;
+      }
 
       /* The located quotation: a clay band over the raster, positioned
          from the PDF's own glyph geometry (percentages of the page, so
@@ -2266,6 +2478,11 @@
             <!-- The live session price (T22, GitLab #24): the tariff is config's business; this chip only reads the ledger. -->
             <p class="status" id="usage-live" data-state="idle" title="هزینۀ این نشست از آغاز آخرین پرسش"><span class="usage-meter" aria-hidden="true"><span id="usage-meter-fill"></span></span><span class="usage-note" id="usage-note">هزینۀ نشست: —</span><span class="usage-pct" id="usage-pct" hidden></span><span class="usage-credit-note" id="usage-credit-note" hidden></span><span class="usage-cost-short" id="usage-cost-short" hidden>—</span></p>
             <button type="button" id="reader-browse" class="browse-btn">کتاب‌ها</button>
+            <!-- The Notebook's door (the selection map, ticket 08): the
+                 label rides NOTEBOOK_LABEL from the draft table — the
+                 markup stays string-free so a PM rename lands in one
+                 line. -->
+            <button type="button" id="notebook-open" class="browse-btn" aria-controls="notebook" aria-expanded="false"></button>
             <!-- The profile toggle (T24, GitLab #27): «پروفایل» is the
                  Account's own view of its Balance and its Sessions' spend
                  (the Account glossary row names it so). DRAFT label,
@@ -2433,6 +2650,33 @@
       <p class="reader-note" id="reader-note" hidden></p>
     </aside>
 
+    <!-- The Notebook (ticket 02's locked shape): the slide-over panel
+         the selection popover's quick-save feeds and the topbar opens. -->
+    <aside id="notebook" hidden aria-label="دفتر یادداشت">
+      <header class="nb-head">
+        <h2 id="nb-title"></h2>
+        <button type="button" id="nb-close" aria-label="بستن">✕</button>
+      </header>
+      <div class="nb-tools">
+        <input id="nb-search" type="search" autocomplete="off">
+        <select id="nb-filter" aria-label="پالایهٔ منبع">
+          <option value="all"></option>
+          <option value="book"></option>
+          <option value="session"></option>
+        </select>
+        <select id="nb-sort" aria-label="ترتیب">
+          <option value="new"></option>
+          <option value="old"></option>
+        </select>
+      </div>
+      <div class="nb-bulk" id="nb-bulk" hidden>
+        <button type="button" id="nb-copy"></button>
+        <button type="button" id="nb-export"></button>
+        <button type="button" id="nb-del-many" class="nb-danger"></button>
+      </div>
+      <div class="nb-list" id="nb-list"></div>
+    </aside>
+
     <!-- The selection popover (variant A): the one door from a live
          selection — a chat message or the book's text layer — to the
          notebook. The ask verb is staged here and joins the flow with
@@ -2441,7 +2685,7 @@
       <button type="button" id="selection-add"></button>
       <button type="button" id="selection-ask" disabled></button>
     </div>
-    <div id="note-toast" role="status" aria-live="polite"></div>
+    <div id="note-toast" role="status" aria-live="polite"><span id="note-toast-msg"></span><button type="button" id="note-toast-act" hidden></button></div>
 
     <script>
       // ===== The chat shell (ADR-0014, T27 stage 1) =====
@@ -2507,6 +2751,32 @@
       const ASK_FROM_SELECTION_LABEL = "پرسش از این متن";
       const NOTE_SAVED_TOAST = "به دفتر یادداشت اضافه شد";
       const NOTE_VIEW_ACTION = "مشاهده";
+      // The notebook panel (ticket 08): its surface strings, all NEW
+      // draft strings pinned here for the PM batch (CONTEXT.md,
+      // 2026-10-01). The resting single-delete label reuses the sheet's
+      // pinned «حذف» (SESSION_DELETE_LABEL) — only the armed confirm is
+      // new. The category list lives in ONE constant; the PM batch
+      // fills it without touching the UI.
+      const NOTEBOOK_LABEL = "دفتر یادداشت";
+      const NOTE_UNCATEGORIZED = "بدون دسته";
+      const NOTE_OPINION_LABEL = "نظر من";
+      const NOTE_DELETE_CONFIRM_LABEL = "حذف یادداشت؟";
+      const NOTE_COPY_SELECTED = "کپی منتخب‌ها";
+      const NOTE_EXPORT_PDF = "خروجی PDF";
+      const NOTE_DELETE_SELECTED = "حذف منتخب‌ها";
+      const NB_DELETE_MANY_CONFIRM = "حذف منتخب‌ها؟";
+      const NOTE_SOURCE_JUMP = "پرش به منبع";
+      const NB_SEARCH_PLACEHOLDER = "جست‌وجو در یادداشت‌ها";
+      const NB_FILTER_ALL = "همهٔ منابع";
+      const NB_FILTER_BOOKS = "کتاب‌ها";
+      const NB_FILTER_SESSIONS = "نشست‌ها";
+      const NB_SORT_NEW = "تازه‌ترین";
+      const NB_SORT_OLD = "کهنه‌ترین";
+      const NB_EMPTY = "هنوز یادداشتی نیست.";
+      const NB_EDIT = "ویرایش";
+      const NB_SAVE = "ذخیره";
+      const NB_COPIED = "منتخب‌ها کپی شد.";
+      const NOTE_CATEGORIES = [NOTE_UNCATEGORIZED];
 
       const BOOK_TITLES = {
         "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
@@ -5943,21 +6213,34 @@
       const selectionAskBtn = document.getElementById("selection-ask");
       selectionAddBtn.textContent = ADD_TO_NOTE_LABEL;
       selectionAskBtn.textContent = ASK_FROM_SELECTION_LABEL;
-      // The notebook store replaces this staging list; until then
-      // quick-saved notes wait here and nothing is lost in-session.
-      const noteStaging = [];
+      // The notebook's client cache — the panel's read refills it and
+      // every mutation keeps it honest in place.
+      let noteStaging = [];
       let selectionSurface = null; // "book" | "chat" | null
       let selectionSyncTimer = null;
 
       const noteToastEl = document.getElementById("note-toast");
+      const noteToastMsg = document.getElementById("note-toast-msg");
+      const noteToastAct = document.getElementById("note-toast-act");
       let noteToastTimer = null;
-      function showToast(message) {
-        noteToastEl.textContent = message;
+      function showToast(message, action) {
+        noteToastMsg.textContent = message;
+        if (action) {
+          noteToastAct.textContent = action.label;
+          noteToastAct.hidden = false;
+          noteToastAct.onclick = () => {
+            noteToastEl.classList.remove("show");
+            action.run();
+          };
+        } else {
+          noteToastAct.hidden = true;
+          noteToastAct.onclick = null;
+        }
         noteToastEl.classList.add("show");
         clearTimeout(noteToastTimer);
         noteToastTimer = setTimeout(
           () => noteToastEl.classList.remove("show"),
-          2600
+          3200
         );
       }
 
@@ -6120,8 +6403,31 @@
         const note = selectionToNote();
         hideSelectionPop();
         if (!note) return;
-        noteStaging.unshift(note);
-        showToast(NOTE_SAVED_TOAST);
+        fetch("/notes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: note.text,
+            doc: note.doc,
+            pages: note.pages,
+            refs: note.refs,
+            source: note.source,
+          }),
+        })
+          .then(async (res) => {
+            const saved = res.ok ? await res.json() : null;
+            if (saved && saved.id) noteStaging.unshift(saved);
+            showToast(NOTE_SAVED_TOAST, {
+              label: NOTE_VIEW_ACTION,
+              run: openNotebook,
+            });
+          })
+          .catch(() => {
+            // The capture must never feel lost — the row keeps it in
+            // memory even when the store could not be reached.
+            noteStaging.unshift({ ...note, id: null, category: "", opinion: "" });
+            showToast(NOTE_SAVED_TOAST);
+          });
       });
 
       document.addEventListener("mouseup", () => {
@@ -6145,6 +6451,382 @@
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape") hideSelectionPop();
       });
+
+      // ---- The Notebook panel (ticket 02's shape, ticket 08's body) ----
+      // The researcher's surface: grouped by category, searched, filtered,
+      // edited in place, deleted two-step, and exported through a plain
+      // print view — no PDF library, just the browser's own printer.
+      const notebookEl = document.getElementById("notebook");
+      const notebookOpenBtn = document.getElementById("notebook-open");
+      const nbTitleEl = document.getElementById("nb-title");
+      const nbCloseEl = document.getElementById("nb-close");
+      const nbSearchEl = document.getElementById("nb-search");
+      const nbFilterEl = document.getElementById("nb-filter");
+      const nbSortEl = document.getElementById("nb-sort");
+      const nbBulkEl = document.getElementById("nb-bulk");
+      const nbCopyEl = document.getElementById("nb-copy");
+      const nbExportEl = document.getElementById("nb-export");
+      const nbDelManyEl = document.getElementById("nb-del-many");
+      const nbListEl = document.getElementById("nb-list");
+      nbTitleEl.textContent = NOTEBOOK_LABEL;
+      notebookOpenBtn.textContent = NOTEBOOK_LABEL;
+      nbSearchEl.placeholder = NB_SEARCH_PLACEHOLDER;
+      nbFilterEl.options[0].textContent = NB_FILTER_ALL;
+      nbFilterEl.options[1].textContent = NB_FILTER_BOOKS;
+      nbFilterEl.options[2].textContent = NB_FILTER_SESSIONS;
+      nbSortEl.options[0].textContent = NB_SORT_NEW;
+      nbSortEl.options[1].textContent = NB_SORT_OLD;
+      nbCopyEl.textContent = NOTE_COPY_SELECTED;
+      nbExportEl.textContent = NOTE_EXPORT_PDF;
+      nbDelManyEl.textContent = NOTE_DELETE_SELECTED;
+      const nbChecks = new Set();
+      let nbArmTimer = null;
+
+      function openNotebook() {
+        notebookEl.hidden = false;
+        notebookOpenBtn.setAttribute("aria-expanded", "true");
+        loadNotes();
+      }
+      function closeNotebook() {
+        notebookEl.hidden = true;
+        notebookOpenBtn.setAttribute("aria-expanded", "false");
+      }
+      notebookOpenBtn.addEventListener("click", () => {
+        if (notebookEl.hidden) openNotebook();
+        else closeNotebook();
+      });
+      nbCloseEl.addEventListener("click", closeNotebook);
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !notebookEl.hidden) closeNotebook();
+      });
+      [nbSearchEl, nbFilterEl, nbSortEl].forEach((el) =>
+        el.addEventListener("input", renderNotes)
+      );
+
+      async function loadNotes() {
+        try {
+          const res = await fetch("/notes");
+          if (!res.ok) return;
+          const data = await res.json();
+          if (Array.isArray(data.notes)) {
+            // The store wins, but a quick-save the read raced (its POST
+            // still in flight) must not flash away — unsaved ids stay.
+            const pending = noteStaging.filter((n) => !n.id);
+            noteStaging = [...pending, ...data.notes];
+          }
+          renderNotes();
+        } catch (err) {
+          renderNotes();
+        }
+      }
+
+      function faDate(iso) {
+        try {
+          return new Date(iso).toLocaleDateString("fa-IR");
+        } catch (err) {
+          return String(iso || "").slice(0, 10);
+        }
+      }
+
+      function noteSourceLine(note) {
+        const s = note.source || {};
+        if (s.kind === "book") {
+          const pages = note.pages || [];
+          const first = pages[0];
+          const last = pages[pages.length - 1];
+          const span =
+            first && last
+              ? `، صفحهٔ ${toPersianDigits(first)}${
+                  last > first ? `–${toPersianDigits(last)}` : ""
+                }`
+              : "";
+          return `${s.title || note.doc || ""}${span}`;
+        }
+        const title =
+          s.title ||
+          (s.session_id ? `نشست ${toPersianDigits(s.session_id)}` : "");
+        return title;
+      }
+
+      function visibleNotes() {
+        const q = nbSearchEl.value.trim();
+        const kind = nbFilterEl.value;
+        let rows = noteStaging.slice();
+        if (kind === "book") rows = rows.filter((n) => !!n.doc);
+        if (kind === "session")
+          rows = rows.filter(
+            (n) => (n.source || {}).kind === "session" && !n.doc
+          );
+        if (q)
+          rows = rows.filter((n) =>
+            `${n.text} ${n.opinion} ${n.category}`.includes(q)
+          );
+        rows.sort((a, b) =>
+          nbSortEl.value === "old" ? a.id - b.id : b.id - a.id
+        );
+        return rows;
+      }
+
+      function renderNotes() {
+        nbChecks.clear();
+        const rows = visibleNotes();
+        nbBulkEl.hidden = true;
+        nbDelManyEl.textContent = NOTE_DELETE_SELECTED;
+        nbDelManyEl.disabled = false;
+        if (!rows.length) {
+          nbListEl.replaceChildren();
+          const empty = document.createElement("p");
+          empty.className = "nb-empty";
+          empty.textContent = NB_EMPTY;
+          nbListEl.append(empty);
+          return;
+        }
+        // Grouped by category (ticket 02): the category header is the
+        // group — v1's only row is «بدون دسته» until the PM list lands.
+        const groups = new Map();
+        for (const note of rows) {
+          const key = note.category || NOTE_UNCATEGORIZED;
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(note);
+        }
+        nbListEl.replaceChildren();
+        for (const [cat, notes] of groups) {
+          const head = document.createElement("p");
+          head.className = "nb-group";
+          head.textContent = `${cat} (${toPersianDigits(notes.length)})`;
+          nbListEl.append(head);
+          for (const note of notes) nbListEl.append(noteCard(note));
+        }
+      }
+
+      function noteCard(note) {
+        const card = document.createElement("article");
+        card.className = "nb-note";
+        card.dataset.noteId = String(note.id ?? "");
+        const row = document.createElement("div");
+        row.className = "nb-row";
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.setAttribute("aria-label", NOTE_COPY_SELECTED);
+        check.addEventListener("change", () => {
+          if (check.checked) nbChecks.add(note.id);
+          else nbChecks.delete(note.id);
+          nbBulkEl.hidden = nbChecks.size === 0;
+        });
+        const body = document.createElement("div");
+        body.className = "nb-body";
+        const quote = document.createElement("div");
+        quote.className = "nb-quote";
+        quote.textContent = `«${note.text}»`;
+        body.append(quote);
+        if (note.opinion) {
+          const op = document.createElement("div");
+          op.className = "nb-op";
+          op.textContent = `${NOTE_OPINION_LABEL}: ${note.opinion}`;
+          body.append(op);
+        }
+        const meta = document.createElement("div");
+        meta.className = "nb-meta";
+        const src = document.createElement("span");
+        src.textContent = `${noteSourceLine(note)} · ${faDate(
+          note.created_at
+        )}`;
+        meta.append(src);
+        const jump = document.createElement("button");
+        jump.type = "button";
+        jump.textContent = NOTE_SOURCE_JUMP;
+        if ((note.source || {}).kind === "book" && note.doc) {
+          jump.addEventListener("click", () => {
+            const pages = note.pages || [];
+            closeNotebook();
+            openCitation(
+              note.doc,
+              pages[0] || 1,
+              pages[pages.length - 1] || pages[0] || 1,
+              note.text
+            );
+          });
+        } else if ((note.source || {}).kind === "session") {
+          jump.addEventListener("click", async () => {
+            const sid = (note.source || {}).session_id;
+            if (!sid) return;
+            try {
+              const res = await fetch(`/sessions/${sid}`);
+              if (!res.ok) throw new Error("gone");
+              closeNotebook();
+              openStoreSession(sid);
+            } catch (err) {
+              // The sitting is gone — the note survives, the jump dies.
+              note.source.dead = true;
+              renderNotes();
+            }
+          });
+          if ((note.source || {}).dead) jump.disabled = true;
+        } else {
+          jump.disabled = true;
+        }
+        meta.append(jump);
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.textContent = NB_EDIT;
+        edit.addEventListener("click", () => {
+          editor.classList.toggle("open");
+        });
+        meta.append(edit);
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "nb-del";
+        del.textContent = SESSION_DELETE_LABEL;
+        del.addEventListener("click", async () => {
+          // The sheet's two-step delete (the critique's P1 pattern).
+          if (del.textContent !== NOTE_DELETE_CONFIRM_LABEL) {
+            del.textContent = NOTE_DELETE_CONFIRM_LABEL;
+            clearTimeout(nbArmTimer);
+            nbArmTimer = setTimeout(
+              () => (del.textContent = SESSION_DELETE_LABEL),
+              3000
+            );
+            return;
+          }
+          clearTimeout(nbArmTimer);
+          if (note.id) {
+            try {
+              await fetch(`/notes/${note.id}`, { method: "DELETE" });
+            } catch (err) {}
+          }
+          noteStaging = noteStaging.filter((n) => n !== note);
+          renderNotes();
+        });
+        meta.append(del);
+        body.append(meta);
+        const editor = document.createElement("div");
+        editor.className = "nb-editor";
+        const cat = document.createElement("select");
+        for (const c of NOTE_CATEGORIES) {
+          const opt = document.createElement("option");
+          opt.value = c;
+          opt.textContent = c;
+          if ((note.category || NOTE_UNCATEGORIZED) === c) opt.selected = true;
+          cat.append(opt);
+        }
+        const op = document.createElement("textarea");
+        op.placeholder = NOTE_OPINION_LABEL;
+        op.value = note.opinion || "";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "nb-save";
+        save.textContent = NB_SAVE;
+        save.addEventListener("click", async () => {
+          const category = cat.value;
+          const opinion = op.value.trim();
+          if (note.id) {
+            try {
+              const res = await fetch(`/notes/${note.id}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ category, opinion }),
+              });
+              if (res.ok) {
+                const saved = await res.json();
+                noteStaging = noteStaging.map((n) =>
+                  n === note ? saved : n
+                );
+              }
+            } catch (err) {}
+          } else {
+            note.category = category;
+            note.opinion = opinion;
+          }
+          renderNotes();
+        });
+        editor.append(cat, op, save);
+        body.append(editor);
+        row.append(check, body);
+        card.append(row);
+        return card;
+      }
+
+      function selectedNotes() {
+        return noteStaging.filter((n) => nbChecks.has(n.id));
+      }
+
+      nbCopyEl.addEventListener("click", () => {
+        const rows = selectedNotes();
+        if (!rows.length) return;
+        const text = rows
+          .map((n) => {
+            const head = `«${n.text}»`;
+            const op = n.opinion ? `\n${NOTE_OPINION_LABEL}: ${n.opinion}` : "";
+            return `${head}${op}\n— ${noteSourceLine(n)}`;
+          })
+          .join("\n\n");
+        navigator.clipboard
+          .writeText(text)
+          .then(() => showToast(NB_COPIED))
+          .catch(() => {
+            // Clipboard permission denied: the legacy path still copies.
+            const ta = document.createElement("textarea");
+            ta.value = text;
+            document.body.append(ta);
+            ta.select();
+            document.execCommand("copy");
+            ta.remove();
+            showToast(NB_COPIED);
+          });
+      });
+
+      function buildNotesPrintHtml(rows) {
+        // The zero-dependency PDF: the print view IS the exporter — a
+        // plain RTL document the browser prints.
+        const items = rows
+          .map((n) => {
+            const op = n.opinion
+              ? `<p class="op">${NOTE_OPINION_LABEL}: ${n.opinion}</p>`
+              : "";
+            return `<article><blockquote>«${n.text}»</blockquote>${op}<p class="src">${noteSourceLine(
+              n
+            )} · ${faDate(n.created_at)}</p></article>`;
+          })
+          .join("\n");
+        return `<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><title>${NOTEBOOK_LABEL}</title><style>body{font-family:Vazirmatn,Tahoma,sans-serif;line-height:1.9;color:#222;margin:28px}h1{font-size:18px;border-bottom:2px solid #999;padding-bottom:8px}article{margin:0 0 22px;page-break-inside:avoid}blockquote{margin:0;border-inline-start:3px solid #777;padding-inline-start:10px}.op{font-size:14px}.src{font-size:12px;color:#666}</style></head><body><h1>${NOTEBOOK_LABEL}</h1>${items}</body></html>`;
+      }
+
+      nbExportEl.addEventListener("click", () => {
+        const rows = selectedNotes();
+        if (!rows.length) return;
+        const frame = document.createElement("iframe");
+        frame.hidden = true;
+        frame.addEventListener("load", () => {
+          frame.contentWindow.print();
+        });
+        frame.srcdoc = buildNotesPrintHtml(rows);
+        document.body.append(frame);
+        setTimeout(() => frame.remove(), 60000);
+      });
+
+      nbDelManyEl.addEventListener("click", async () => {
+        // Two-step, like the single delete: the first press arms.
+        if (nbDelManyEl.textContent !== NB_DELETE_MANY_CONFIRM) {
+          nbDelManyEl.textContent = NB_DELETE_MANY_CONFIRM;
+          clearTimeout(nbArmTimer);
+          nbArmTimer = setTimeout(() => {
+            nbDelManyEl.textContent = NOTE_DELETE_SELECTED;
+          }, 3000);
+          return;
+        }
+        clearTimeout(nbArmTimer);
+        const ids = [...nbChecks];
+        try {
+          await fetch("/notes/bulk-delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids }),
+          });
+        } catch (err) {}
+        noteStaging = noteStaging.filter((n) => !nbChecks.has(n.id));
+        renderNotes();
+      });
+
 
 
       // Reading-order item parts: the matcher's ground truth. Each part

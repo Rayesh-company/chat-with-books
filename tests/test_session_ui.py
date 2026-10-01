@@ -47,6 +47,87 @@ def test_selection_to_note_maps_through_the_normalized_stream():
     assert 'selectionPopEl.addEventListener("mousedown"' in html
 
 
+def test_notebook_panel_pins_the_pm_batch_strings():
+    # Ticket 08: the notebook's surface — every visible string rides a
+    # pinned constant (the CONTEXT.md DRAFT row, 2026-10-01); the
+    # category list is ONE constant the PM batch fills.
+    html = UI.read_text(encoding="utf-8")
+    assert 'NOTEBOOK_LABEL = "دفتر یادداشت"' in html
+    assert 'NOTE_UNCATEGORIZED = "بدون دسته"' in html
+    assert 'NOTE_OPINION_LABEL = "نظر من"' in html
+    assert 'NOTE_DELETE_CONFIRM_LABEL = "حذف یادداشت؟"' in html
+    assert 'NOTE_COPY_SELECTED = "کپی منتخب‌ها"' in html
+    assert 'NOTE_EXPORT_PDF = "خروجی PDF"' in html
+    assert 'NOTE_DELETE_SELECTED = "حذف منتخب‌ها"' in html
+    assert 'NB_DELETE_MANY_CONFIRM = "حذف منتخب‌ها؟"' in html
+    assert 'NOTE_SOURCE_JUMP = "پرش به منبع"' in html
+    assert 'NB_SEARCH_PLACEHOLDER = "جست‌وجو در یادداشت‌ها"' in html
+    assert 'NB_FILTER_ALL = "همهٔ منابع"' in html
+    assert 'NB_SORT_NEW = "تازه‌ترین"' in html
+    assert 'NB_SORT_OLD = "کهنه‌ترین"' in html
+    assert 'NB_EMPTY = "هنوز یادداشتی نیست."' in html
+    assert 'NB_EDIT = "ویرایش"' in html
+    assert 'NB_SAVE = "ذخیره"' in html
+    assert 'NB_COPIED = "منتخب‌ها کپی شد."' in html
+    assert "NOTE_CATEGORIES = [NOTE_UNCATEGORIZED]" in html
+    # The topbar door's markup is string-free — the constant labels it.
+    assert 'id="notebook-open"' in html
+
+
+def test_notebook_panel_is_a_real_surface():
+    # The ticket-02 shape: slide-over with tools (search / source filter /
+    # sort), a bulk bar behind the checkboxes, grouped cards with the
+    # fixed quote, the editable editor, the two-step delete (the sheet's
+    # own pinned «حذف» arms it), and the store's endpoints — plus the
+    # zero-dependency print view as the exporter.
+    html = UI.read_text(encoding="utf-8")
+    for marker in (
+        'id="notebook"',
+        'id="nb-search"',
+        'id="nb-filter"',
+        'id="nb-sort"',
+        'id="nb-bulk"',
+        'id="nb-copy"',
+        'id="nb-export"',
+        'id="nb-del-many"',
+        'id="nb-list"',
+        "async function loadNotes()",
+        "function renderNotes()",
+        "function noteCard(",
+        "function selectedNotes()",
+        "function buildNotesPrintHtml(",
+        "nbDelManyEl.textContent = NB_DELETE_MANY_CONFIRM",
+        "del.textContent = NOTE_DELETE_CONFIRM_LABEL",
+        "SESSION_DELETE_LABEL;",
+        "openCitation(",
+        "openStoreSession(sid);",
+        'note.source.dead = true;',
+    ):
+        assert marker in html, marker
+
+
+def test_notebook_store_serves_the_panel():
+    # The server side: the store module wired in, the five routes, the
+    # ownership language, and the popover's POST feeding the create.
+    serve_py = SERVE.read_text(encoding="utf-8")
+    assert "from ui import note_store" in serve_py
+    assert 'path == "/notes"' in serve_py
+    assert 'path == "/notes/bulk-delete"' in serve_py
+    assert "def _notes_list" in serve_py
+    assert "def _note_create" in serve_py
+    assert "def _note_update" in serve_py
+    assert "def _note_delete" in serve_py
+    assert "def _note_bulk_delete" in serve_py
+    assert "یادداشت پیدا نشد." in serve_py
+    html = UI.read_text(encoding="utf-8")
+    assert 'fetch("/notes", {' in html
+    assert 'fetch(`/notes/${note.id}`, { method: "DELETE" }' in html
+    assert 'fetch("/notes/bulk-delete", {' in html
+    store_py = (REPO_ROOT / "ui" / "note_store.py").read_text(encoding="utf-8")
+    assert "NOTES_DB" in store_py
+    assert "DELETE FROM notes WHERE account = ?" in store_py
+
+
 def test_session_ui_is_farsi_first_rtl():
     html = UI.read_text(encoding="utf-8")
     assert 'lang="fa"' in html
