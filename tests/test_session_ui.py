@@ -131,6 +131,14 @@ def test_notebook_store_serves_the_panel():
     assert "DELETE FROM notes WHERE account = ?" in store_py
 
 
+def test_notebook_db_rides_the_persisted_volume():
+    # compose.yaml must point NOTES_DB at /data like SESSIONS_DB — the
+    # store defaulting to /app inside the container would lose every
+    # note at the next image rebuild.
+    compose = COMPOSE.read_text(encoding="utf-8")
+    assert "NOTES_DB: /data/notes.sqlite3" in compose
+
+
 def test_in_book_chat_drawer_pins_the_draft_strings():
     # Ticket 09: the drawer is «پرسش از متن» — deliberately not «حالت
     # پژوهش» (taken) and never the forbidden گفتگو/چت; the prefill seeds

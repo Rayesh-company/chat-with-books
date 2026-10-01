@@ -215,6 +215,11 @@ services:
       # history on the same persisted volume — a container rebuild must
       # not throw a sitting's transcript away.
       SESSIONS_DB: /data/sessions.sqlite3
+      # The Notebook store (the selection map, ticket 08): the
+      # researcher's یادداشت‌ها on the same persisted volume — without
+      # this the notes land in /app inside the container and every
+      # image rebuild throws them away.
+      NOTES_DB: /data/notes.sqlite3
     volumes:
       - session_quota:/data
       # The Book set's PDFs + page indexes (ADR-0007), served by
