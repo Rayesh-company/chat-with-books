@@ -402,6 +402,13 @@ def test_reader_text_layer_sizes_spans_from_the_raster_scale():
     # The img-only upgrade race: a page painted before pdf.js finished is
     # requeued once once the document is live and the layer is missing.
     assert "rec.layerRetry" in html
+    # The layer's DOM must read in the page's own order: pdf.js appends
+    # spans in extraction order, which for this Farsi text scatters the
+    # lines — a mouse drag selects every span DOM-between its endpoints,
+    # so a two-line drag grabbed whole lines the cursor never crossed.
+    assert "function reorderTextLayerInReadingOrder" in html
+    assert "reorderTextLayerInReadingOrder(textLayerEl);" in html
+    assert "p.top - q.top || q.left - p.left" in html
 
 
 def test_reader_text_layer_selection_feedback_and_clean_clipboard():

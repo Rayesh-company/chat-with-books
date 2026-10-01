@@ -6312,6 +6312,7 @@
               });
               await layer.render();
               if (gen !== reader.gen) return;
+              reorderTextLayerInReadingOrder(textLayerEl);
               rec.el.append(textLayerEl);
               const content = await page.getTextContent();
               if (gen !== reader.gen) return;
@@ -7362,6 +7363,28 @@
       });
 
 
+
+      // pdf.js appends its layer spans in EXTRACTION order, which for
+      // this Farsi text scatters the lines — a mouse drag selects every
+      // span DOM-between its endpoints, so a two-line drag grabbed whole
+      // lines the cursor never crossed (the operator's «ناگهان چند خط
+      // را با هم گرفت»). Re-lay the spans in the page's own reading
+      // order right after the layer settles: DOM order becomes visual
+      // order and the drag selects exactly what lies between its ends.
+      // Same order buildPageParts speaks: top-to-bottom, then
+      // right-to-left.
+      function reorderTextLayerInReadingOrder(layerEl) {
+        const spans = [...layerEl.querySelectorAll("span")];
+        if (spans.length < 2) return;
+        const reading = spans
+          .map((s) => ({
+            s,
+            top: parseFloat(s.style.top) || 0,
+            left: parseFloat(s.style.left) || 0,
+          }))
+          .sort((p, q) => p.top - q.top || q.left - p.left);
+        for (const { s } of reading) layerEl.append(s);
+      }
 
       // Reading-order item parts: the matcher's ground truth. Each part
       // keeps its normalized stream, its norm→raw index map inside the
