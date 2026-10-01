@@ -1806,6 +1806,11 @@
         -webkit-user-drag: none;
       }
 
+      /* The selection layer over the raster. pdf.js 6.3 sizes and fits its
+         spans through CSS custom properties it never sets itself — the host
+         must define --total-scale-factor (per page, from renderPage) and
+         compose it into font-size/transform, or every span renders at the
+         inherited body size and selections land on the wrong words. */
       .reader-page .textLayer {
         position: absolute;
         inset: 0;
@@ -1816,6 +1821,11 @@
         text-size-adjust: none;
         forced-color-adjust: none;
         transform-origin: 0 0;
+        z-index: 0;
+        --scale-round-x: 1px;
+        --scale-round-y: 1px;
+        --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size, 1));
+        --min-font-size-inv: calc(1 / var(--min-font-size, 1));
       }
 
       .reader-page .textLayer :is(span, br) {
@@ -1824,6 +1834,21 @@
         white-space: pre;
         cursor: text;
         transform-origin: 0 0;
+        user-select: text;
+      }
+
+      .reader-page .textLayer > :not(.markedContent),
+      .reader-page .textLayer .markedContent span:not(.markedContent) {
+        z-index: 1;
+        --font-height: 0;
+        --scale-x: 1;
+        --rotate: 0deg;
+        font-size: calc(var(--text-scale-factor) * var(--font-height));
+        transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv, 1));
+      }
+
+      .reader-page .textLayer ::selection {
+        background: rgba(46, 76, 134, 0.3);
       }
 
       /* The located quotation: a clay band over the raster, positioned
@@ -5754,6 +5779,13 @@
             try {
               const textLayerEl = document.createElement("div");
               textLayerEl.className = "textLayer";
+              // The layer's spans read this to size themselves against the
+              // raster (the CSS above composes it into font-size/transform);
+              // zoom/resize re-renders every page, so it can never go stale.
+              textLayerEl.style.setProperty(
+                "--total-scale-factor",
+                String(widthPx / vp.width)
+              );
               const layer = new reader.lib.TextLayer({
                 textContentSource: page.streamTextContent(),
                 container: textLayerEl,
@@ -5770,6 +5802,20 @@
             }
           }
           rec.rendered = true;
+          // A page that painted img-only before pdf.js finished (the upgrade
+          // loop only rescues pages it saw rendered before its pass) must not
+          // stay unselectable forever: requeue once now that the document is
+          // live and the layer is still missing.
+          if (
+            reader.pdf &&
+            reader.pdfDoc === reader.doc &&
+            !rec.el.querySelector(".textLayer") &&
+            !rec.layerRetry
+          ) {
+            rec.layerRetry = true;
+            rec.rendered = false;
+            enqueuePage(n);
+          }
         })();
         try {
           await rec.job;
@@ -5791,6 +5837,22 @@
           resolve?.();
         }
       }
+
+      // A copied selection from the book's text layer must not carry the
+      // extraction noise (backspace separators, tatweel, RTL scatter) — the
+      // clipboard gets the clean text the note and chat surfaces expect.
+      readerPagesEl.addEventListener("copy", (e) => {
+        const sel = document.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+        const inLayer = (node) =>
+          node &&
+          (node.nodeType === 1 ? node : node.parentElement)?.closest?.(
+            ".textLayer"
+          );
+        if (!inLayer(sel.anchorNode) && !inLayer(sel.focusNode)) return;
+        e.preventDefault();
+        e.clipboardData.setData("text/plain", cleanFarsi(sel.toString()));
+      });
 
       // Reading-order item parts: the matcher's ground truth. Each part
       // keeps its normalized stream, its norm→raw index map inside the

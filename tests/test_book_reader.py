@@ -378,3 +378,37 @@ def test_render_cache_prune_keeps_cap(tmp_path):
     finally:
         serve.RENDER_CACHE_DIR = original_dir
         serve.RENDER_CACHE_CAP = original_cap
+
+
+# ---- the reader's text layer (selection) ----
+
+
+def test_reader_text_layer_sizes_spans_from_the_raster_scale():
+    # pdf.js 6.3 sizes and fits its spans through CSS custom properties it
+    # never sets itself — the host supplies --total-scale-factor per layer
+    # and the CSS composes it into font-size/transform (the 2026-09-30
+    # diagnosis: spans rendered at the inherited body size, so selections
+    # landed on the wrong words at any zoom or panel width but desktop's).
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert "textLayer" in html
+    assert "textLayerEl.style.setProperty" in html
+    assert "--total-scale-factor" in html
+    assert "--text-scale-factor" in html
+    assert (
+        "font-size: calc(var(--text-scale-factor) * var(--font-height))" in html
+    )
+    assert "transform: rotate(var(--rotate)) scaleX(var(--scale-x))" in html
+    assert "user-select: text" in html
+    # The img-only upgrade race: a page painted before pdf.js finished is
+    # requeued once once the document is live and the layer is missing.
+    assert "rec.layerRetry" in html
+
+
+def test_reader_text_layer_selection_feedback_and_clean_clipboard():
+    # A copied selection leaves the layer with clean text (no backspace
+    # separators, tatweel or RTL scatter) via cleanFarsi, and the selection
+    # carries the shell's lapis tint instead of the browser default.
+    html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    assert ".reader-page .textLayer ::selection" in html
+    assert 'readerPagesEl.addEventListener("copy"' in html
+    assert "cleanFarsi(sel.toString())" in html
