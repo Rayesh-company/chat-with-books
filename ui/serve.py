@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 import base64
+import gzip
 import hashlib
 import hmac
 import json
@@ -20,9 +21,8 @@ from pathlib import Path
 import re
 import secrets
 import sys
-import tempfile
-import threading
 import time
+import threading
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
@@ -41,7 +41,10 @@ try:
     # The deep modules behind this facade; the re-exports below keep the
     # tests' single `from ui import serve` import seam.
     from ui.guard import (
+        _fuzzy_window,
+        _stream_with_offsets,
         book_label,
+        display_text,
         first_page_label,
         guard_blocks,
         guard_sentences,
@@ -57,11 +60,18 @@ try:
     )
     from ui.accounts import (
         account_by_email,
+        admins_exist,
+        attach_phone,
         create_account,
+        credit_balance,
         deduct_balance,
+        ensure_admin,
         get_balance,
+        list_accounts,
         verify_login,
     )
+    from ui import audit, migrate
+    from ui.console import console_html
     from ui.composer import (
         COMPOSER_MAX_TOKENS,
         COMPOSER_TIMEOUT,
@@ -69,16 +79,23 @@ try:
         build_planner_prompt,
         build_quoted_prompt,
         compose_quoted_answer,
+        rewrite_followup_query,
         set_meter,
     )
     from ui.ledger import (
         record_composer_call,
         record_size_estimate,
+        session_history,
         session_total,
         today_total,
+        day_total,
     )
     from ui import ledger
+    from ui import session_store
+    from ui import note_store
+    from ui import research_store
     from ui.picker import (
+        QUOTE_SELECTION_FLOOR,
         build_picker_prompt,
         parse_picker_reply,
         pick_quote_selection,
@@ -112,7 +129,7 @@ try:
         COMMAND_SYNTHESIZE,
         CONVERSATIONAL_INTENTS,
         RESEARCH_BUSY_GLOBAL_DETAIL,
-        RESEARCH_BUSY_PHONE_DETAIL,
+        RESEARCH_BUSY_ACCOUNT_DETAIL,
         RESEARCH_EVIDENCE_FLOOR,
         RESEARCH_EVENT_ABORTED,
         RESEARCH_EVENT_BRIEF,
@@ -127,6 +144,9 @@ try:
         RESEARCH_MAX_CONCURRENT,
         RESEARCH_MODEL,
         RESEARCH_NO_EVIDENCE_DETAIL,
+        RESEARCH_RECENT_SETTLED,
+        RESEARCH_REGISTRY,
+        RESEARCH_REGISTRY_LOCK,
         RESEARCH_SESSION_CAP_DETAIL,
         RESEARCH_SESSION_CLOSED_DETAIL,
         RESEARCH_SESSION_NOT_FOUND_DETAIL,
@@ -134,7 +154,7 @@ try:
         RESEARCH_TURN_NOT_FOUND_DETAIL,
         TURN_TERMINAL_STATES,
         ResearchTurn,
-        abort_phone_research,
+        abort_account_research,
         abort_research_turn,
         build_classify_prompt,
         build_conversational_prompt,
@@ -161,7 +181,10 @@ try:
     )
 except ImportError:  # the container runs this file as a script beside the modules
     from guard import (
+        _fuzzy_window,
+        _stream_with_offsets,
         book_label,
+        display_text,
         first_page_label,
         guard_blocks,
         guard_sentences,
@@ -177,11 +200,18 @@ except ImportError:  # the container runs this file as a script beside the modul
     )
     from accounts import (
         account_by_email,
+        admins_exist,
+        attach_phone,
         create_account,
+        credit_balance,
         deduct_balance,
+        ensure_admin,
         get_balance,
+        list_accounts,
         verify_login,
     )
+    import audit, migrate
+    from console import console_html
     from report import research_session_report
     from ask import ask_pool
     from chat_store import latest_chat
@@ -193,16 +223,23 @@ except ImportError:  # the container runs this file as a script beside the modul
         build_planner_prompt,
         build_quoted_prompt,
         compose_quoted_answer,
+        rewrite_followup_query,
         set_meter,
     )
     from ledger import (
         record_composer_call,
         record_size_estimate,
+        session_history,
         session_total,
         today_total,
+        day_total,
     )
     import ledger
+    import session_store
+    import note_store
+    import research_store
     from picker import (
+        QUOTE_SELECTION_FLOOR,
         build_picker_prompt,
         parse_picker_reply,
         pick_quote_selection,
@@ -232,7 +269,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         COMMAND_SYNTHESIZE,
         CONVERSATIONAL_INTENTS,
         RESEARCH_BUSY_GLOBAL_DETAIL,
-        RESEARCH_BUSY_PHONE_DETAIL,
+        RESEARCH_BUSY_ACCOUNT_DETAIL,
         RESEARCH_EVIDENCE_FLOOR,
         RESEARCH_EVENT_ABORTED,
         RESEARCH_EVENT_BRIEF,
@@ -247,6 +284,9 @@ except ImportError:  # the container runs this file as a script beside the modul
         RESEARCH_MAX_CONCURRENT,
         RESEARCH_MODEL,
         RESEARCH_NO_EVIDENCE_DETAIL,
+        RESEARCH_RECENT_SETTLED,
+        RESEARCH_REGISTRY,
+        RESEARCH_REGISTRY_LOCK,
         RESEARCH_SESSION_CAP_DETAIL,
         RESEARCH_SESSION_CLOSED_DETAIL,
         RESEARCH_SESSION_NOT_FOUND_DETAIL,
@@ -254,7 +294,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         RESEARCH_TURN_NOT_FOUND_DETAIL,
         TURN_TERMINAL_STATES,
         ResearchTurn,
-        abort_phone_research,
+        abort_account_research,
         abort_research_turn,
         build_classify_prompt,
         build_conversational_prompt,
@@ -288,17 +328,27 @@ BOOKS_DIR = Path(
     os.environ.get("SESSION_BOOKS_DIR", str(UI_DIR.parent / "books"))
 )
 # Rendered page rasters (the visual pipeline). The books/ mount is
-# read-only, so the cache lives outside it — /tmp in the container,
-# the system temp beside it in dev.
+# read-only, so the cache lives outside it. Default: a `render-cache/`
+# beside the books dir — persistent across restarts and deploys, unlike
+# the old /tmp default that turned every container rebuild into a fully
+# cold reader (ADR-0017); compose pins the volume explicitly.
 RENDER_CACHE_DIR = Path(
-    os.environ.get(
-        "SESSION_RENDER_CACHE",
-        str(Path(tempfile.gettempdir()) / "chat-books-render"),
-    )
+    os.environ.get("SESSION_RENDER_CACHE", str(BOOKS_DIR.parent / "render-cache"))
 )
+# The cache's ceiling (ADR-0017): width buckets × pages can outgrow a
+# small disk, so once the total passes the cap the oldest rasters go
+# first. Overridable for tests and tight volumes.
+RENDER_CACHE_CAP = int(os.environ.get("SESSION_RENDER_CACHE_CAP", str(3 << 30)))
 # PDFium is not provably thread-safe across documents; renders are
 # serialized (one page takes a fraction of a second).
 RENDER_LOCK = threading.Lock()
+# The open-document reuse (ADR-0017): a raster cache miss used to pay a
+# full PdfDocument parse of the whole file on EVERY page — under the
+# global lock, so every waiting client waited too. The parsed document
+# handles live here, newest-used wins, closed on eviction; reuse stays
+# inside RENDER_LOCK so the thread-safety argument above holds unchanged.
+PDF_DOCS_CACHE: dict[str, object] = {}
+PDF_DOCS_CACHE_CAP = 2
 COGNEE_URL = os.environ.get("COGNEE_URL", "http://127.0.0.1:8000").rstrip("/")
 HOST = os.environ.get("SESSION_UI_HOST", "127.0.0.1")
 PORT = int(os.environ.get("SESSION_UI_PORT", "8765"))
@@ -333,11 +383,14 @@ AUTH_COOKIE = "cwb_auth"
 # in once per sitting, not once per ask. Pinned in source, never env.
 AUTH_TOKEN_TTL = 12 * 3600
 AUTH_LOGIN_401_DETAIL = "برای ادامه وارد شوید."
-AUTH_NO_PHONE_403_DETAIL = (
-    "حساب شما به شماره‌ای پیوند نخورده است؛ "
-    "از مدیر بخواهید شماره را پیوند بزند."
-)
 AUTH_NOT_ADMIN_403_DETAIL = "ساختن حساب فقط از دست مدیر برمی‌آید."
+# The console's own refusal (T25): the mirror is the Admin's surface —
+# a logged-in operator's cookie reaches the endpoint but not the page,
+# and the Farsi note names whose door it is.
+ADMIN_CONSOLE_403_DETAIL = "میز مدیریت فقط از دست مدیر برمی‌آید."
+# How many audit rows the console shows (T25): a glance at the newest
+# actions, not the archive — the log itself keeps everything.
+ADMIN_AUDIT_ROWS = 20
 AUTH_BAD_CREDENTIALS_DETAIL = "ایمیل یا گذرواژه نادرست است."
 AUTH_BAD_LOGIN_BODY_DETAIL = "ایمیل و گذرواژه را بفرستید."
 AUTH_LOGOUT_DETAIL = "خارج شدید."
@@ -345,6 +398,33 @@ AUTH_EMAIL_TAKEN_DETAIL = "این ایمیل پیش‌تر حساب گرفته �
 AUTH_BAD_ACCOUNT_BODY_DETAIL = (
     "ایمیل و گذرواژهٔ حساب را بفرستید (گذرواژه خالی نباشد)."
 )
+# The console's write side (T26, GitLab #28): the forms POST
+# form-encoded bodies and get a 303 back to the page, so a refused
+# write re-renders the console with its Farsi note — one whitelisted
+# error code in the query string, never user text in a URL.
+ADMIN_ERROR_BAD_BODY = "bad_body"
+ADMIN_ERROR_BAD_PHONE = "bad_phone"
+ADMIN_ERROR_EMAIL_TAKEN = "email_taken"
+ADMIN_ERROR_BAD_AMOUNT = "bad_amount"
+ADMIN_ERROR_UNKNOWN_ACCOUNT = "unknown_account"
+ADMIN_ERROR_NOTES = {
+    ADMIN_ERROR_BAD_BODY: "ایمیل و گذرواژهٔ حساب را بفرستید (گذرواژه خالی نباشد).",
+    ADMIN_ERROR_BAD_PHONE: "شمارهٔ تلفن همراه را وارد کنید.",
+    ADMIN_ERROR_EMAIL_TAKEN: "این ایمیل پیش‌تر حساب گرفته است.",
+    ADMIN_ERROR_BAD_AMOUNT: "مقدار شارژ را به تومان و مثبت وارد کنید.",
+    ADMIN_ERROR_UNKNOWN_ACCOUNT: "حسابی با این ایمیل نیست.",
+}
+
+# The profile's honesty badges (T24, GitLab #27) — DRAFT display
+# vocabulary, pending PM approval (2026-09-19, CONTEXT.md's draft
+# roster discipline): the two labels that keep an estimate from ever
+# rendering as a measurement. They live here in ONE constant pair and
+# ride the /profile/data payload per entry, so the PM's approval
+# renames them in one line and the sheet never decides what counts as
+# measured (index.html documents the same strings in its own DRAFT
+# comment — the tests lock the two together).
+PROFILE_METERED_BADGE = "اندازه‌گیری‌شده"
+PROFILE_ESTIMATED_BADGE = "تخمینی"
 
 # The generated-once-per-process secret lives here; auth_secret() reads
 # the env on every call so a test (or an operator) that pins
@@ -370,6 +450,51 @@ def auth_secret() -> bytes:
             "وارد شوند. (ADR-0013)\n"
         )
     return _GENERATED_AUTH_SECRET.encode("utf-8")
+
+
+def audit_quiet(action: str, actor_email, detail) -> None:
+    """One audit append that never breaks the action it records (T26's
+    shared shape): the log records what HAPPENED, so it rides AFTER the
+    store said yes — and a broken audit store must not un-issue an
+    Account or un-top a Balance. The failure stays loud on stderr,
+    never silent, and the action stands."""
+    try:
+        audit.append(action, actor_email=actor_email, detail=detail)
+    except Exception as exc:
+        sys.stderr.write(
+            f"audit append failed for {action}: {exc!r}\n"
+        )
+
+
+def ensure_first_admin_from_env() -> None:
+    """The first Admin from config (T26, GitLab #28 — the bootstrap
+    seed command retired): compose env carries ADMIN_EMAIL and
+    ADMIN_PASSWORD; the server creates that Admin once at startup and
+    records it in the audit log (the deployment's act is history too).
+    When an Admin already stands — or either variable is empty, or the
+    email is taken — nothing is touched and the skip is loud on
+    stderr: a restart must never quietly re-issue the PM's password,
+    and the console never mutates silently, at startup included."""
+    email = os.environ.get("ADMIN_EMAIL", "").strip()
+    password = os.environ.get("ADMIN_PASSWORD", "")
+    if not email or not password:
+        return
+    if ensure_admin(email, password):
+        audit_quiet(audit.ADMIN_SEEDED, actor_email=email, detail={"email": email})
+        sys.stderr.write(
+            f"مدیر نخستین از ADMIN_EMAIL ساخته شد ({email}) و در "
+            "دفتر رخدادها ثبت شد.\n"
+        )
+    elif not admins_exist():
+        sys.stderr.write(
+            f"ADMIN_EMAIL ({email}) پیش‌تر به یک حساب دیگر رسیده است؛ "
+            "مدیری ساخته نشد.\n"
+        )
+    else:
+        sys.stderr.write(
+            "مدیری از پیش وجود دارد؛ ADMIN_EMAIL/ADMIN_PASSWORD نادیده "
+            "گرفته شد — گذرواژهٔ کسی بی‌کنش عوض نمی‌شود.\n"
+        )
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -428,19 +553,21 @@ def verify_token(token: str):
 
 
 def resolve_identity(handler):
-    """The gate flip (ADR-0013): the Account's attached phone, derived
-    from the cwb_auth cookie — the phone-keyed stores' key, normalized
-    exactly like normalize_phone — or None after answering the request.
+    """The gate flip (ADR-0013), finished (T21, GitLab #23): the
+    Account's EMAIL — the identity every store now keys by — derived
+    from the cwb_auth cookie, or None after answering the request.
 
     Every endpoint that once read the client-supplied phone header goes
     through here; the header no longer authenticates anything. An
     absent, invalid, expired, or tampered token (and a token whose
-    Account no longer exists — a re-issued bootstrap) answers 401; a
-    valid Account with no attached phone answers 403, because the
-    phone-keyed stores (quotas, research sessions) have no key to
-    address it by — the Admin must attach one. Neither answer ever
-    crashes: the gate's rejections keep the drain-first shape so the
-    response never dies to a reset."""
+    Account no longer exists) answers 401. The old no-attached-phone
+    403 is retired with the phone-keyed stores: an Account without
+    attached legacy history is a working Account — it chats, it spends,
+    it is bounded by its quota and Balance like any other. The attached
+    phone survives as legacy data only: the mapping the Admin's attach
+    flow gives ui/migrate.py to carry pre-T21 rows onto their Accounts.
+    Neither answer ever crashes: the gate's rejections keep the
+    drain-first shape so the response never dies to a reset."""
     claims = verify_token(handler._cookie_token())
     if claims is not None:
         account = account_by_email(claims["email"])
@@ -449,11 +576,7 @@ def resolve_identity(handler):
     if account is None:
         handler._json_error(401, AUTH_LOGIN_401_DETAIL)
         return None
-    phone = normalize_phone(account.get("phone") or "")
-    if not phone:
-        handler._json_error(403, AUTH_NO_PHONE_403_DETAIL)
-        return None
-    return phone
+    return account["email"]
 
 
 def resolve_account(handler):
@@ -479,6 +602,82 @@ def validated_datasets(raw):
     if not picked:
         return None
     return [dataset for dataset in BOOK_DATASETS if dataset in picked]
+
+
+# The follow-up thread's budget (ADR-0015): the sitting's recent turns
+# ride as framing only — a short question (at most this many words) is
+# what gets rewritten, and each earlier answer contributes a capped
+# connective text, so the prompts stay small.
+REWRITE_MAX_WORDS = 8
+_TAIL_TURNS = 3
+_TAIL_ANSWER_CHARS = 400
+
+
+def _article_connective_text(payload) -> str:
+    """A stored assistant payload's own writing — the blocks' text
+    parts only. The quote parts are the passages' job (the writer
+    re-copies them verbatim from the sources), so they never ride the
+    tail; the connective text is what tells the rewriter and the
+    phase-2 writer what the sitting has already covered."""
+    if not isinstance(payload, dict):
+        return ""
+    parts: list[str] = []
+    for block in payload.get("blocks") or []:
+        if not isinstance(block, dict) or block.get("type") != "paragraph":
+            continue
+        for part in block.get("parts") or []:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                parts.append(part["text"].strip())
+    return " ".join(p for p in parts if p)[:_TAIL_ANSWER_CHARS]
+
+
+def _conversation_tail(account: str, session_id) -> str:
+    """The sitting's recent turns (the Session store's own rows, the
+    same transcript the resume renders) as one context string — the
+    last few ask/answer pairs, oldest first. The follow-up rewrite and
+    the phase-2 framing read it; everything about it fails soft: no
+    sitting, an unreadable store, or no turns answer an empty string
+    and the callers ride without context."""
+    if not isinstance(session_id, int):
+        return ""
+    try:
+        session = session_store.get_session(account, session_id)
+    except Exception:
+        return ""
+    if not session:
+        return ""
+    lines: list[str] = []
+    for message in session.get("messages") or []:
+        if not isinstance(message, dict):
+            continue
+        payload = message.get("payload")
+        if message.get("role") == "user":
+            text = payload.get("text") if isinstance(payload, dict) else None
+            if isinstance(text, str) and text.strip():
+                lines.append(f"Q: {text.strip()[:_TAIL_ANSWER_CHARS]}")
+        else:
+            text = _article_connective_text(payload)
+            if text:
+                lines.append(f"A: {text}")
+    return "\n".join(lines[-_TAIL_TURNS * 2 :])
+
+
+# The pages index's gzip cache (ADR-0017): the per-Book text index
+# shrinks ~6x on the wire but re-compressing it per request spends CPU
+# on every reader open — the compressed bytes live here keyed by the
+# file's mtime, so an unchanged index compresses exactly once. (The
+# mtime key makes a re-indexed Book re-compress for free.)
+_GZIP_CACHE: dict[tuple[str, int], bytes] = {}
+
+
+def _gzipped_file(file_path: Path, mtime_ns: int) -> bytes:
+    key = (str(file_path), mtime_ns)
+    body = _GZIP_CACHE.get(key)
+    if body is None:
+        body = gzip.compress(file_path.read_bytes(), compresslevel=6)
+        _GZIP_CACHE.clear()  # one Book's index at a time — the files are few
+        _GZIP_CACHE[key] = body
+    return body
 
 
 class SessionHandler(SimpleHTTPRequestHandler):
@@ -541,6 +740,29 @@ class SessionHandler(SimpleHTTPRequestHandler):
         if path == "/chat/latest":
             self._chat_latest()
             return
+        if path == "/admin":
+            # The «میز مدیریت» (T25): the Admin's server-rendered
+            # mirror of the system — a read, never a mutation.
+            self._admin_console()
+            return
+        if path == "/profile/data":
+            self._profile_data()
+            return
+        if path == "/sessions":
+            # The Session store's list (T27 stage 3, GitLab #40): the
+            # sidebar's read, the caller's own Sessions only.
+            self._sessions_list()
+            return
+        if path == "/notes":
+            # The Notebook's read (the selection map, ticket 08): the
+            # panel's list, the caller's own notes only.
+            self._notes_list()
+            return
+        if path.startswith("/sessions/"):
+            rest = path[len("/sessions/"):]
+            if rest.isdigit():
+                self._session_get(int(rest))
+                return
         if path.startswith("/books/"):
             self._book_file(path)
             return
@@ -552,8 +774,10 @@ class SessionHandler(SimpleHTTPRequestHandler):
         ``.pages.json`` text index (the reader's provenance surface,
         ADR-0007). The dataset must be one of the Book set: the allowlist
         is the path-traversal guard, so no ``..`` or hash directory can
-        ever reach the filesystem. No HTTP Range: the browser's PDF.js
-        falls back to one full fetch, fine at the Books' 3–16 MB.
+        ever reach the filesystem. HTTP Range is honored byte-for-byte
+        (pdf.js fetches a Book's pages lazily with disableAutoFetch,
+        ADR-0017), and the full-form answers carry an ETag + 304
+        revalidation so reopening a Book never refetches it whole.
 
         The reader fetches the extension-less ``/book`` form on purpose:
         download managers (IDM among them) intercept requests whose URL
@@ -581,7 +805,8 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         file_path = BOOKS_DIR / f"{dataset}.{suffix}"
         try:
-            total_size = file_path.stat().st_size
+            stat = file_path.stat()
+            total_size = stat.st_size
         except OSError:
             self._drain_request_body()
             self.send_error(404, "Not found")
@@ -618,6 +843,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 self.send_header("Content-Range", f"bytes {start}-{end}/{total_size}")
                 self.send_header("Content-Length", str(chunk_len))
                 self.send_header("Accept-Ranges", "bytes")
+                self.send_header("ETag", f'"{total_size:x}-{stat.st_mtime_ns:x}"')
                 self.end_headers()
 
                 with file_path.open("rb") as f:
@@ -636,15 +862,51 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 pass
 
         try:
+            # The revalidation pair (ADR-0017): a strong ETag off the
+            # file's own stat, and a must-revalidate policy — the
+            # browser re-asks on every reader open and a 304 answer
+            # costs one stat, where the old unconditioned 200 refetched
+            # the whole 16 MB Book each time. Range requests (pdf.js's
+            # lazy page fetches with disableAutoFetch) carry the ETag
+            # too but never take the 304 short-circuit.
+            etag = f'"{total_size:x}-{stat.st_mtime_ns:x}"'
+            if (
+                not range_header
+                and self.headers.get("If-None-Match") == etag
+            ):
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header(
+                    "Cache-Control", "public, max-age=0, must-revalidate"
+                )
+                self.end_headers()
+                return
+            gzip_wanted = (
+                suffix == "pages.json"
+                and "gzip" in (
+                    self.headers.get("Accept-Encoding") or ""
+                )
+            )
             self.send_response(200)
             self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(total_size))
+            self.send_header("ETag", etag)
             self.send_header("Accept-Ranges", "bytes")
+            self.send_header(
+                "Cache-Control", "public, max-age=0, must-revalidate"
+            )
             if suffix == "pdf" and path.endswith(".pdf"):
                 self.send_header(
                     "Content-Disposition",
                     f'attachment; filename="{dataset}.pdf"',
                 )
+            if gzip_wanted:
+                body = _gzipped_file(file_path, stat.st_mtime_ns)
+                self.send_header("Content-Encoding", "gzip")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            self.send_header("Content-Length", str(total_size))
             self.end_headers()
 
             with file_path.open("rb") as f:
@@ -692,9 +954,19 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         cache_key = f"{dataset}-p{page_number}-w{width}.png"
         cache_file = RENDER_CACHE_DIR / cache_key
+        started = time.monotonic()
         try:
             body = cache_file.read_bytes()
         except OSError:
+            body = None
+        if body is not None:
+            # The fast path's own witness (ADR-0017): a warm cache hit
+            # answers here, before the lock, and is logged like a miss.
+            sys.stderr.write(
+                f"render {dataset} p{page_number} w{width}"
+                f" hit {time.monotonic() - started:.3f}s\n"
+            )
+        else:
             body = self._render_book_page(dataset, page_number, width, cache_file)
             if body is None:
                 self._drain_request_body()
@@ -708,39 +980,104 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     @staticmethod
+    def _pdf_doc_handle(source: Path):
+        """The reused parsed document (ADR-0017): an LRU of open
+        PdfDocuments, closed on eviction. A raster cache miss used to
+        pay a full parse of the whole file on EVERY page — under the
+        global lock, so every waiting client waited with it. Callers
+        hold RENDER_LOCK, so the reuse never widens PDFium's thread
+        exposure; the books are read-only mounts, the handle cannot go
+        stale under a live file."""
+        key = str(source)
+        pdf = PDF_DOCS_CACHE.get(key)
+        if pdf is not None:
+            PDF_DOCS_CACHE[key] = PDF_DOCS_CACHE.pop(key)
+            return pdf
+        while len(PDF_DOCS_CACHE) >= PDF_DOCS_CACHE_CAP:
+            oldest = next(iter(PDF_DOCS_CACHE))
+            try:
+                PDF_DOCS_CACHE.pop(oldest).close()
+            except Exception:
+                pass
+        pdf = _pdfium.PdfDocument(str(source))
+        PDF_DOCS_CACHE[key] = pdf
+        return pdf
+
+    @staticmethod
+    def _prune_render_cache():
+        """The cache's ceiling (ADR-0017): once the rasters outgrow the
+        cap the oldest go first. The sweep runs only on the write path
+        and only when the cap is crossed — the hit path never pays for
+        it."""
+        try:
+            entries = list(RENDER_CACHE_DIR.glob("*.png"))
+            total = sum(e.stat().st_size for e in entries)
+            if total <= RENDER_CACHE_CAP:
+                return
+            entries.sort(key=lambda e: e.stat().st_mtime)
+            for entry in entries:
+                if total <= RENDER_CACHE_CAP:
+                    break
+                try:
+                    total -= entry.stat().st_size
+                except OSError:
+                    continue
+                entry.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    @staticmethod
     def _render_book_page(dataset, page_number, width, cache_file):
         """One page raster, cached atomically; None when the page does
-        not exist or the PDF is unreadable."""
+        not exist or the PDF is unreadable. Every answer logs its cost —
+        hit/miss and milliseconds — so a slow page has a witness, and a
+        miss reuses the open-document cache instead of re-parsing the
+        whole file (ADR-0017)."""
         source = BOOKS_DIR / f"{dataset}.pdf"
         if not source.exists():
             return None
         RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        started = time.monotonic()
+        try:
+            body = cache_file.read_bytes()
+        except OSError:
+            body = None
         with RENDER_LOCK:
-            try:
-                body = cache_file.read_bytes()
-            except OSError:
-                body = None
+            if body is None:
+                # The double-check: another thread may have rendered
+                # this exact page while this one waited on the lock.
+                try:
+                    body = cache_file.read_bytes()
+                except OSError:
+                    body = None
             if body is not None:
+                sys.stderr.write(
+                    f"render {dataset} p{page_number} w{width}"
+                    f" hit {time.monotonic() - started:.3f}s\n"
+                )
                 return body
             try:
-                pdf = _pdfium.PdfDocument(str(source))
-                try:
-                    if page_number > len(pdf):
-                        return None
-                    page = pdf[page_number - 1]
-                    bitmap = page.render(scale=width / page.get_width())
-                    image = bitmap.to_pil()
-                finally:
-                    pdf.close()
+                pdf = SessionHandler._pdf_doc_handle(source)
+                if page_number > len(pdf):
+                    return None
+                page = pdf[page_number - 1]
+                bitmap = page.render(scale=width / page.get_width())
+                image = bitmap.to_pil()
                 tmp = cache_file.with_suffix(f".tmp{threading.get_ident()}")
                 image.save(tmp, format="PNG")
                 os.replace(tmp, cache_file)
-                return cache_file.read_bytes()
+                body = cache_file.read_bytes()
             except Exception:
                 sys.stderr.write(
                     f"render failed: {dataset} p{page_number}\n"
                 )
                 return None
+        sys.stderr.write(
+            f"render {dataset} p{page_number} w{width}"
+            f" miss {time.monotonic() - started:.3f}s\n"
+        )
+        SessionHandler._prune_render_cache()
+        return body
 
     def _drain_request_body(self) -> None:
         """Read the body Content-Length promised before answering and
@@ -801,14 +1138,14 @@ class SessionHandler(SimpleHTTPRequestHandler):
         f"{AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
     )
 
-    def _balance_gate(self, phone: str) -> bool:
+    def _balance_gate(self, account: str) -> bool:
         """The prepaid stop (T23, GitLab #25): an Account whose Balance
         (اعتبار) is spent answers 402 with the Farsi fix — the ask and
         the phases each pay for themselves before they run, and a turn
         that cannot be paid for never starts. A turn or phase already
         running finishes; only the NEXT spend is stopped. The daily
         quota still applies on top of the Balance, never instead."""
-        if get_balance(phone) <= 0:
+        if get_balance(account) <= 0:
             self._json_error(
                 402,
                 "اعتبار این حساب تمام شده است؛ از مدیر بخواهید اعتبار را شارژ کند.",
@@ -816,41 +1153,56 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return False
         return True
 
-    def _gate_phone(self):
-        """The ask gate (ADR-0013): the Account's attached phone —
-        resolved from the login cookie, never from a client header —
-        with chats left today; records the chat. The identity resolver
-        answers 401/403 itself and returns None when rejected; the
-        quota still bounds per Account through the attached phone,
-        which is exactly the store key the quota DB has always had."""
-        phone = resolve_identity(self)
-        if phone is None:
+    def _gate_account(self):
+        """The ask gate (ADR-0013): the Account behind the login
+        cookie — resolved, never client-supplied — with chats left
+        today; records the chat. The identity resolver answers 401
+        itself and returns None when rejected; the quota bounds per
+        Account through the email the store keys by (T21)."""
+        account = resolve_identity(self)
+        if account is None:
             return None
-        if not self._balance_gate(phone):
+        if not self._balance_gate(account):
             return None
-        if chats_today(phone) >= DAILY_CHAT_LIMIT:
+        if chats_today(account) >= DAILY_CHAT_LIMIT:
             self._json_error(
-                429, "شمار گفتگوهای امروز این شماره پر شده است؛ فردا بیایید."
+                429, "شمار گفتگوهای امروز این حساب پر شده است؛ فردا بیایید."
             )
             return None
-        record_chat(phone)
-        return phone
+        record_chat(account)
+        return account
 
-    def _quoted_phone(self):
-        """The phase-2 gate: an Account whose attached phone has at
-        least one chat today (the quoted answer belongs to a chat that
-        already started)."""
-        phone = resolve_identity(self)
-        if phone is None:
+    def _quoted_account(self):
+        """The phase-2 gate: an Account with at least one chat today
+        (the quoted answer belongs to a chat that already started)."""
+        account = resolve_identity(self)
+        if account is None:
             return None
-        if not self._balance_gate(phone):
+        if not self._balance_gate(account):
             return None
-        if chats_today(phone) < 1:
+        if chats_today(account) < 1:
             self._json_error(
                 429, "پاسخ استنادی بخشی از همان گفتگو است؛ اول یک پرسش بپرسید."
             )
             return None
-        return phone
+        return account
+
+    def _research_account(self):
+        """The research gate (ADR-0015): the Account behind the login
+        cookie with a positive Balance — and nothing else. The old
+        minimum-of-one-chat precondition existed because research was
+        seeded from a prior ask's Evidence pool; the composer's research
+        toggle starts the conversation from the typed question alone
+        (the pool seed is optional), so the day's first act may be
+        research. The daily chat quota stays the normal ask's quota —
+        research turns record no chats and never burn it; the Balance
+        is the research spend's own prepaid stop."""
+        account = resolve_identity(self)
+        if account is None:
+            return None
+        if not self._balance_gate(account):
+            return None
+        return account
 
     # --- the Account endpoints (ADR-0013) -----------------------------------
     # Login is the one door; /auth/logout and /auth/me serve the sheet's
@@ -951,6 +1303,17 @@ class SessionHandler(SimpleHTTPRequestHandler):
         if created is None:
             self._send_json(409, {"detail": AUTH_EMAIL_TAKEN_DETAIL})
             return
+        # The audit's first wired action (ADR-0013, T25): an issuance is
+        # the Admin's act and lands in the append-only log — the issuer
+        # and the issued, appended only after the creation truly
+        # succeeded. A refused creation (the 409 above, the bad body
+        # before it) logs nothing: the log records what HAPPENED, never
+        # what was attempted.
+        audit_quiet(
+            audit.ACCOUNT_CREATED,
+            actor_email=account["email"],
+            detail={"email": created["email"], "phone": created["phone"]},
+        )
         self._send_json(
             200,
             {
@@ -959,6 +1322,24 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 "phone": created["phone"],
             },
         )
+
+    def do_DELETE(self):
+        """DELETE: the Session store's one destructive verb (T27 stage
+        3, the list-v1 shape — delete only) and the Notebook's single
+        delete. A row that is not the caller's is a 404, never an
+        erase."""
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/sessions/"):
+            rest = path[len("/sessions/"):]
+            if rest.isdigit():
+                self._session_delete(int(rest))
+                return
+        if path.startswith("/notes/"):
+            rest = path[len("/notes/"):]
+            if rest.isdigit():
+                self._note_delete(int(rest))
+                return
+        self.send_error(404, "Not found")
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
@@ -975,31 +1356,50 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self._auth_create_account()
             return
         if path == "/ask":
-            phone = self._gate_phone()
-            if phone is None:
+            # The retrieval-only reference ask (ADR-0014): the T27
+            # shell's composer does not call this door — production
+            # asks through /api/v1/recall's one-door composer (ADR-0015)
+            # — but the reference flow keeps its gate and its record.
+            account = self._gate_account()
+            if account is None:
                 return
             # A new ask owns the sheet exactly like the recall proxy
-            # before it (issue #26): the phone's in-flight research
+            # before it (issue #26): the Account's in-flight research
             # turns abort cooperatively and their sessions close.
-            abort_phone_research(phone)
+            abort_account_research(account)
             # The ask's own ledger entry (T22): input-side size
             # estimate, like the recall POST always recorded.
             record_size_estimate(
-                phone, "ask", int(self.headers.get("Content-Length", "0") or "0")
+                account, "ask", int(self.headers.get("Content-Length", "0") or "0")
             )
-            self._ask(phone)
+            self._ask(account)
+        if path == "/admin/accounts":
+            # The console's issuance form (T26, GitLab #28): the same
+            # act as /auth/accounts, wearing the page's shape.
+            self._admin_create_account()
+            return
+        if path == "/admin/topup":
+            # The console's top-up form (T26, GitLab #28): Toman lands
+            # on a Balance, audited, from the browser.
+            self._admin_topup()
+            return
+        if path == "/admin/attach":
+            # The console's attach form (T21, GitLab #23): the legacy
+            # phone joins its Account, and the stores' pre-account rows
+            # follow the mapping — audited, from the browser.
+            self._admin_attach()
             return
         if path == "/api/v1/recall":
-            phone = self._gate_phone()
-            if phone is None:
+            account = self._gate_account()
+            if account is None:
                 return
             # A new ask owns the sheet (issue #26): after the gate has
-            # recorded the chat, the phone's in-flight research turns
-            # abort — cooperatively; the worker exits at its next
+            # recorded the chat, the Account's in-flight research
+            # turns abort — cooperatively; the worker exits at its next
             # boundary — and their sessions close, so the new ask's
             # Research Mode starts from a fresh investigation. Another
-            # phone's research is never touched.
-            abort_phone_research(phone)
+            # Account's research is never touched.
+            abort_account_research(account)
             # The ask's own entry (T22, GitLab #24): the gate knows the
             # request's size before the relay streams the answer — an
             # input-side estimate, marked estimated like every
@@ -1007,81 +1407,123 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # thread's usage tap and land metered or estimated by the
             # reply's own honesty.
             record_size_estimate(
-                phone, "ask", int(self.headers.get("Content-Length", "0") or "0")
+                account, "ask", int(self.headers.get("Content-Length", "0") or "0")
             )
-            self._proxy("POST")
+            self._proxy("POST", account)
             return
+        if path == "/sessions":
+            # The Session store's create (T27 stage 3): the sheet opens
+            # the sitting on its first ask.
+            self._session_create()
+            return
+        if path == "/notes":
+            # The Notebook's quick-save (the selection map, ticket 08):
+            # the popover's capture lands here with its defaults.
+            self._note_create()
+            return
+        if path == "/notes/bulk-delete":
+            self._note_bulk_delete()
+            return
+        if path.startswith("/notes/"):
+            rest = path[len("/notes/"):]
+            if rest.isdigit():
+                self._note_update(int(rest))
+                return
+        if path.startswith("/sessions/"):
+            rest = path[len("/sessions/"):]
+            if rest.endswith("/messages") and rest[: -len("/messages")].isdigit():
+                self._session_append(int(rest[: -len("/messages")]))
+                return
         if path == "/quoted-answer":
-            phone = self._quoted_phone()
-            if phone is None:
+            account = self._quoted_account()
+            if account is None:
                 return
             # The planner and the writer both ride this thread's composer
             # calls — each upstream call lands its own ledger entry.
             set_meter(
                 lambda prompt, reply: record_composer_call(
-                    phone, "writer", prompt, reply
+                    account, "writer", prompt, reply
                 )
             )
             try:
-                self._quoted_answer(phone)
+                self._quoted_answer(account)
             finally:
                 set_meter(None)
             return
         if path == "/quote-selection":
-            phone = self._quoted_phone()
-            if phone is None:
+            account = self._quoted_account()
+            if account is None:
                 return
             set_meter(
                 lambda prompt, reply: record_composer_call(
-                    phone, "picker", prompt, reply
+                    account, "picker", prompt, reply
                 )
             )
             try:
-                self._quote_selection(phone)
+                self._quote_selection(account)
             finally:
                 set_meter(None)
             return
         if path == "/recall-more":
-            phone = self._quoted_phone()
-            if phone is None:
+            account = self._quoted_account()
+            if account is None:
                 return
             set_meter(
                 lambda prompt, reply: record_composer_call(
-                    phone, "composer", prompt, reply
+                    account, "composer", prompt, reply
                 )
             )
             try:
-                self._recall_more(phone)
+                self._recall_more(account)
             finally:
                 set_meter(None)
             return
         if path == "/evidence-fallback":
-            if self._quoted_phone() is None:
+            if self._quoted_account() is None:
                 return
             self._evidence_fallback()
             return
         if path == "/research/message":
-            phone = self._quoted_phone()
-            if phone is None:
+            account = self._research_account()
+            if account is None:
                 return
-            self._research_message(phone)
+            self._research_message(account)
             return
         if path == "/research/decide":
-            phone = self._quoted_phone()
-            if phone is None:
+            # The same gate as the message start (ADR-0015): a
+            # toggle-first conversation's proposals must be decidable
+            # even when no normal ask ran today. Bookkeeping — no
+            # upstream call, nothing to meter.
+            account = self._research_account()
+            if account is None:
                 return
-            self._research_decide(phone)
+            self._research_decide(account)
             return
         if path == "/next-tier-recall":
-            if self._quoted_phone() is None:
+            if self._quoted_account() is None:
                 return
             self._next_tier_recall()
             return
         self._drain_request_body()
         self.send_error(404, "Not found")
 
-    def _quoted_answer(self, phone: str) -> None:
-        """Compose the Quoted answer; empty blocks = fallback."""
+    def _quoted_answer(self, account: str) -> None:
+        """Compose the Quoted answer; empty blocks = fallback.
+
+        The settled article is also the Account's Session record
+        (vanishing-content fix, 2026-09-24): when the body carries the
+        sitting's ``session_id`` and this ask's ``ask_key``, the server
+        settles the assistant turn ITSELF, before the reply is written —
+        a browser that reloads mid-compose leaves the sitting with its
+        answer, because the store write no longer waits for the client
+        to report it. A re-settle of the same ask_key upgrades the row
+        in place, so the transcript keeps ONE answer per ask. A store
+        failure never fails the phase reply.
+
+        The reference flow's record (ADR-0014) rides beside it: a body
+        carrying the ask-minted ``chat_id`` updates the reference chat
+        store's row — the reload's restore read re-renders the guarded
+        document there."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -1100,6 +1542,8 @@ class SessionHandler(SimpleHTTPRequestHandler):
             chat_id = payload.get("chat_id")
             if not isinstance(chat_id, str):
                 chat_id = ""
+            session_id = payload.get("session_id")
+            ask_key = payload.get("ask_key")
             if not isinstance(question, str) or not question.strip() or not sources:
                 raise ValueError("question and sources are required")
             if not isinstance(answer, str):
@@ -1107,12 +1551,45 @@ class SessionHandler(SimpleHTTPRequestHandler):
         except (ValueError, KeyError, TypeError):
             self.send_error(400, "Bad request")
             return
-        blocks, truncated = compose_quoted_answer(question, answer, sources)
-        if chat_id:
+        # The sitting's earlier turns ride as framing (the follow-up
+        # thread, ADR-0015) — a stored snapshot contributes nothing
+        # (its parts are quotes only), so the parallel picker's row,
+        # if it settled first, never pollutes the writer's context.
+        tail = _conversation_tail(account, session_id)
+        blocks, truncated = compose_quoted_answer(
+            question, answer, sources, conversation_tail=tail
+        )
+        # The settle is gated on a written document (the other half of
+        # the arrive-order race, 2026-09-27 operator report): a failed
+        # phase 2 used to settle empty blocks and erase the snapshot
+        # the picker had already stored — the store refuses downgrades
+        # too, but the empty write never even starts here.
+        if (
+            blocks
+            and isinstance(session_id, int)
+            and isinstance(ask_key, str)
+            and ask_key.strip()
+        ):
+            try:
+                session_store.settle_ask(
+                    account,
+                    session_id,
+                    ask_key,
+                    {
+                        "question": question,
+                        "blocks": blocks,
+                        "truncated": truncated,
+                        "citations": sources[:10],
+                    },
+                )
+            except Exception:
+                sys.stderr.write("session settle failed (quoted-answer)\n")
+        if blocks and chat_id:
             # The reload's record (ADR-0014): the guarded document that
             # rendered is the document the restore re-renders — a
-            # phone-guarded write, so a foreign chat_id lands nowhere.
-            chat_store.update_quoted(chat_id, phone, blocks, truncated)
+            # write guarded by the owner's key, so a foreign chat_id
+            # lands nowhere.
+            chat_store.update_quoted(chat_id, account, blocks, truncated)
         body = json.dumps(
             {"blocks": blocks, "truncated": truncated}, ensure_ascii=False
         ).encode("utf-8")
@@ -1122,7 +1599,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _ask(self, phone: str) -> None:
+    def _ask(self, account: str) -> None:
         """The retrieval-only ask (ADR-0014): the first answer's Evidence
         pool with NO LLM completion in the loop — one only_context search
         per selected Book over the main Cognee service, so the pool is
@@ -1148,22 +1625,22 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         sources = ask_pool(query.strip(), datasets)
         chat_id = secrets.token_hex(8)
-        chat_store.create_chat(chat_id, phone, query.strip(), datasets, sources)
+        chat_store.create_chat(chat_id, account, query.strip(), datasets, sources)
         self._send_json(
             200,
             {"chat_id": chat_id, "sources": sources, "pool_size": len(sources)},
         )
 
     def _chat_latest(self) -> None:
-        """The reload's restore read (ADR-0014): the phone's newest ask
+        """The reload's restore read (ADR-0014): the Account's newest ask
         row — question, Book selection, pool, Quote selection, and the
         Quoted answer's blocks — or null when the Account never asked.
         No LLM, no side effects; the identity comes from the login
         cookie (ADR-0013)."""
-        phone = resolve_identity(self)
-        if phone is None:
+        account = resolve_identity(self)
+        if account is None:
             return
-        self._send_json(200, {"chat": latest_chat(phone)})
+        self._send_json(200, {"chat": latest_chat(account)})
 
     def _evidence_fallback(self) -> None:
         """The phase-1 citation fallback (ADR-0011): the first message's
@@ -1171,7 +1648,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
         without an Evidence block, ONE pinned reference-on search over
         the question (the dive kernel's searcher, the ask's selected
         Books) fetches the pool directly so the Quote selection and
-        phase 2 still run. The gate is the ask's own shape (a phone
+        phase 2 still run. The gate is the ask's own shape (an Account
         with a chat today; the ask already recorded it — this never
         counts another). A malformed body answers 400; a searcher that
         finds nothing answers 200 {"sources": []} — the honest empty
@@ -1190,7 +1667,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
         sources = dive_recall(question.strip(), datasets)
         self._send_json(200, {"sources": sources})
 
-    def _recall_more(self, phone: str) -> None:
+    def _recall_more(self, account: str) -> None:
         """The «جست‌وجوی بیشتر» operation (ADR-0010): one broaden call
         reasons out the question's not-yet-covered facets, the dive
         kernel's pinned searchers run them on the second service, and
@@ -1234,7 +1711,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             chat_id = payload.get("chat_id")
             if isinstance(chat_id, str) and chat_id:
                 chat_store.update_pool(
-                    chat_id, phone, sources + fresh
+                    chat_id, account, sources + fresh
                 )
         body = json.dumps({"sources": fresh}, ensure_ascii=False).encode(
             "utf-8"
@@ -1245,19 +1722,31 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _quote_selection(self, phone: str) -> None:
+    def _quote_selection(self, account: str) -> None:
         """Pick the Quote selection (ADR-0006, issue #28): the pool
         exactly as the sheet parsed it, one picker call, the guarded
         selections back. The gate is phase 2's shape — the picker
-        belongs to the chat phase 1 recorded — so it needs a phone with
-        at least one chat today and never records or counts one. The
-        kept selections are the ask's record too (ADR-0014): keyed by
-        the body's chat_id, phone-guarded, so a reload re-renders the
-        same first answer. A malformed body or an empty pool answers
-        400 (a JSON detail, the gate's shape) before any upstream call;
-        a picker failure or a below-floor selection answers 200
-        {"selections": []} — the one uniform empty shape the sheet's
-        honest note consumes, never a 5xx."""
+        belongs to the chat phase 1 recorded — so it needs an Account
+        with at least one chat today and never records or counts one. A
+        malformed body or an empty pool answers 400 (a JSON detail, the
+        gate's shape) before any upstream call; a picker failure or a
+        below-floor selection answers 200 {"selections": []} — the one
+        uniform empty shape the sheet's prose fallback consumes, never
+        a 5xx.
+
+        With the sitting's ``session_id`` and this ask's ``ask_key`` in
+        the body, the kept selections also settle the ask's assistant
+        turn SERVER-SIDE (the vanishing-content fix, 2026-09-24): the
+        first-answer snapshot rides the same idempotent row the phase-2
+        article later upgrades, so a reload after the picker — even
+        hours before phase 2 lands — leaves the sitting with the answer
+        the operator actually received. The snapshot's blocks are the
+        selections rendered as quoting paragraphs, the exact shape the
+        resume read draws.
+
+        The reference flow's record (ADR-0014) rides beside it: a body
+        carrying the ask-minted ``chat_id`` records the kept selections
+        in the reference chat store's row."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -1275,6 +1764,8 @@ class SessionHandler(SimpleHTTPRequestHandler):
             chat_id = payload.get("chat_id")
             if not isinstance(chat_id, str):
                 chat_id = ""
+            session_id = payload.get("session_id")
+            ask_key = payload.get("ask_key")
             if not isinstance(question, str) or not question.strip() or not sources:
                 raise ValueError("question and sources are required")
         except (ValueError, KeyError, TypeError):
@@ -1285,8 +1776,42 @@ class SessionHandler(SimpleHTTPRequestHandler):
             )
             return
         selections = pick_quote_selection(question, sources)
+        if (
+            selections
+            and isinstance(session_id, int)
+            and isinstance(ask_key, str)
+            and ask_key.strip()
+        ):
+            snapshot = {
+                "question": question,
+                "blocks": [
+                    {
+                        "type": "paragraph",
+                        "parts": [
+                            {
+                                "quote": item["text"],
+                                "reference": item["reference"],
+                                "pages_label": item.get("pages_label", ""),
+                                "first_page_label": item.get(
+                                    "first_page_label", ""
+                                ),
+                                "book_label": item.get("book_label", ""),
+                            }
+                        ],
+                    }
+                    for item in selections
+                ],
+                "citations": sources[:10],
+                "selection_snapshot": True,
+            }
+            try:
+                session_store.settle_ask(
+                    account, session_id, ask_key, snapshot
+                )
+            except Exception:
+                sys.stderr.write("session settle failed (quote-selection)\n")
         if chat_id and selections:
-            chat_store.update_selections(chat_id, phone, selections)
+            chat_store.update_selections(chat_id, account, selections)
         self._send_json(200, {"selections": selections, "pool_size": len(sources)})
 
     def _research_turn_status(self) -> None:
@@ -1294,19 +1819,19 @@ class SessionHandler(SimpleHTTPRequestHandler):
         Farsi events, and elapsed seconds — and, when the turn settled,
         its outcome. `done` carries the reply payload ({"reply",
         "suggestions", "state"}), `failed` a short Farsi detail, and an
-        unknown id (a restart emptied the registry, or a foreign phone)
+        unknown id (a restart emptied the registry, or a foreign Account)
         answers 404 — the recorded failure surface, never a hang. The
-        phone must match the turn's: one Account's poll never reads
+        account must match the turn's: one Account's poll never reads
         another's research. The identity comes from the login cookie
         (ADR-0013): no valid Account, no poll — 401."""
-        phone = resolve_identity(self)
-        if phone is None:
+        account = resolve_identity(self)
+        if account is None:
             return
         query = parse_qs(urlparse(self.path).query)
         turn_id = (query.get("turn") or [""])[0]
         payload = None
         turn = find_turn(turn_id)
-        if turn is not None and turn.phone == phone:
+        if turn is not None and turn.account == account:
             payload = turn_status_payload(turn)
         if payload is None:
             self._json_error(404, RESEARCH_TURN_NOT_FOUND_DETAIL)
@@ -1316,37 +1841,45 @@ class SessionHandler(SimpleHTTPRequestHandler):
     def _research_state(self) -> None:
         """The state panel's read: one session's summary projection —
         the research question and its version count, scope, evidence and
-        claim counts, gaps, pending proposals — phone matched, straight
+        claim counts, gaps, pending proposals — account matched, straight
         from the SQLite store, never from the in-memory registry. The
         chip set rides beside the summary under ``suggestions`` so a
         refresh re-renders the skip with the map (T10, GitLab #11).
-        The identity comes from the login cookie (ADR-0013)."""
-        phone = resolve_identity(self)
-        if phone is None:
+        The sitting's chat Session id rides as ``chat_session_id``
+        (ADR-0016's reverse linkage): the refresh reconnect uses it to
+        open the WHOLE sitting — chat and research in one thread —
+        instead of the bare research hang a reload used to leave; null
+        for a pre-linkage conversation. The identity comes from the
+        login cookie (ADR-0013)."""
+        account = resolve_identity(self)
+        if account is None:
             return
         query = parse_qs(urlparse(self.path).query)
         session_id = (query.get("session") or [""])[0]
         if not session_id:
             self._json_error(404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
             return
-        payload, error = research_session_state(phone, session_id)
+        payload, error = research_session_state(account, session_id)
         if payload is None:
             self._json_error(error[0], error[1])
             return
+        payload["chat_session_id"] = research_store.chat_session_for(
+            account, session_id
+        )
         self._send_json(200, payload)
 
     def _research_messages(self) -> None:
         """The transcript read (ADR-0011): one session's messages in
-        order, phone matched — a browser refresh re-fetches what was
+        order, account matched — a browser refresh re-fetches what was
         said instead of an empty chat. No LLM, no research side
         effects. The identity comes from the login cookie (ADR-0013):
         no valid Account, no transcript — 401."""
-        phone = resolve_identity(self)
-        if phone is None:
+        account = resolve_identity(self)
+        if account is None:
             return
         query = parse_qs(urlparse(self.path).query)
         session_id = (query.get("session") or [""])[0]
-        payload, error = research_session_messages(phone, session_id)
+        payload, error = research_session_messages(account, session_id)
         if payload is None:
             self._send_json(error[0], {"detail": error[1]})
             return
@@ -1356,18 +1889,482 @@ class SessionHandler(SimpleHTTPRequestHandler):
         """The sheet header's live read (T22, GitLab #24): the open
         Session's running Toman total — everything since this Account's
         newest `ask` entry inclusive — plus the server-local day's
-        spend. The tariff is config's business; this endpoint only
-        reports what the ledger already recorded."""
-        phone = resolve_identity(self)
-        if phone is None:
+        spend, and the Account's Balance beside them (2026-09-29): the
+        cost chip shows the sitting against the credit it spends, and
+        one read answers all three. The tariff is config's business;
+        this endpoint only reports what the ledger already recorded."""
+        account = resolve_identity(self)
+        if account is None:
             return
         self._send_json(
             200,
             {
-                "session_toman": session_total(phone),
-                "today_toman": today_total(phone),
+                "session_toman": session_total(account),
+                "today_toman": today_total(account),
+                "balance_toman": get_balance(account),
             },
         )
+
+    def _admin_console(self) -> None:
+        """The «میز مدیریت» read (T25, GitLab #26): the Admin's
+        server-rendered mirror of the system — every Account with its
+        Balance (اعتبار), the day's spend off the ledger, the day's
+        chats against the daily limit, the live research turns and the
+        recently settled ones with their failures called out, and the
+        audit log's newest rows. One HTML document, no JS dependency —
+        the console reads, it does not run the system from the browser.
+
+        The gate is /auth/accounts' shape exactly (resolve_account plus
+        the role check), and deliberately NOT resolve_identity: the
+        console is nobody's account view — it mirrors the whole system —
+        so the identity an endpoint like /profile/data derives from the
+        cookie is beside the point here. Anonymous still gets the
+        standard 401; a logged-in operator gets the console's own 403.
+
+        Every read here stays a read: the registry snapshot copies the
+        live turns and the recent-settled ring under
+        RESEARCH_REGISTRY_LOCK and never writes back, the ledger and
+        the quota store answer their per-Account sums (keyed by the
+        Account's email, T21), and the audit read
+        is a plain SELECT against the append-only table. The page's own
+        writes ride the two forms below (T26, GitLab #28) — audited,
+        admin-only, never silent."""
+        account = resolve_account(self)
+        if account is None:
+            self._json_error(401, AUTH_LOGIN_401_DETAIL)
+            return
+        if account["role"] != "admin":
+            self._json_error(403, ADMIN_CONSOLE_403_DETAIL)
+            return
+        yesterday = time.strftime(
+            "%Y-%m-%d",
+            time.localtime(time.time() - 24 * 60 * 60),
+        )
+        accounts_rows = []
+        for row in list_accounts():
+            accounts_rows.append(
+                {
+                    "email": row["email"],
+                    "role": row["role"],
+                    # The attached phone is display data now (T21): the
+                    # legacy handle the Admin attached history by, never
+                    # a key — the spend and quota reads below key by the
+                    # Account's own email.
+                    "phone": normalize_phone(row.get("phone") or ""),
+                    "balance_toman": row["balance_toman"],
+                    "yesterday_spend_toman": day_total(row["email"], yesterday),
+                    "today_spend_toman": today_total(row["email"]),
+                    "chats_today": chats_today(row["email"]),
+                }
+            )
+        now_mono = time.monotonic()
+        with RESEARCH_REGISTRY_LOCK:
+            live_turns = [
+                {
+                    "id": turn.id,
+                    "account": turn.account,
+                    "state": turn.state,
+                    "elapsed": round(now_mono - turn.started_at, 1),
+                }
+                for turn in RESEARCH_REGISTRY.values()
+            ]
+            # The ring is appended oldest-first as turns settle; the
+            # page renders newest first, so the snapshot hands it over
+            # reversed. list() copies before the lock lets go.
+            settled_turns = [
+                {
+                    "id": turn.id,
+                    "account": turn.account,
+                    "state": turn.state,
+                    "error": turn.error,
+                }
+                for turn in reversed(list(RESEARCH_RECENT_SETTLED))
+            ]
+        # A refused write redirects back with one whitelisted code
+        # (T26): only codes with a Farsi note render — user text never
+        # rides a URL into the page.
+        error_code = self.path.split("?", 1)[-1] if "?" in self.path else ""
+        error_code = dict(
+            pair.split("=", 1) for pair in error_code.split("&") if "=" in pair
+        ).get("error", "")
+        if error_code not in ADMIN_ERROR_NOTES:
+            error_code = ""
+        body = console_html(
+            accounts_rows,
+            live_turns,
+            settled_turns,
+            audit.recent(ADMIN_AUDIT_ROWS),
+            quota_limit=DAILY_CHAT_LIMIT,
+            generated=time.strftime("%Y-%m-%d %H:%M"),
+            error_code=error_code,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_redirect(self, location: str) -> None:
+        """The form posts' answer (T26): 303 See Other — the browser
+        re-reads the page it acted from, fresh. Post, redirect, get:
+        the console re-renders its own new state."""
+        self.send_response(303)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _admin_gate(self):
+        """The write forms' gate — the console's own (resolve_account
+        plus the role check). Returns the acting Admin's account dict,
+        or None after the refusal was sent (401 anonymous, 403
+        operator): the console is nobody's account view, so identity
+        resolution is beside the point here — the role is the whole
+        gate."""
+        account = resolve_account(self)
+        if account is None:
+            self._json_error(401, AUTH_LOGIN_401_DETAIL)
+            return None
+        if account["role"] != "admin":
+            self._json_error(403, ADMIN_CONSOLE_403_DETAIL)
+            return None
+        return account
+
+    def _read_form(self) -> dict:
+        """One form-encoded body as a plain dict (first value wins —
+        these forms carry no repeated fields). Empty body → {}."""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length) if length else b""
+        parsed = parse_qs(raw.decode("utf-8"), keep_blank_values=True)
+        return {key: values[0] for key, values in parsed.items()}
+
+    def _admin_create_account(self) -> None:
+        """The console's issuance form (T26, GitLab #28) — account
+        creation moves into the console here: email, password, and the
+        optional legacy phone attach, posted from the page, audited
+        like /auth/accounts, and answered with a redirect back to the
+        fresh mirror. A refused write redirects with a whitelisted
+        error code and logs nothing."""
+        account = self._admin_gate()
+        if account is None:
+            return
+        form = self._read_form()
+        email = (form.get("email") or "").strip()
+        password = form.get("password") or ""
+        phone = (form.get("phone") or "").strip() or None
+        if not email or not password:
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_BAD_BODY}")
+            return
+        if phone:
+            phone = normalize_phone(phone)
+            if not phone:
+                self._send_redirect(f"/admin?error={ADMIN_ERROR_BAD_PHONE}")
+                return
+        created = create_account(email, password, phone=phone, role="operator")
+        if created is None:
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_EMAIL_TAKEN}")
+            return
+        audit_quiet(
+            audit.ACCOUNT_CREATED,
+            actor_email=account["email"],
+            detail={"email": created["email"], "phone": created["phone"]},
+        )
+        self._send_redirect("/admin")
+
+    def _admin_topup(self) -> None:
+        """The console's top-up form (T26, GitLab #28): Toman lands on
+        the named Account's Balance (credit_balance — email-keyed, the
+        same row the operator's own reads answer from), the audit log
+        carries the actor, the amount, and the new balance, and the
+        redirect re-renders the mirror with the new اعتبار showing."""
+        account = self._admin_gate()
+        if account is None:
+            return
+        form = self._read_form()
+        email = (form.get("email") or "").strip()
+        try:
+            amount = int((form.get("amount") or "").strip())
+        except ValueError:
+            amount = 0
+        if amount <= 0:
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_BAD_AMOUNT}")
+            return
+        new_balance = credit_balance(email, amount)
+        if new_balance is None:
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_UNKNOWN_ACCOUNT}")
+            return
+        audit_quiet(
+            audit.BALANCE_TOPPED,
+            actor_email=account["email"],
+            detail={
+                "email": email,
+                "amount_toman": amount,
+                "new_balance_toman": new_balance,
+            },
+        )
+        self._send_redirect("/admin")
+
+    def _admin_attach(self) -> None:
+        """The console's attach form (T21, GitLab #23): the Admin
+        attaches each legacy phone to the Account created for it — the
+        mapping ui/migrate.py rekeys the pre-account stores by — and
+        the rekey runs immediately, so the demo is attach, redirect,
+        and the old rows read under their Account. Audited
+        (phone_attached), admin-only, refused with the whitelisted
+        codes and logged with nothing."""
+        actor = self._admin_gate()
+        if actor is None:
+            return
+        form = self._read_form()
+        email = (form.get("email") or "").strip()
+        phone = normalize_phone(form.get("phone") or "")
+        if not email or not phone:
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_BAD_BODY}")
+            return
+        if not attach_phone(email, phone):
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_UNKNOWN_ACCOUNT}")
+            return
+        report = migrate.rekey_stores()
+        audit_quiet(
+            audit.PHONE_ATTACHED,
+            actor_email=actor["email"],
+            detail={"email": email, "phone": phone, "rekeyed": report},
+        )
+        self._send_redirect("/admin")
+
+    def _profile_data(self) -> None:
+        """The profile read (T24, GitLab #27): the Account's own Balance
+        (اعتبار) straight from the store, the server-local day's spend,
+        and the spend history grouped into Sessions by the ledger's
+        session_history — the open Session first. The cookie IS the
+        address: there is no id parameter at all, so a caller — whatever
+        it sends — can only ever read its own Account's numbers, the
+        same shape /usage/live answers with. Each entry's honesty badge
+        rides the data (the DRAFT constants above): the sheet renders
+        the meter's own verdict, it never judges metered against
+        estimated itself, so an estimate can never look measured."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        sessions = session_history(account)
+        for session in sessions:
+            for entry in session["entries"]:
+                entry["badge"] = (
+                    PROFILE_METERED_BADGE
+                    if entry["metered"]
+                    else PROFILE_ESTIMATED_BADGE
+                )
+        self._send_json(
+            200,
+            {
+                "balance_toman": get_balance(account),
+                "today_toman": today_total(account),
+                "sessions": sessions,
+            },
+        )
+
+    def _sessions_list(self) -> None:
+        """The sidebar's read (T27 stage 3, GitLab #40): the caller's
+        Sessions, newest activity first. The cookie IS the address, so
+        the list is only ever the caller's own; the store caps the
+        payload, not the history (the accepted list-v1 shape)."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        self._send_json(200, {"sessions": session_store.list_sessions(account)})
+
+    def _session_get(self, session_id: int) -> None:
+        """One Session with its stored messages oldest→newest — the
+        resume read. Another Account's Session answers 404, the same
+        silence the store gives; the sheet renders the transcript
+        read-only. The payload names the sitting's newest research
+        session (ADR-0016): the linkage a reload or a sidebar round-trip
+        needs to raise the research trail beside the chat again — until
+        the linkage landed, the trail's only address lived in the
+        browser's sessionStorage and died at the first sidebar click."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        session = session_store.get_session(account, session_id)
+        if session is None:
+            self._json_error(404, "نشست پیدا نشد.")
+            return
+        session["research_session_id"] = research_store.latest_for_chat_session(
+            account, str(session_id)
+        )
+        self._send_json(200, session)
+
+    def _session_create(self) -> None:
+        """Open one Session (T27 stage 3): the sheet creates it on the
+        sitting's first ask, sending the Book and the truncated title.
+        The store judges neither — the ledger stays the money truth."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            book = payload.get("book")
+            title = payload.get("title")
+            if book is not None and not isinstance(book, str):
+                raise ValueError
+            if title is not None and not isinstance(title, str):
+                raise ValueError
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json(400, {"detail": "درخواست نادرست است."})
+            return
+        session = session_store.create_session(account, book or "", title or "")
+        self._send_json(200, session)
+
+    def _session_append(self, session_id: int) -> None:
+        """Append one turn to the caller's Session (T27 stage 3): the
+        sheet reports its settled turns — the operator's ask, the
+        assistant's article — as {role, payload}; the store renders
+        nothing and judges nothing. A foreign Session is 404."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            role = payload["role"]
+            body = payload["payload"]
+            if role not in ("user", "assistant") or not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            self._send_json(400, {"detail": "درخواست نادرست است."})
+            return
+        session = session_store.append_message(account, session_id, role, body)
+        if session is None:
+            # The body is already read above, so _send_json is safe —
+            # _json_error would drain again and block on taken bytes
+            # (the _evidence_fallback rule).
+            self._send_json(404, {"detail": "نشست پیدا نشد."})
+            return
+        self._send_json(200, session)
+
+    def _session_delete(self, session_id: int) -> None:
+        """Delete the caller's Session whole (list-v1: delete only). The
+        transcript goes; the ledger's spend rows stay — the profile's
+        and the console's numbers never falsify."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        if not session_store.delete_session(account, session_id):
+            self._json_error(404, "نشست پیدا نشد.")
+            return
+        self._send_json(200, {"deleted": True})
+
+    # ---- The Notebook (the selection map, ticket 08) ----
+    # The researcher's capture: the popover quick-saves, the panel
+    # reads/edits/deletes. Ownership is the cookie, as everywhere.
+
+    @staticmethod
+    def _note_fields(payload: dict) -> dict:
+        """The create payload's shape: the quote is required; the book
+        side (doc/pages/refs/source) and the editable defaults ride
+        optional. Anything else the client sends is ignored — the store
+        judges the shapes it knows."""
+        text = payload.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError
+        doc = payload.get("doc")
+        if doc is not None and not isinstance(doc, str):
+            raise ValueError
+        pages = payload.get("pages") or []
+        refs = payload.get("refs") or []
+        source = payload.get("source") or {}
+        category = payload.get("category") or ""
+        opinion = payload.get("opinion") or ""
+        if not isinstance(pages, list) or not isinstance(refs, list):
+            raise ValueError
+        if not isinstance(source, dict):
+            raise ValueError
+        if not isinstance(category, str) or not isinstance(opinion, str):
+            raise ValueError
+        return {
+            "text": text,
+            "doc": doc,
+            "pages": pages,
+            "refs": refs,
+            "source": source,
+            "category": category,
+            "opinion": opinion,
+        }
+
+    def _notes_list(self) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        self._send_json(200, {"notes": note_store.list_notes(account)})
+
+    def _note_create(self) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            fields = self._note_fields(payload)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            # The body is already read, so _send_json is safe (the
+            # _evidence_fallback rule).
+            self._send_json(400, {"detail": "درخواست نادرست است."})
+            return
+        self._send_json(200, note_store.create_note(account, **fields))
+
+    def _note_update(self, note_id: int) -> None:
+        """Edit the editable fields (category / opinion); the quote is
+        fixed. A foreign note is 404."""
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            category = payload.get("category")
+            opinion = payload.get("opinion")
+            if category is not None and not isinstance(category, str):
+                raise ValueError
+            if opinion is not None and not isinstance(opinion, str):
+                raise ValueError
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json(400, {"detail": "درخواست نادرست است."})
+            return
+        note = note_store.update_note(
+            account, note_id, category=category, opinion=opinion
+        )
+        if note is None:
+            self._send_json(404, {"detail": "یادداشت پیدا نشد."})
+            return
+        self._send_json(200, note)
+
+    def _note_delete(self, note_id: int) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        if not note_store.delete_note(account, note_id):
+            self._json_error(404, "یادداشت پیدا نشد.")
+            return
+        self._send_json(200, {"deleted": True})
+
+    def _note_bulk_delete(self) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            ids = payload.get("ids")
+            if not isinstance(ids, list):
+                raise ValueError
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json(400, {"detail": "درخواست نادرست است."})
+            return
+        deleted = note_store.delete_notes_many(account, ids)
+        self._send_json(200, {"deleted": deleted})
+
 
     def _research_report(self) -> None:
         """The Session report's read (T18, GitLab #19): one session's
@@ -1385,13 +2382,13 @@ class SessionHandler(SimpleHTTPRequestHandler):
         file, not a page — while the default html stays inline for the
         sheet's chip and the print-to-PDF path. Anything but "md" reads
         as the default html."""
-        phone = resolve_identity(self)
-        if phone is None:
+        account = resolve_identity(self)
+        if account is None:
             return
         query = parse_qs(urlparse(self.path).query)
         session_id = (query.get("session") or [""])[0]
         fmt = (query.get("format") or ["html"])[0]
-        document, error = research_session_report(phone, session_id, fmt=fmt)
+        document, error = research_session_report(account, session_id, fmt=fmt)
         if document is None:
             self._send_json(error[0], {"detail": error[1]})
             return
@@ -1415,18 +2412,19 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _research_message(self, phone: str) -> None:
-        """The Research Mode message start (ADR-0008): the gate is the
-        phase-2 shape exactly — the research conversation belongs to the
-        chat phase 1 recorded, so it needs a phone with at least one
-        chat today and never counts or checks the limit. The creating
-        call carries the ask's question and its phase-1 Evidence pool
-        (the session's founding goal and evidence); later calls carry
-        only the text. The turn runs on its own registry job and this
-        handler answers the turn identity immediately: 202 {"turn_id",
-        "session_id"} — the sheet polls /research/turn for state,
-        events, and the reply. Nothing is ever queued: a busy phone (or
-        a full registry) is rejected, not deferred."""
+    def _research_message(self, account: str) -> None:
+        """The Research Mode message start (ADR-0008; gate per ADR-0015):
+        the Balance is the prepaid stop and nothing else — the research
+        conversation may be the sitting's (or the day's) first act, the
+        composer toggle routes the typed question straight here. It
+        never counts or checks the daily chat limit. The creating
+        call carries the question (the session's founding goal) and —
+        when a prior ask seeded one — its phase-1 Evidence pool; later
+        calls carry only the text. The turn runs on its own registry
+        job and this handler answers the turn identity immediately:
+        202 {"turn_id", "session_id"} — the sheet polls /research/turn
+        for state, events, and the reply. Nothing is ever queued: a
+        busy Account (or a full registry) is rejected, not deferred."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -1445,24 +2443,48 @@ class SessionHandler(SimpleHTTPRequestHandler):
             if sources is not None and not isinstance(sources, list):
                 raise ValueError("sources must be a list")
             datasets = validated_datasets(payload.get("datasets"))
+            # The Session-store linkage (ADR-0016): the sheet reports
+            # which chat Session this research conversation belongs to,
+            # so the trail survives a reload and a sidebar round-trip.
+            # A malformed or foreign id never fails the ask — the
+            # research is the user's act; the linkage is bookkeeping.
+            chat_session_id = payload.get("chat_session_id")
+            if chat_session_id is not None and not isinstance(
+                chat_session_id, (int, str)
+            ):
+                chat_session_id = None
         except (ValueError, KeyError, TypeError):
             # The body is already read above, so _send_json is safe —
             # _json_error would drain a second time and block.
             self._send_json(400, {"detail": "پیام پژوهش را بفرستید."})
             return
         session, error = ensure_session(
-            phone, session_id, text.strip(), question, sources, datasets
+            account, session_id, text.strip(), question, sources, datasets
         )
         if session is None:
             self._send_json(error[0], {"detail": error[1]})
             return
-        turn, busy_detail = start_research_turn(phone, session, text.strip())
+        if chat_session_id and not session_id:
+            # The creating call only: a live session keeps whatever
+            # sitting founded it, and the id rides only after the
+            # ownership check — another Account's Session is invisible.
+            try:
+                owned = session_store.get_session(
+                    account, int(chat_session_id)
+                )
+            except (TypeError, ValueError):
+                owned = None
+            if owned is not None:
+                research_store.attach_chat_session(
+                    session["id"], account, str(chat_session_id)
+                )
+        turn, busy_detail = start_research_turn(account, session, text.strip())
         if turn is None:
             self._send_json(429, {"detail": busy_detail})
             return
         self._send_json(202, {"turn_id": turn.id, "session_id": session["id"]})
 
-    def _research_decide(self, phone: str) -> None:
+    def _research_decide(self, account: str) -> None:
         """The checkpoint resolution: one pending proposal applied or
         dropped — the only path a research question or scope change
         lands through. Synchronous (no LLM, no registry job): the
@@ -1489,7 +2511,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self._send_json(400, {"detail": "تصمیم پیشنهاد را بفرستید."})
             return
         result, error = decide_proposal(
-            phone,
+            account,
             session_id.strip(),
             proposal_id.strip(),
             accept,
@@ -1585,7 +2607,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(message)
 
-    def _proxy(self, method: str) -> None:
+    def _proxy(self, method: str, account: str = "") -> None:
         path = self.path.split("?", 1)[0]
         sys.stderr.write("%s - proxy %s %s\n" % (self.address_string(), method, path))
         sys.stderr.flush()
@@ -1599,8 +2621,19 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # The recall body is validated, not forwarded blind
             # (ADR-0010): the query is required and the datasets are the
             # ask's Book selection intersected with the Book set — a
-            # browser never names an upstream dataset outside it.
-            patched = self._validated_recall_body(body)
+            # browser never names an upstream dataset outside it. The
+            # account rides for the follow-up rewrite; the meter taps
+            # that one composer call (a rewrite is real spend and the
+            # ledger watches it like every other).
+            set_meter(
+                lambda prompt, reply: record_composer_call(
+                    account, "composer", prompt, reply
+                )
+            )
+            try:
+                patched = self._validated_recall_body(body, account)
+            finally:
+                set_meter(None)
             if patched is None:
                 return
             body = patched
@@ -1625,10 +2658,14 @@ class SessionHandler(SimpleHTTPRequestHandler):
         )
         self._relay(request, "cognee")
 
-    def _validated_recall_body(self, raw: bytes):
+    def _validated_recall_body(self, raw: bytes, account: str = ""):
         """The recall POST's patched body bytes, or None after answering
         400. The body is already read here, so rejections use _send_json
-        (never the draining _json_error — a second read would block)."""
+        (never the draining _json_error — a second read would block).
+        The sitting's id rides to the Session store, never to Cognee;
+        a short follow-up over an existing sitting is rewritten into a
+        self-contained query before the relay (ADR-0015) — any failure
+        answers the raw question."""
         try:
             payload = json.loads(raw or b"{}")
             query = payload["query"]
@@ -1637,10 +2674,33 @@ class SessionHandler(SimpleHTTPRequestHandler):
         except (ValueError, KeyError, TypeError):
             self._send_json(400, {"detail": "پرسش را بنویسید."})
             return None
+        session_id = payload.pop("session_id", None)
+        payload.pop("history", None)
+        query = self._contextual_query(account, session_id, query)
+        payload["query"] = query
         datasets = validated_datasets(payload.get("datasets"))
         if datasets is not None:
             payload["datasets"] = datasets
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    def _contextual_query(self, account: str, session_id, query: str) -> str:
+        """A follow-up's self-contained search query (ADR-0015): when
+        the sitting has earlier turns and the question is short, ONE
+        fast glm-5.3-flash call rewrites it over the sitting's recent
+        turns — «بیشتر توضیح بده» alone retrieves noise, the rewritten
+        form retrieves the subject under discussion. Every failure is
+        the raw question: the store silent, the endpoint down, the
+        short timeout — the rewrite is a retrieval hint, never a gate,
+        and the sheet's displayed question is always the user's own
+        words."""
+        history = _conversation_tail(account, session_id)
+        if not history or len(query.split()) > REWRITE_MAX_WORDS:
+            return query
+        try:
+            return rewrite_followup_query(query, history)
+        except Exception:
+            sys.stderr.write("follow-up rewrite failed; raw query rides\n")
+            return query
 
 
 # The embedder is frozen into the stored vectors (ADR-0004). The 2026-09-12
@@ -1680,6 +2740,25 @@ def main() -> None:
     # The true-page resolver (ADR-0011): kept quotes' labels name the
     # passage's actual page, not the locator's drifted estimate.
     install_page_resolver()
+    # The first Admin from compose env (T26, GitLab #28): the seed
+    # command is retired — the deployment itself plants the PM's
+    # Account, once, loudly.
+    ensure_first_admin_from_env()
+    # The store migration (T21, GitLab #23): every attached phone's
+    # legacy rows rekey to their Account before the first request —
+    # ADR-0013's contract step, run loudly.
+    report = migrate.rekey_stores()
+    sys.stderr.write(f"store migration: {report}\n")
+    # The Book PDFs' presence at boot (the 09-28 regression: a deploy
+    # swap dropped the gitignored PDFs and every cold page render 404'd
+    # while the warm render-cache pages kept drawing — say so loudly).
+    for dataset in BOOK_DATASETS:
+        if (BOOKS_DIR / f"{dataset}.pdf").exists():
+            sys.stderr.write(f"book pdf ok: {dataset}\n")
+        else:
+            sys.stderr.write(
+                f"BOOK PDF MISSING: {dataset} — the reader can draw only already-cached pages\n"
+            )
     server = ThreadingHTTPServer((HOST, PORT), SessionHandler)
     print(f"Session sheet http://{HOST}:{PORT}", flush=True)
     print(f"Proxying /api/v1/recall and /health to {COGNEE_URL}", flush=True)

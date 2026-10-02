@@ -179,6 +179,32 @@ def account_by_email(email):
     return _row_to_account(row) if row is not None else None
 
 
+def list_accounts():
+    """Every Account row (no password hash), creation order — the Admin
+    console's mirror (T25, GitLab #26): the balance_toman column rides
+    along (T23), so the console shows each Account's own Balance
+    without a second round-trip per row. A read like any other: it
+    never touches a hash."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT email, phone, role, created_at, balance_toman "
+            "FROM accounts ORDER BY rowid"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {
+            "email": row[0],
+            "phone": row[1],
+            "role": row[2],
+            "created_at": row[3],
+            "balance_toman": int(row[4]),
+        }
+        for row in rows
+    ]
+
+
 def get_role(email):
     """The Account's role — 'admin', 'operator', or None when unknown."""
     account = account_by_email(email)
@@ -187,8 +213,9 @@ def get_role(email):
 
 def attach_phone(email, phone) -> bool:
     """Attach the legacy phone to an Account — the Admin's migration
-    act that makes a phone-keyed store (quotas, research sessions)
-    addressable by this Account. False when the Account is unknown."""
+    act: the mapping ui/migrate.py rekeys the pre-account stores'
+    rows by (quotas, ledger, research sessions), so a phone's history
+    survives under its Account. False when the Account is unknown."""
     conn = _connect()
     try:
         cursor = conn.execute(
@@ -201,51 +228,85 @@ def attach_phone(email, phone) -> bool:
         conn.close()
 
 
-def get_balance(phone: str) -> int:
-    """The Balance (اعتبار) of the Account attached to this phone — the
-    prepaid Toman the metered events deduct from."""
+def get_balance(account: str) -> int:
+    """The Balance (اعتبار) of this Account — the prepaid Toman the
+    metered events deduct from, keyed by the Account's own email
+    (T21, GitLab #23): the phone no longer keys anything."""
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT COALESCE(SUM(balance_toman), 0) FROM accounts WHERE phone = ?",
-            (phone,),
+            "SELECT COALESCE(SUM(balance_toman), 0) FROM accounts WHERE email = ?",
+            (_normalize_email(account),),
         ).fetchone()
         return int(row[0])
     finally:
         conn.close()
 
 
-def adjust_balance(phone: str, delta: int) -> int:
+def credit_balance(email, amount: int) -> int | None:
+    """The Admin's top-up (T26, GitLab #28): Toman lands on the Account
+    keyed by its EMAIL — the Account is the identity now (ADR-0013),
+    and the row it updates is the same one the phone-keyed reads
+    (get_balance, the profile, /usage/live) answer from, so the
+    operator sees the new اعتبار the moment it lands. Returns the new
+    balance, or None when no Account carries this email. A non-positive
+    amount is a caller's bug, not a user's mistake — ValueError, never
+    a silent no-op, and never a deduction wearing a top-up's name."""
+    amount = int(amount)
+    if amount <= 0:
+        raise ValueError("a top-up is positive Toman")
+    conn = _connect()
+    try:
+        cursor = conn.execute(
+            "UPDATE accounts SET balance_toman = balance_toman + ?"
+            " WHERE email = ?",
+            (amount, _normalize_email(email)),
+        )
+        if cursor.rowcount == 0:
+            conn.commit()
+            return None
+        row = conn.execute(
+            "SELECT balance_toman FROM accounts WHERE email = ?",
+            (_normalize_email(email),),
+        ).fetchone()
+        conn.commit()
+        return int(row[0])
+    finally:
+        conn.close()
+
+
+def adjust_balance(account: str, delta: int) -> int:
     """One Balance change (the Admin's top-up is #28's write path; the
-    deduction below is the meter's) — returns the new balance."""
+    deduction below is the meter's) — returns the new balance, keyed
+    by the Account's email (T21)."""
     conn = _connect()
     try:
         conn.execute(
-            "UPDATE accounts SET balance_toman = balance_toman + ? WHERE phone = ?",
-            (delta, phone),
+            "UPDATE accounts SET balance_toman = balance_toman + ? WHERE email = ?",
+            (delta, _normalize_email(account)),
         )
         conn.commit()
         row = conn.execute(
-            "SELECT COALESCE(SUM(balance_toman), 0) FROM accounts WHERE phone = ?",
-            (phone,),
+            "SELECT COALESCE(SUM(balance_toman), 0) FROM accounts WHERE email = ?",
+            (_normalize_email(account),),
         ).fetchone()
         return int(row[0])
     finally:
         conn.close()
 
 
-def deduct_balance(phone: str, amount: int) -> int:
+def deduct_balance(account: str, amount: int) -> int:
     """The meter's deduction: the cost of one recorded entry off the
     Balance. May land slightly negative — the event that emptied the
     Balance already ran (a running turn finishes, ADR-0013); the gate
     stops the NEXT spend, never the one in flight."""
-    return adjust_balance(phone, -amount)
+    return adjust_balance(account, -amount)
 
 
 def admins_exist() -> bool:
-    """Whether any Admin Account exists — the bootstrap's guard: the
-    first Admin is minted once, and a second minting is refused unless
-    forced."""
+    """Whether any Admin Account exists — the first-admin guard: the
+    env seeding (T26) creates an Admin only once, and a deployment
+    restart must never quietly mint a second or overwrite the first."""
     conn = _connect()
     try:
         row = conn.execute(
@@ -256,28 +317,17 @@ def admins_exist() -> bool:
     return row is not None
 
 
-def bootstrap_admin(email, password, force=False) -> str:
-    """Mint the first Admin ('created'), refuse when one already exists
-    ('exists'), or — with force — re-issue the given Admin credentials
-    over whatever stands there ('reissued'; the PM's recovery path).
-    The store stays role-dumb about WHO calls it; the script and the
-    tests own the refusal UX."""
-    email = _normalize_email(email)
+def ensure_admin(email, password) -> bool:
+    """The first Admin from config (T26, GitLab #28 — the bootstrap
+    seed command's retirement): when no Admin exists, this creates one
+    and answers True; when one already stands, it answers False and
+    touches NOTHING — a restart that silently re-issued the PM's
+    password would be exactly the mutation the audit log exists to
+    make loud. The seed is a deployment act, not a console one, so the
+    caller (serve.py's startup) owns the audit row and the stderr
+    notes. False also when the email is already taken by an operator
+    Account — the deployment picks a free email, the refusal is loud."""
     if admins_exist():
-        if not force:
-            return "exists"
-        conn = _connect()
-        try:
-            conn.execute(
-                "INSERT INTO accounts (email, password_hash, phone, role,"
-                " created_at) VALUES (?, ?, NULL, 'admin', ?) "
-                "ON CONFLICT(email) DO UPDATE SET "
-                "password_hash = excluded.password_hash, role = 'admin'",
-                (email, hash_password(password), _now()),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-        return "reissued"
+        return False
     created = create_account(email, password, phone=None, role="admin")
-    return "created" if created is not None else "exists"
+    return created is not None

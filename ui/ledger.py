@@ -3,7 +3,9 @@ one entry on the paying Account — metered where the upstream exposes its
 token counts (the composer seam), estimated from text volume where it
 does not (Cognee's internal completion is invisible to this layer) — and
 an entry that is not metered is MARKED as estimated, never passed off as
-measured. The tariff converts tokens to Toman; the rates live in config
+measured. Entries key by the ACCOUNT's email (T21, GitLab #23): the
+phone no longer keys anything (ADR-0013's contract step); a pre-T21
+store's rows remap through ui/migrate.py's attach map. The tariff converts tokens to Toman; the rates live in config
 (compose env) and never in code, so a price change is an .env edit and a
 restart, not a deploy.
 
@@ -58,7 +60,7 @@ def _connect() -> sqlite3.Connection:
     con.execute(
         """CREATE TABLE IF NOT EXISTS usage_entries (
                id INTEGER PRIMARY KEY AUTOINCREMENT,
-               phone TEXT NOT NULL,
+               account TEXT NOT NULL,
                ts TEXT NOT NULL,
                day TEXT NOT NULL,
                kind TEXT NOT NULL,
@@ -68,6 +70,12 @@ def _connect() -> sqlite3.Connection:
                cost_toman INTEGER NOT NULL
            )"""
     )
+    # A pre-T21 store keys its rows `phone` — the column renames in
+    # place (the values follow when ui/migrate.py runs the attach map).
+    columns = {row[1] for row in con.execute("PRAGMA table_info(usage_entries)")}
+    if "phone" in columns and "account" not in columns:
+        con.execute("ALTER TABLE usage_entries RENAME COLUMN phone TO account")
+        con.commit()
     return con
 
 
@@ -95,7 +103,7 @@ def cost_toman(input_tokens: int, output_tokens: int) -> int:
 
 
 def record(
-    phone: str,
+    account: str,
     kind: str,
     input_tokens: int,
     output_tokens: int,
@@ -108,11 +116,11 @@ def record(
         con = _connect()
         try:
             con.execute(
-                "INSERT INTO usage_entries (phone, ts, day, kind, metered,"
+                "INSERT INTO usage_entries (account, ts, day, kind, metered,"
                 " input_tokens, output_tokens, cost_toman)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    phone,
+                    account,
                     time.strftime("%Y-%m-%d %H:%M:%S"),
                     _today(),
                     kind,
@@ -127,7 +135,7 @@ def record(
             con.close()
     if _DEDUCTOR is not None and cost:
         try:
-            _DEDUCTOR(phone, cost)
+            _DEDUCTOR(account, cost)
         except Exception:
             pass  # the meter watches the work; it never breaks it
     return {
@@ -139,7 +147,9 @@ def record(
     }
 
 
-def record_composer_call(phone: str, kind: str, prompt: str, reply) -> dict | None:
+def record_composer_call(
+    account: str, kind: str, prompt: str, reply
+) -> dict | None:
     """One composer-seam call: metered when the upstream's usage block
     rode the reply, estimated from the text volumes when it did not —
     the caller never decides, the reply's own honesty does."""
@@ -151,10 +161,10 @@ def record_composer_call(phone: str, kind: str, prompt: str, reply) -> dict | No
         output = output if isinstance(output, int) else estimate_tokens(
             _reply_text(reply)
         )
-        return record(phone, kind, usage["prompt_tokens"], output, metered=True)
+        return record(account, kind, usage["prompt_tokens"], output, metered=True)
     output_text = _reply_text(reply)
     return record(
-        phone,
+        account,
         kind,
         estimate_tokens(prompt),
         estimate_tokens(output_text),
@@ -162,12 +172,12 @@ def record_composer_call(phone: str, kind: str, prompt: str, reply) -> dict | No
     )
 
 
-def record_size_estimate(phone: str, kind: str, input_bytes: int) -> dict:
+def record_size_estimate(account: str, kind: str, input_bytes: int) -> dict:
     """The ask entry (T22): the gate knows only the request's size before
     the relay streams the answer — an input-side estimate, marked
     estimated like every non-metered entry."""
     return record(
-        phone, kind, estimate_tokens("x" * max(0, input_bytes)), 0, metered=False
+        account, kind, estimate_tokens("x" * max(0, input_bytes)), 0, metered=False
     )
 
 
@@ -179,7 +189,7 @@ def _reply_text(reply) -> str:
         return ""
 
 
-def session_total(phone: str) -> int:
+def session_total(account: str) -> int:
     """The open Session's running cost: everything since the newest
     `ask` entry inclusive — the entry a fresh ask records first, so the
     header re-anchors per ask and grows as the phases spend."""
@@ -187,33 +197,98 @@ def session_total(phone: str) -> int:
         con = _connect()
         try:
             anchor = con.execute(
-                "SELECT id FROM usage_entries WHERE phone = ? AND kind = 'ask'"
+                "SELECT id FROM usage_entries WHERE account = ? AND kind = 'ask'"
                 " ORDER BY id DESC LIMIT 1",
-                (phone,),
+                (account,),
             ).fetchone()
             if anchor is None:
                 return 0
             row = con.execute(
                 "SELECT COALESCE(SUM(cost_toman), 0) FROM usage_entries"
-                " WHERE phone = ? AND id >= ?",
-                (phone, anchor[0]),
+                " WHERE account = ? AND id >= ?",
+                (account, anchor[0]),
             ).fetchone()
             return int(row[0])
         finally:
             con.close()
 
 
-def today_total(phone: str) -> int:
-    """The server-local day's spend for the Account — the number the
-    profile (T24) and the console (T25) will read."""
+def day_total(account: str, day: str) -> int:
+    """One calendar day's spend for the Account — `day` in the store's
+    own `%Y-%m-%d` shape. The console's yesterday read (T25, GitLab
+    #26): per-day usage and Toman was the ticket's ask, and every entry
+    already carries its day, so history answers without a new store."""
     with _LOCK:
         con = _connect()
         try:
             row = con.execute(
                 "SELECT COALESCE(SUM(cost_toman), 0) FROM usage_entries"
-                " WHERE phone = ? AND day = ?",
-                (phone, _today()),
+                " WHERE account = ? AND day = ?",
+                (account, str(day)),
             ).fetchone()
             return int(row[0])
         finally:
             con.close()
+
+
+# The profile's read cap (T24, GitLab #27): the history shows the last
+# 20 Sessions, the open (newest) one first — a history that renders the
+# Account's every sitting since day one is an unbounded query wearing a
+# list; the cap keeps the profile a read, not a scan.
+SESSION_HISTORY_CAP = 20
+
+
+def session_history(account: str) -> list[dict]:
+    """The Account's spend grouped into Sessions (T24, GitLab #27): the
+    same anchor discipline as `session_total`, walked for the profile's
+    history. The entries are read oldest→newest and each `ask` entry
+    opens a new Session group that runs to the next ask (the group's
+    own ask entry is its first row — `session_total` sums from the
+    anchor inclusive, so the history counts the same way). The newest
+    group leads — the open Session first — capped at the last
+    SESSION_HISTORY_CAP groups.
+
+    One group is {started, entries, cost_toman}: `started` is the ask
+    entry's own ts (the sitting's opening), `entries` the group's rows
+    oldest→newest with ts and the metered flag riding along, and
+    `cost_toman` the group's summed spend. Entries before the first
+    ask belong to no Session (a Session opens with an ask — the same
+    reason `session_total` is 0 without one) and stay out of the
+    history; the day's spend still counts them, which is
+    `today_total`'s business. Read-only: the meter never lets a read
+    rearrange what it recorded, and the profile needs no more than
+    this — every field the sheet renders rides in these groups."""
+    with _LOCK:
+        con = _connect()
+        try:
+            rows = con.execute(
+                "SELECT ts, kind, metered, input_tokens, output_tokens,"
+                " cost_toman FROM usage_entries WHERE account = ? ORDER BY id",
+                (account,),
+            ).fetchall()
+        finally:
+            con.close()
+    groups: list[dict] = []
+    for ts, kind, metered, input_tokens, output_tokens, cost in rows:
+        if kind == "ask":
+            groups.append({"started": ts, "entries": [], "cost_toman": 0})
+        if not groups:
+            continue  # a spend with no ask behind it belongs to no Session
+        groups[-1]["entries"].append(
+            {
+                "kind": kind,
+                "metered": bool(metered),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cost_toman": cost,
+                "ts": ts,
+            }
+        )
+        groups[-1]["cost_toman"] += cost
+    return list(reversed(groups[-SESSION_HISTORY_CAP:]))
+
+
+def today_total(account: str) -> int:
+    """The server-local day's spend for the Account — the number the
+    profile (T24) and the console (T25) read."""
+    return day_total(account, _today())

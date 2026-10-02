@@ -1,0 +1,5 @@
+The offline build's wheel drop (ui/Dockerfile): the deploy plants the
+host's pinned wheels here before `docker compose build` when the host
+carries ~/cwb-wheels — the VPS pip times out on PyPI. The *.whl files
+are gitignored; this placeholder keeps COPY valid on a fresh checkout
+(an empty /wheels just falls through to PyPI).

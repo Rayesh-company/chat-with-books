@@ -1,6 +1,14 @@
-"""The phone gate's quota: one SQLite record per (phone, day) — the
+"""The daily chat quota: one SQLite record per (account, day) — the
 normalize-then-count-and-record functions the ask and phase-2 gates
-read. The database path is the module attribute tests patch."""
+read. The database path is the module attribute tests patch.
+
+The key is the ACCOUNT's email (T21, GitLab #23 — ADR-0013's contract
+step): the phone no longer keys anything, it survives only as the
+attached legacy field the Admin uses to map a pre-account store's rows
+onto the Account created for it. A store written before T21 has its
+rows under a `phone` column; _connect renames the column in place and
+ui/migrate.py remaps the values phone→email from the accounts store's
+attach map."""
 
 from __future__ import annotations
 
@@ -9,14 +17,10 @@ import os
 import sqlite3
 from pathlib import Path
 
-# Phone gate (PM call, 2026-09-10, for the public VPS deploy): the sheet
-# identifies a Customer by a phone number and each number gets
-# DAILY_CHAT_LIMIT chats per server-local day. Honor-system — no SMS
-# verification; it stops casual credit-burn, not a determined caller.
 # A chat is one ask: phase 1 records it, and phase 2 (/quoted-answer)
-# belongs to that chat — it needs a phone with a chat today, and never
-# counts or checks the limit itself (the 5th chat's own Quoted answer
-# must pass).
+# belongs to that chat — it needs an Account with a chat today, and never
+# counts or checks the limit itself (the 5th chat's own Quoted answer must
+# pass). DAILY_CHAT_LIMIT per Account per server-local day.
 DAILY_CHAT_LIMIT = 5
 QUOTA_DB = Path(
     os.environ.get(
@@ -24,7 +28,8 @@ QUOTA_DB = Path(
     )
 )
 
-# Persian and Arabic-Indic digits users type into the phone field.
+# Persian and Arabic-Indic digits users type into the phone field —
+# still the attach form's validation shape, never an identity.
 _DIGIT_MAP = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 
 
@@ -41,28 +46,34 @@ def _today() -> str:
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(QUOTA_DB), timeout=5)
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS chats (phone TEXT NOT NULL, day TEXT NOT NULL)"
+        "CREATE TABLE IF NOT EXISTS chats (account TEXT NOT NULL, day TEXT NOT NULL)"
     )
+    # A pre-T21 store keys its rows `phone` — the column renames in
+    # place (the values follow when ui/migrate.py runs the attach map).
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(chats)")}
+    if "phone" in columns and "account" not in columns:
+        conn.execute("ALTER TABLE chats RENAME COLUMN phone TO account")
+        conn.commit()
     return conn
 
 
-def chats_today(phone: str) -> int:
+def chats_today(account: str) -> int:
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT COUNT(*) FROM chats WHERE phone = ? AND day = ?",
-            (phone, _today()),
+            "SELECT COUNT(*) FROM chats WHERE account = ? AND day = ?",
+            (account, _today()),
         ).fetchone()
     finally:
         conn.close()
     return row[0]
 
 
-def record_chat(phone: str) -> None:
+def record_chat(account: str) -> None:
     conn = _connect()
     try:
         conn.execute(
-            "INSERT INTO chats (phone, day) VALUES (?, ?)", (phone, _today())
+            "INSERT INTO chats (account, day) VALUES (?, ?)", (account, _today())
         )
         conn.commit()
     finally:

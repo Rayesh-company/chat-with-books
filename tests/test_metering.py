@@ -213,7 +213,7 @@ class FakeUpstream:
 
 
 def test_the_usage_live_endpoint_answers_the_accounts_own_totals():
-    from tests.helpers import get, post, with_gate, stop_gate
+    from tests.helpers import TEST_BALANCE_TOMAN, get, post, with_gate, stop_gate
     import tempfile
     from pathlib import Path
 
@@ -233,6 +233,10 @@ def test_the_usage_live_endpoint_answers_the_accounts_own_totals():
         status, body = get(base, "/usage/live", phone="09120000000")
         assert status == 200
         assert body["session_toman"] > 0 and body["today_toman"] >= body["session_toman"]
+        # The chip speaks credit (2026-09-29): the Balance rides beside
+        # the totals — the sitting's share of the credit is one read,
+        # and the ask above visibly spent some of it.
+        assert 0 < body["balance_toman"] < TEST_BALANCE_TOMAN
     finally:
         stop_gate(server, originals)
 

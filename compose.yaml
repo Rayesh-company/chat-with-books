@@ -199,20 +199,42 @@ services:
       LEDGER_DB: /data/usage_ledger.sqlite3
       TARIFF_INPUT_TOMAN_PER_MTOK: ${TARIFF_INPUT_TOMAN_PER_MTOK:-2000}
       TARIFF_OUTPUT_TOMAN_PER_MTOK: ${TARIFF_OUTPUT_TOMAN_PER_MTOK:-8000}
-      # The Session store (T27 stage 3, GitLab #40) persists beside the
-      # other stores on the same volume — a container rebuild must not
-      # throw the Accounts' نشست history away.
+      # The admin audit log (T25, GitLab #26): the append-only record of
+      # the Admin's actions, on the same persisted volume — an audit
+      # that evaporates on a container rebuild is not an audit.
+      AUDIT_DB: /data/audit.sqlite3
+      # The first Admin from config (T26, GitLab #28): the bootstrap
+      # seed command is retired — the deployment plants the PM's
+      # Account once at startup, audited, and a restart never touches a
+      # standing Admin. Set both in the compose-only .env; leave them
+      # unset and the server comes up with no Admin, refusing every
+      # console and issuance path until the PM plants one.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # The Session store (T27 stage 3, GitLab #40): the Accounts' نشست
+      # history on the same persisted volume — a container rebuild must
+      # not throw a sitting's transcript away.
       SESSIONS_DB: /data/sessions.sqlite3
       # The ask chat store (ADR-0014): the reload's restore row -
       # question, pool, Quote selection, Quoted answer - on the same
       # persisted volume, beside the research store it mirrors.
       SESSION_CHAT_DB: /data/chats.sqlite3
+      # The Notebook store (the selection map, ticket 08): the
+      # researcher's یادداشت‌ها on the same persisted volume — without
+      # this the notes land in /app inside the container and every
+      # image rebuild throws them away.
+      NOTES_DB: /data/notes.sqlite3
     volumes:
       - session_quota:/data
       # The Book set's PDFs + page indexes (ADR-0007), served by
       # serve.py's /books routes. Default BOOKS_DIR resolves to /books —
       # ui/serve.py's parent — so the mount point matches the dev layout.
       - ./books:/books:ro
+      # The page rasters' disk cache (ADR-0017): the render-cache bind
+      # sits beside the books mount exactly where serve.py's default
+      # BOOKS_DIR/../render-cache resolves, so a rebuild never re-renders
+      # the pages a visitor already paid the wait for.
+      - ./render-cache:/render-cache
     ports:
       - "8765:8765"
     healthcheck:

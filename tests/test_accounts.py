@@ -1,22 +1,22 @@
 """The Account gate's contract locks (ADR-0013): the store's pbkdf2
 hashing and verify, the stateless signed token (sign, verify, expiry,
 tamper), the open/Admin-only shapes of the /auth endpoints, the flipped
-gate's 401/403 over the real sheet server, the bootstrap script's
-mint-once discipline, the quota's survival per Account, and the sheet's
+gate's 401/403 over the real sheet server, the first-admin env seeding's
+create-once discipline (T26 — the bootstrap seed command retired), the
+top-up's store shape, the quota's survival per Account, and the sheet's
 login-overlay marker. External behavior through the real server, store
 behavior through the patched module — the house test shape."""
 
 import base64
 import json
 import os
-import subprocess
-import sys
 import time
 
 from tests.conftest import REPO_ROOT
 from tests.helpers import (
     ADMIN_EMAIL,
     TEST_PASSWORD,
+    account_email_for_phone,
     cookie_for,
     get,
     patch_accounts,
@@ -321,11 +321,16 @@ def test_anonymous_and_broken_tokens_are_401_on_the_gated_paths(tmp_path):
         stop_gate(server, original)
 
 
-def test_an_account_without_a_phone_is_403_on_phone_keyed_paths(tmp_path):
+def test_an_account_without_a_phone_is_a_working_account(tmp_path):
+    """The no-attached-phone 403 retired with the phone-keyed stores
+    (T21, GitLab #23): the stores key by the Account's email, so an
+    Account issued without legacy history is a working Account — it
+    reaches the gates, bounded by quota and Balance like any other.
+    The attached phone, when it comes, is the migration's mapping, not
+    an identity."""
     base, server, original = with_gate(tmp_path, NoUpstream())
     try:
-        # The Admin mints a phoneless operator — the recorded shape of
-        # an Account issued before the phone migration.
+        # The Admin mints a phoneless operator.
         admin_cookie = cookie_for(base, ADMIN_EMAIL)
         status, _ = raw_post(
             base,
@@ -335,21 +340,13 @@ def test_an_account_without_a_phone_is_403_on_phone_keyed_paths(tmp_path):
         )
         assert status == 200
         cookie = cookie_for(base, "phoneless@sheet.test", "رمز")
-        # The phone-keyed stores cannot address this Account: 403 with
-        # the recorded Farsi detail, on research paths and the quota
-        # gate alike — never a crash.
+        # The research read answers the UNKNOWN-SESSION 404, not a
+        # 403 about a missing phone — the Account is addressable.
         status, payload = raw_get(
             base, "/research/state?session=no-such", cookie=cookie
         )
-        assert status == 403
-        assert payload["detail"] == serve.AUTH_NO_PHONE_403_DETAIL
-        status, payload = raw_post(
-            base, "/api/v1/recall", {"query": "پرسش؟"}, cookie=cookie
-        )
-        assert status == 403
-        assert payload["detail"] == serve.AUTH_NO_PHONE_403_DETAIL
-        # The auth-level surfaces still work — the Account exists; it
-        # just has no store key yet.
+        assert status == 404
+        # The auth-level surface still shows the attached phone: none.
         status, payload = raw_get(base, "/auth/me", cookie=cookie)
         assert status == 200 and payload["phone"] is None
     finally:
@@ -362,9 +359,13 @@ def test_an_account_without_a_phone_is_403_on_phone_keyed_paths(tmp_path):
 def test_the_daily_quota_still_bounds_per_account(tmp_path):
     base, server, original = with_gate(tmp_path, CannedUpstream())
     phone_a, phone_b = "09120000201", "09120000202"
+    account_a, account_b = (
+        account_email_for_phone(phone_a),
+        account_email_for_phone(phone_b),
+    )
     try:
         for _ in range(serve.DAILY_CHAT_LIMIT):
-            serve.record_chat(phone_a)
+            serve.record_chat(account_a)
         status_full, payload = post(
             base, "/api/v1/recall", {"query": "پرسش؟"}, phone=phone_a
         )
@@ -373,58 +374,91 @@ def test_the_daily_quota_still_bounds_per_account(tmp_path):
         )
     finally:
         stop_gate(server, original)
-    # The attached phone is still the store key: account A is spent, B
-    # is untouched — the quota never moved to the email.
+    # The store keys by the ACCOUNT's email (T21): account A is spent,
+    # B is untouched — the phone is only the login handle now.
     assert status_full == 429
     assert "امروز" in payload["detail"]
     assert status_other == 200
 
 
-# --- the bootstrap script -------------------------------------------------------
+# --- the first admin from config (T26: the seed command retired) -----------------
 
 
-def run_bootstrap(env_db, *args):
-    env = {
-        **os.environ,
-        "ACCOUNTS_DB": str(env_db),
-        "PYTHONIOENCODING": "utf-8",
-    }
-    return subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "bootstrap_admin.py"), *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        env=env,
-        cwd=str(REPO_ROOT),
-    )
-
-
-def test_bootstrap_script_mints_one_admin_and_refuses_a_second(tmp_path):
+def test_ensure_admin_mints_once_and_never_touches_a_standing_admin(tmp_path):
     db = tmp_path / "accounts.sqlite3"
     original_db = accounts.ACCOUNTS_DB
-    first = run_bootstrap(db, "pm@sheet.test", "رمز-مدیر")
-    assert first.returncode == 0
-    assert "حساب مدیر ساخته شد" in first.stdout
-    assert "pm@sheet.test" in first.stdout
     accounts.ACCOUNTS_DB = db
     try:
-        assert accounts.verify_login("pm@sheet.test", "رمز-مدیر")["role"] == (
-            "admin"
+        # The empty store takes the seed: the admin logs in at once.
+        assert accounts.ensure_admin("pm@sheet.test", "رمز-مدیر") is True
+        assert accounts.verify_login("pm@sheet.test", "رمز-مدیر")["role"] == "admin"
+        # A second seeding touches NOTHING — a restart must never
+        # quietly re-issue the PM's password, the force path is gone.
+        assert accounts.ensure_admin("pm@sheet.test", "رمز-تازه") is False
+        assert accounts.verify_login("pm@sheet.test", "رمز-تازه") is None
+        assert accounts.verify_login("pm@sheet.test", "رمز-مدیر") is not None
+        # A different email refuses too while any admin stands.
+        assert accounts.ensure_admin("other@sheet.test", "دیگر") is False
+        assert accounts.account_by_email("other@sheet.test") is None
+    finally:
+        accounts.ACCOUNTS_DB = original_db
+
+
+def test_ensure_admin_refuses_an_email_an_operator_already_holds(tmp_path):
+    db = tmp_path / "accounts.sqlite3"
+    original_db = accounts.ACCOUNTS_DB
+    accounts.ACCOUNTS_DB = db
+    try:
+        created = accounts.create_account(
+            "pm@sheet.test", "رمز-اپراتور", role="operator"
+        )
+        assert created is not None
+        assert accounts.ensure_admin("pm@sheet.test", "رمز-مدیر") is False
+        # The operator Account is untouched by the refused seed.
+        assert accounts.verify_login("pm@sheet.test", "رمز-اپراتور")["role"] == (
+            "operator"
         )
     finally:
         accounts.ACCOUNTS_DB = original_db
-    # The second minting refuses — the Admin is minted once.
-    second = run_bootstrap(db, "other@sheet.test", "دیگر")
-    assert second.returncode == 1
-    assert "وجود دارد" in second.stdout
-    # --force is the recovery path: re-issue the named credentials.
-    third = run_bootstrap(db, "pm@sheet.test", "رمز-تازه", "--force")
-    assert third.returncode == 0
-    assert "دوباره صادر شد" in third.stdout
+
+
+# --- the top-up store (T26) ------------------------------------------------------
+
+
+def test_credit_balance_lands_toman_on_the_account(tmp_path):
+    db = tmp_path / "accounts.sqlite3"
+    original_db = accounts.ACCOUNTS_DB
     accounts.ACCOUNTS_DB = db
     try:
-        assert accounts.verify_login("pm@sheet.test", "رمز-مدیر") is None
-        assert accounts.verify_login("pm@sheet.test", "رمز-تازه") is not None
+        accounts.create_account("op@sheet.test", TEST_PASSWORD, phone="09120000042")
+        assert accounts.get_balance("op@sheet.test") == 0
+        # The top-up keys by EMAIL — the Account is the identity — and
+        # the phone-keyed read answers the same row: the operator sees
+        # the new اعتبار wherever the Balance renders.
+        new_balance = accounts.credit_balance("op@sheet.test", 250_000)
+        assert new_balance == 250_000
+        assert accounts.get_balance("op@sheet.test") == 250_000
+        assert accounts.credit_balance("op@sheet.test", 7) == 250_007
+        assert accounts.get_balance("op@sheet.test") == 250_007
+    finally:
+        accounts.ACCOUNTS_DB = original_db
+
+
+def test_credit_balance_refuses_the_unknown_and_the_non_positive(tmp_path):
+    db = tmp_path / "accounts.sqlite3"
+    original_db = accounts.ACCOUNTS_DB
+    accounts.ACCOUNTS_DB = db
+    try:
+        accounts.create_account("op@sheet.test", TEST_PASSWORD, phone="09120000043")
+        assert accounts.credit_balance("noone@sheet.test", 1000) is None
+        import pytest
+
+        with pytest.raises(ValueError):
+            accounts.credit_balance("op@sheet.test", 0)
+        with pytest.raises(ValueError):
+            accounts.credit_balance("op@sheet.test", -500)
+        # The refusals landed nothing.
+        assert accounts.get_balance("op@sheet.test") == 0
     finally:
         accounts.ACCOUNTS_DB = original_db
 

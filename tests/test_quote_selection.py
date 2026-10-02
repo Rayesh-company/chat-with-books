@@ -11,8 +11,9 @@ from tests.conftest import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from ui import picker, serve  # noqa: E402
-from tests.helpers import (  # noqa: E402
+from ui import serve  # noqa: E402
+from tests.helpers import (
+    account_email_for_phone,  # noqa: E402
     OTHER_PASSAGE,
     POOL,
     POOL_PASSAGE,
@@ -69,9 +70,14 @@ def test_picker_prompt_carries_question_passages_and_reply_shape():
     assert "chunk 101 of document tarhe-kolli (pages 740-745)" in prompt
     assert POOL_PASSAGE in prompt
     assert OTHER_PASSAGE in prompt
-    # Selection, not writing: verbatim from exactly one passage.
+    # Selection, not writing: verbatim from exactly one passage —
+    # damage included, since a "repair" of the layer's letters is
+    # precisely what breaks the verbatim match (70143-336's 3/3 empty
+    # picker, the pilot report).
     assert "VERBATIM" in prompt
     assert "exactly ONE" in prompt
+    assert "exactly as printed" in prompt
+    assert "correct nothing" in prompt
     assert "Do not paraphrase" in prompt
     # The aim rides in the prompt wording, derived from the constant.
     assert "aim for ten" in prompt
@@ -131,45 +137,12 @@ def test_pick_caps_survivors_at_twelve():
     assert len(selections) == 12
 
 
-def test_picker_prompt_windows_long_passages():
-    # ADR-0014: the picker reads a bounded window of each passage — the
-    # full-chunk pool overloaded the model into degenerate replies —
-    # while the guard and phase 2 keep the full text.
-    long_passage = POOL_PASSAGE + ("تک" * 2000)
-    pool = [
-        {"reference": POOL[0]["reference"], "passage": long_passage},
-        POOL[1],
-    ]
-    prompt = serve.build_picker_prompt("پرسش؟", pool)
-    assert picker.PICKER_PASSAGE_WINDOW == 1200
-    # The window rides (the head of the passage), the bulk does not.
-    assert long_passage[:100] in prompt
-    assert "تک" * 1300 not in prompt
-    # Numbering is unchanged — the selections' indices stay the pool's.
-    assert "[0]" in prompt and "[1]" in prompt
-
-
-def test_pick_below_the_floor_gets_one_repair_call_then_empty():
-    # One verbatim survivor is under the floor of four: the picker gets
-    # EXACTLY ONE repair call (the writer's repair shape, ADR-0010) —
-    # two below-floor reads still answer empty, now after two calls.
-    below_floor = [{"text": SENTENCES[0], "source": 0}, {"text": PARAPHRASE, "source": 0}]
-    selections, captured = run_pick_with_replies(
-        [picker_reply(below_floor), picker_reply(below_floor)]
-    )
+def test_pick_below_the_floor_returns_empty():
+    # One verbatim survivor is under the floor of four — the sheet falls
+    # back to the prose render, so the picker replies nothing.
+    reply = [{"text": SENTENCES[0], "source": 0}, {"text": PARAPHRASE, "source": 0}]
+    selections, _ = run_pick_with_replies([picker_reply(reply)])
     assert selections == []
-    assert len(captured["payloads"]) == 2
-
-
-def test_pick_repair_call_can_clear_the_floor():
-    # A below-floor first read and a floor-clearing repair: the better
-    # attempt rides, labeled like any other keep.
-    below_floor = [{"text": SENTENCES[0], "source": 0}, {"text": PARAPHRASE, "source": 0}]
-    selections, captured = run_pick_with_replies(
-        [picker_reply(below_floor), picker_reply(verbatim_selections(4))]
-    )
-    assert selections == KEPT_WITH_LABELS
-    assert len(captured["payloads"]) == 2
 
 
 def test_pick_failure_returns_empty():
@@ -178,6 +151,157 @@ def test_pick_failure_returns_empty():
     selections, captured = run_pick_with_replies([OSError("picker down")])
     assert selections == []
     assert len(captured["payloads"]) == 1
+
+
+# --- the corrupted text layer (book 70143-336) -------------------------
+# Real passages, verbatim from books/70143-336.pages.json: the layer
+# loses the lam-alef ligature (اسلام → اسام), reverses digits
+# (۲۵۰ → ۰۵۲), fuses header fragments into words, and spells with teh
+# marbuta — letter-level damage no separator normalization can erase.
+# The pilot (REPORT-en.md §1) recorded 3/3 runs where every selection
+# died under the exact-substring guard and the sheet fell back to the
+# streamed prose.
+
+ENSAN_REF_A = "chunk 1 of document 70143-336 (pages 2-10)"
+ENSAN_REF_B = "chunk 12 of document 70143-336 (pages 56-60)"
+
+ENSAN_POOL = [
+    {
+        "reference": ENSAN_REF_A,
+        "passage": "ساله : بیانات مقام معظم رهبری۰۵۲ انسعنوان و نام پديدآور:\n"
+        "دربارة زندگی سیاس\nمشگردآوری و تنظیم مرکز صه\n مش.",
+    },
+    {
+        "reference": ENSAN_REF_A,
+        "passage": "فهرست\nاشاره7\nمقدمه۳۱\nفصل اول\nپیامبر اعظم۵۲\nفصل دوم\nامامت7\n"
+        "فصل سوم\nامیرالمؤمنین69\nفصل چهارم\n÷فاطم حضرت99\nفصل پنجم\nامام حسن۳۱۱",
+    },
+    {
+        "reference": ENSAN_REF_A,
+        "passage": "سه فصل از این کتاب، تبیین کنندة شرایط اجتماعی و سیاسی جامعة اسامی \n"
+        "به ویژه پس از حادثة عاشورا تا دورة امامت امام صادق است.",
+    },
+    {
+        "reference": ENSAN_REF_A,
+        "passage": "اطاع از این شرایط، به درک بهتر \nحرکت انسان ۰۵۲ ساله در این برهة "
+        "زمانی حساس کمک فراوانی می کند.",
+    },
+    {
+        "reference": ENSAN_REF_B,
+        "passage": "خاصي از آن اطاق مي گردد و آن، پیشوایي و رهبري در شئون اجتماعي است؛ "
+        "چه فکري و\nچه سیاسي. در هرجا از قرآن که مشتقّاتِ واژة امامت \n"
+        "به همین معناي خاص، یعني پیشوایي امت است.",
+    },
+    {
+        "reference": ENSAN_REF_B,
+        "passage": "زمامدار سیاسيِ جامعة اسامي باید از سوي خدا معین و به وسیلة پیامبر "
+        "معرفي شده باشد",
+    },
+]
+
+# What the model answers under "write proper Farsi" (the pilot's picker
+# calls were metered at 123-828 output tokens, and the prompt asked for
+# exactly this): proper-Farsi repairs of the layer's damage — a
+# lam-alef restored, digits un-reversed, a damaged word re-guessed.
+# Each repair breaks the exact letter stream of its claimed passage.
+ENSAN_CORRECTED = [
+    {
+        "text": "سه فصل از این کتاب، تبیین‌کننده شرایط اجتماعی و سیاسی جامعه اسلامی "
+        "به‌ویژه پس از حادثه عاشورا تا دوره امامت امام صادق است.",
+        "source": 2,
+    },
+    {
+        "text": "اطاع از این شرایط، به درک بهتر حرکت انسان ۲۵۰ ساله در این برهه "
+        "زمانی حساس کمک فراوانی می‌کند.",
+        "source": 3,
+    },
+    {
+        "text": "خاصی از آن اطلاق می‌گردد و آن، پیشوایی و رهبری در شئون اجتماعی است؛ "
+        "چه فکری و چه سیاسی.",
+        "source": 4,
+    },
+    {
+        "text": "در هرجای قرآن که مشتقات واژه امامت به همین معنای خاص، یعنی پیشوایی امت است.",
+        "source": 4,
+    },
+    {
+        "text": "زمامدار سیاسیِ جامعه اسلامی باید از سوی خدا معین و به وسیله پیامبر معرفی شده باشد",
+        "source": 5,
+    },
+]
+
+
+def test_pick_keeps_proper_farsi_quotes_over_the_corrupted_book():
+    # The pilot's 3/3 failure, red before the fuzzy tier: every
+    # selection repaired the layer's damage, the exact guard killed
+    # them all, floor 4 unreachable, the sheet fell back to prose. The
+    # repairs sit inside the claimed passage's own letter stream —
+    # contiguous, a few letters short of verbatim — so the fuzzy tier
+    # keeps them.
+    selections, _ = run_pick_with_replies(
+        [picker_reply(ENSAN_CORRECTED)],
+        question="کتاب انسان ۲۵۰ ساله چه ساختی دارد؟",
+        sources=ENSAN_POOL,
+    )
+    assert len(selections) >= serve.QUOTE_SELECTION_FLOOR
+    for item in selections:
+        # The verbatim contract holds: what is shown is the Book's own
+        # letter stream — a passage's slice, never the model's repair.
+        assert any(
+            serve.normalize_for_match(item["text"])
+            in serve.normalize_for_match(source["passage"])
+            for source in ENSAN_POOL
+        )
+        assert item["book_label"] == "انسان ۲۵۰ ساله"
+        assert "صفح" in item["pages_label"]
+    # The displayed digits and letters are the layer's own: the model's
+    # ۲۵۰ repair renders as the passage's ۰۵۲, its اسلامی as اسامی.
+    repaired = next(item for item in selections if "حرکت" in item["text"])
+    assert "۰۵۲" in repaired["text"]
+    assert "۲۵۰" not in repaired["text"]
+    restored = next(item for item in selections if "سه فصل" in item["text"])
+    assert "اسامی" in restored["text"]
+    assert "اسلامی" not in restored["text"]
+
+
+def test_pick_keeps_a_verbatim_copy_of_the_damaged_text():
+    # The reworked prompt's behavior: the model copies the damage
+    # verbatim (اسام, ۰۵۲, teh marbuta) — the exact guard passes it
+    # untouched, exactly like tarhe-kolli's backspace noise, no fuzzy
+    # needed. The reader sees the Book's own spacing via the slice.
+    damaged = [
+        {
+            "text": "سه فصل از این کتاب، تبیین کنندة شرایط اجتماعی و سیاسی جامعة اسامی "
+            "به ویژه پس از حادثة عاشورا تا دورة امامت امام صادق است.",
+            "source": 2,
+        },
+        {
+            "text": "اطاع از این شرایط، به درک بهتر حرکت انسان ۰۵۲ ساله در این برهة "
+            "زمانی حساس کمک فراوانی می کند.",
+            "source": 3,
+        },
+        {
+            "text": "خاصي از آن اطاق مي گردد و آن، پیشوایي و رهبري در شئون اجتماعي است؛ "
+            "چه فکري و چه سیاسي.",
+            "source": 4,
+        },
+        {
+            "text": "در هرجا از قرآن که مشتقّاتِ واژة امامت به همین معناي خاص، یعني پیشوایي امت است.",
+            "source": 4,
+        },
+    ]
+    selections, _ = run_pick_with_replies(
+        [picker_reply(damaged)],
+        question="کتاب انسان ۲۵۰ ساله چه ساختی دارد؟",
+        sources=ENSAN_POOL,
+    )
+    assert len(selections) == 4
+    for item in selections:
+        assert any(
+            serve.normalize_for_match(item["text"])
+            in serve.normalize_for_match(source["passage"])
+            for source in ENSAN_POOL
+        )
 
 
 # --- the endpoint, over the real sheet server --------------------------
@@ -216,7 +340,7 @@ def test_quote_selection_needs_a_chat_today_and_never_counts(tmp_path):
         )
         calls_after_rejected = list(composer.calls)
         for _ in range(5):
-            serve.record_chat(phone)
+            serve.record_chat(account_email_for_phone(phone))
         status_ok, body = post(
             base, "/quote-selection", quote_payload(), phone=phone
         )
@@ -227,7 +351,7 @@ def test_quote_selection_needs_a_chat_today_and_never_counts(tmp_path):
     assert calls_after_rejected == []
     assert status_ok == 200
     # The day's five chats stayed five — the picker never counts.
-    assert serve.chats_today(phone) == 5
+    assert serve.chats_today(account_email_for_phone(phone)) == 5
 
 
 def test_quote_selection_rejects_a_malformed_body_and_an_empty_pool(tmp_path):
@@ -236,7 +360,7 @@ def test_quote_selection_rejects_a_malformed_body_and_an_empty_pool(tmp_path):
     composer = FakeComposer()
     base, server, original = with_gate(tmp_path, composer)
     phone = "09120000022"
-    serve.record_chat(phone)
+    serve.record_chat(account_email_for_phone(phone))
     try:
         status_no_sources, _ = post(base, "/quote-selection", {"question": "پرسش؟"}, phone=phone)
         status_empty, _ = post(
@@ -265,7 +389,7 @@ def test_quote_selection_answers_the_mixed_reply_with_labels_and_pool_size(tmp_p
     )
     base, server, original = with_gate(tmp_path, composer)
     phone = "09120000023"
-    serve.record_chat(phone)
+    serve.record_chat(account_email_for_phone(phone))
     try:
         status, body = post(
             base, "/quote-selection", quote_payload(), phone=phone
@@ -285,7 +409,7 @@ def test_quote_selection_picker_failure_answers_empty_with_200(tmp_path):
     composer = FakeComposer([OSError("composer down")])
     base, server, original = with_gate(tmp_path, composer)
     phone = "09120000024"
-    serve.record_chat(phone)
+    serve.record_chat(account_email_for_phone(phone))
     try:
         status, body = post(
             base, "/quote-selection", quote_payload(), phone=phone
@@ -298,14 +422,11 @@ def test_quote_selection_picker_failure_answers_empty_with_200(tmp_path):
 
 def test_quote_selection_below_the_floor_answers_empty_with_200(tmp_path):
     composer = FakeComposer(
-        [
-            picker_reply([{"text": SENTENCES[0], "source": 0}, {"text": PARAPHRASE, "source": 0}]),
-            picker_reply([{"text": SENTENCES[0], "source": 0}, {"text": PARAPHRASE, "source": 0}]),
-        ]
+        [picker_reply([{"text": SENTENCES[0], "source": 0}, {"text": PARAPHRASE, "source": 0}])]
     )
     base, server, original = with_gate(tmp_path, composer)
     phone = "09120000025"
-    serve.record_chat(phone)
+    serve.record_chat(account_email_for_phone(phone))
     try:
         status, body = post(
             base, "/quote-selection", quote_payload(), phone=phone

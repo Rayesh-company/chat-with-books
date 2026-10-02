@@ -5,10 +5,24 @@ every composer conversation. No I/O."""
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 
-_ARABIC_TO_FARSI = str.maketrans({"ي": "ی", "ك": "ک"})
+_ARABIC_TO_FARSI = str.maketrans(
+    {
+        "ي": "ی",
+        "ك": "ک",
+        # Teh marbuta, alef maqsura, and the hamza-bearing alef forms:
+        # some Books' layers spell Arabic-style where the composer
+        # writes plain Farsi — the pair must not read as different
+        # letters.
+        "ة": "ه",
+        "ى": "ی",
+        "أ": "ا",
+        "إ": "ا",
+    }
+)
 # Tashkeel, superscript alef, tatweel/kashida.
 _STRIPPED_MARKS = re.compile(r"[ً-ٰٟـ]")
 # Every separator — the text layer's backspaces, ZWNJ/ZWJ, spaces,
@@ -41,12 +55,154 @@ def normalize_for_match(text: str) -> str:
     return _NON_WORD.sub("", text).lower()
 
 
-def guard_sentences(selections, sources):
-    """Keep only sentences that occur verbatim in their claimed source passage.
+# The Book text layer's backspace word separators (\b, recorded live
+# 2026-09-09) render as nothing in the browser, fusing the words. Any
+# non-whitespace C0 control gets the space the layer meant; \t\n\r ride
+# the whitespace collapse instead. ZWNJ is not whitespace, so it
+# survives — the composer's می‌تواند keeps its join.
+_CONTROL_MARKS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
-    A sentence failing the check is dropped, never shown as quoted; a sentence
-    claiming the wrong passage is dropped too, or its tooltip would cite a
-    passage it did not come from.
+
+def _display_clean(text: str) -> str:
+    """Make text layer noise readable: controls become spaces, every
+    whitespace run becomes one space."""
+    return " ".join(_CONTROL_MARKS.sub(" ", text).split())
+
+
+def _stream_with_offsets(text: str) -> tuple:
+    """normalize_for_match's letter stream over the RAW text, with each
+    kept letter's raw index beside it — the bridge from a matched stream
+    position back to the passage's own characters (display_text's
+    verbatim slice)."""
+    stream = []
+    offsets = []
+    for index, char in enumerate(text):
+        char = _ARABIC_TO_FARSI.get(ord(char), char)
+        if _STRIPPED_MARKS.match(char):
+            continue
+        if _NON_WORD.fullmatch(char):
+            continue
+        lowered = char.lower()
+        # A lowering that changes length cannot ride a 1:1 offset map;
+        # Farsi is caseless, so keeping the char changes nothing real.
+        if len(lowered) != 1:
+            lowered = char
+        stream.append(lowered)
+        offsets.append(index)
+    return "".join(stream), offsets
+
+
+def _honors_word_gaps(model: str, source: str) -> bool:
+    """Whether the model's text puts a separator wherever the passage
+    slice has one. Both already display-cleaned, letter streams equal
+    (the guard proved containment); a gap holding only ZWNJ is still a
+    join the layer cannot distinguish from a word space, so any
+    separator in the model's gap — space or ZWNJ — honors it. Tashkeel
+    and kashida are intra-word decoration, never gaps."""
+    def gaps(text):
+        runs = []
+        gap = ""
+        for char in text:
+            if _STRIPPED_MARKS.match(char):
+                continue
+            if _NON_WORD.fullmatch(char):
+                gap += char
+            else:
+                runs.append(gap)
+                gap = ""
+        return runs
+
+    model_gaps, source_gaps = gaps(model), gaps(source)
+    if len(model_gaps) != len(source_gaps):
+        return False
+    return all(
+        not source_gap or model_gap
+        for source_gap, model_gap in zip(source_gaps, model_gaps)
+    )
+
+
+# The fuzzy tier (the pilot's 3/3 empty picker on 70143-336): some
+# Books' text layers are letter-damaged — the lam-alef ligature lost
+# (اسلام → اسام), digits reversed (۲۵۰ → ۰۵۲), words fused — and a
+# quote that repairs that damage can never be a letter-for-letter
+# substring. When the exact match fails, the tier aligns the quote's
+# letter stream inside the passage's and keeps it only when the matches
+# sit CONTIGUOUS and near-complete: coverage is the share of the
+# quote's letters the window accounts for, precision the share of the
+# window they fill — reworded or stitched-together text scatters and
+# drops. What renders stays the passage's own slice (display_text):
+# the Book's letters are the only ones a citation can vouch for.
+GUARD_FUZZY_MIN_RATIO = 0.85
+GUARD_FUZZY_MIN_LETTERS = 30
+GUARD_FUZZY_MIN_WINDOW_PRECISION = 0.7
+
+
+def _fuzzy_window(needle, stream):
+    """The span of `stream` best accounting for `needle`'s letters —
+    (start, end) stream indices — or None below the tier's bars."""
+    if len(needle) < GUARD_FUZZY_MIN_LETTERS:
+        return None
+    matcher = difflib.SequenceMatcher(None, needle, stream, autojunk=False)
+    blocks = [block for block in matcher.get_matching_blocks() if block.size]
+    if not blocks:
+        return None
+    matched = sum(block.size for block in blocks)
+    if matched / len(needle) < GUARD_FUZZY_MIN_RATIO:
+        return None
+    start, end = blocks[0].b, blocks[-1].b + blocks[-1].size
+    if end > start and matched / (end - start) < GUARD_FUZZY_MIN_WINDOW_PRECISION:
+        return None
+    return start, end
+
+
+def display_text(text: str, passage: str) -> str:
+    """The text to SHOW for a guard-kept quote: the model's own writing
+    when it honors every word gap of the passage, else the passage's
+    verbatim slice — both display-cleaned. The composer is told to write
+    proper Farsi over the \b noise and usually does; when it copies the
+    noise (or deletes the separators outright) the guard still passes —
+    letter streams compare equal — so the passage itself is the spacing
+    the reader gets. A fuzzy-tier quote renders as the passage's own
+    slice unconditionally: the model's text repaired the Book's letters,
+    and the repair is exactly what a citation cannot vouch for."""
+    cleaned = _display_clean(text)
+    if not cleaned or not isinstance(passage, str) or not passage:
+        return cleaned or text.strip()
+    stream, offsets = _stream_with_offsets(passage)
+    needle = normalize_for_match(text)
+    start = stream.find(needle)
+    fuzzy = False
+    if start < 0:
+        window = _fuzzy_window(needle, stream)
+        if window is None:
+            return cleaned
+        start, stop = window
+        fuzzy = True
+    else:
+        stop = start + len(needle)
+    if stop < 1 or stop > len(offsets):
+        return cleaned
+    end = offsets[stop - 1] + 1
+    # The model may also have dropped the sentence's trailing
+    # punctuation; the slice takes the passage's own, stopping at the
+    # next word's first letter.
+    while end < len(passage) and _NON_WORD.fullmatch(passage[end]):
+        end += 1
+    source = _display_clean(passage[offsets[start] : end])
+    if fuzzy:
+        return source
+    return cleaned if _honors_word_gaps(cleaned, source) else source
+
+
+def guard_sentences(selections, sources):
+    """Keep only sentences that occur verbatim in their claimed source passage —
+    or, under the fuzzy tier, a passage's own text a few damaged letters
+    short of verbatim (some Books' layers lose letters no normalization
+    restores).
+
+    A sentence failing both checks is dropped, never shown as quoted; a
+    sentence claiming the wrong passage is dropped too, or its tooltip
+    would cite a passage it did not come from.
     """
     normalized = [normalize_for_match(source["passage"]) for source in sources]
     kept = []
@@ -62,8 +218,15 @@ def guard_sentences(selections, sources):
         if not 0 <= index < len(sources):
             continue
         needle = normalize_for_match(text)
-        if needle and needle in normalized[index]:
-            kept.append({"text": text.strip(), "reference": sources[index]["reference"]})
+        if not needle:
+            continue
+        if needle in normalized[index] or _fuzzy_window(needle, normalized[index]):
+            kept.append(
+                {
+                    "text": display_text(text, sources[index]["passage"]),
+                    "reference": sources[index]["reference"],
+                }
+            )
     return kept
 
 
@@ -105,12 +268,12 @@ def guard_blocks(blocks, sources, commentary=False):
         elif kind == "heading":
             text = block.get("text")
             if isinstance(text, str) and text.strip():
-                kept.append({"type": "heading", "text": text.strip()})
+                kept.append({"type": "heading", "text": _display_clean(text)})
         elif kind == "commentary":
             if commentary:
                 text = block.get("text")
                 if isinstance(text, str) and text.strip():
-                    kept.append({"type": "commentary", "text": text.strip()})
+                    kept.append({"type": "commentary", "text": _display_clean(text)})
         elif kind == "paragraph":
             parts = block.get("parts")
             if not isinstance(parts, list):
@@ -123,7 +286,7 @@ def guard_blocks(blocks, sources, commentary=False):
                     continue
                 text = part.get("text")
                 if isinstance(text, str) and text.strip():
-                    kept_parts.append({"text": text.strip()})
+                    kept_parts.append({"text": _display_clean(text)})
                     has_text = True
                     continue
                 quote = part.get("quote")
@@ -141,7 +304,7 @@ def guard_blocks(blocks, sources, commentary=False):
                     continue
                 kept_parts.append(
                     {
-                        "quote": quote.strip(),
+                        "quote": display_text(quote, sources[index]["passage"]),
                         "source": index,
                         **_citation_labels(
                             sources[index]["reference"], sources[index]["passage"]

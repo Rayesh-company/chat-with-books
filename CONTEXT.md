@@ -17,7 +17,7 @@ The person who sits with the product to complete a Session. For the Phase 2 exit
 _Avoid_: User
 
 **Session**:
-One sitting of Farsi Q&A against the Book set that can meet the Phase 2 exit checks: answers with Citations, a Research Mode conversation, and a first answer that does not feel too slow.
+One sitting of Farsi Q&A against the Book set that can meet the Phase 2 exit checks: answers with Citations, a Research Mode conversation, and a first answer that does not feel too slow. A Session endures under its Account — it is listed and resumable; a new ask opens a new Session instead of erasing the running one.
 _Avoid_: Chat, demo (showing the product at an expo is not automatically a Session)
 
 **Research Mode**:
@@ -77,7 +77,7 @@ The one open question the journey is working now — the oldest pending named qu
 _Avoid_: queue head, current task, focus
 
 **Book pick**:
-The one Book chosen at platform entry for the whole investigation — ask, phases, widen, and Research session all search it. Persisted across refreshes; the ask stays disabled until a pick exists.
+The one Book chosen when a Session is created — ask, phases, widen, and the Research journey all search it. Shown as the Session's Book chip; the ask stays disabled until a pick exists. (Supersedes the per-ask Book selection toggles.)
 _Avoid_: book selection toggles, filter, dataset choice
 
 **Evidence fallback**:
@@ -123,10 +123,6 @@ _Avoid_: citation paragraph (the superseded paragraph-only design), chat, first 
 **Widen**:
 The «جست‌وجوی بیشتر» operation of an ask (ADR-0010): one broaden call picks at most two adjacent facet queries, the pinned searchers run them once, and only the pool's new passages ride back; the sheet merges and re-answers. Part of the same chat; never counts one.
 _Avoid_: search more results, refresh, re-search
-
-**Book selection**:
-The ask's choice of which Books to search (the two toggles above the question; at least one). Validated server-side against the Book set and carried into the ask's Research session. Missing or empty means the whole Book set.
-_Avoid_: corpus picker, source filter, dataset (Cognee's word is not the domain name)
 
 **Quoted paragraph**:
 A paragraph of a Quoted answer: Filler text with verbatim Book sentences embedded inside it, each sentence highlighted and hoverable for its own Citation (the passage's first page), the paragraph ending with the page range of every passage it quoted. May weave several passages.
@@ -199,3 +195,19 @@ The approved plain-Persian naming table (ADR-0012): the single source every Rese
 **Question statuses**: در انتظار، جست‌وجو شد، شکاف. **Claim statuses**: پشتوانهٔ مستقیم، ترکیب شواهد، شواهد ناکافی.
 
 **Platform names (DRAFT — pending PM approval, 2026-09-19, spec2.md)**: Account «حساب» · Login «ورود» · Balance «اعتبار» · Tariff «تعرفه» · Admin «مدیر» · Admin console «میز مدیریت» · Session report «گزارش نشست» · the report chip «دریافت گزارش نشست». One deliberate exception (T19): the report chip already rides the sheet, draft-marked, its text pinned to one server constant (`ui/research.py`'s `RESEARCH_REPORT_CHIP`) so the PM's approval renames it in one line. None of the other rows render until the PM approves them; then the approved rows join the tables above.
+
+**Platform names (DRAFT — pending PM approval, 2026-09-20, chat-shell redesign)**: Session list «فهرست نشست‌ها» · New Session «نشست تازه». The shell's navigation over an Account's Sessions and its new-Session action; neither renders until the PM approves, and both stay pinned to single constants like the report chip.
+
+**Platform names (DRAFT — pending PM approval, 2026-09-27, ADR-0015 research toggle)**: the research section's empty note «پرسش پژوهشی خود را از همین کامپوزر پایین بپرسید؛ نقشۀ پژوهش کنار گفتگو می‌آید.» — the one NEW string the composer's research toggle added, pinned to `RESEARCH_SECTION_NOTE` in the shell's draft table. The toggle's own label reuses the approved glossary row «حالت پژوهش», and the armed composer's placeholder («پیام پژوهش خود را بنویسید») and send word («فرستادن») reuse the research strings the roster already carries.
+
+**Platform names (DRAFT — pending PM approval, 2026-09-27, ADR-0018 map redraw)**: the clamp toggles «نمایش بیشتر» / «نمایش کمتر» — the two NEW strings the map's two bodies added, pinned to `MAP_MORE_LABEL` / `MAP_LESS_LABEL` in the shell's draft table. Everything else the redraw shows reuses the roster: the map title «نقشۀ پژوهش», the journey stages, the map rows, and the closed conversation's resume note, which mirrors `ui/research.py`'s `RESEARCH_SESSION_CLOSED_DETAIL` verbatim («این گفتگوی پژوهش بسته است؛ پرسش تازه‌ای بپرسید.»).
+
+**Platform names (DRAFT — pending PM approval, 2026-09-28, the delete's two-step confirm)**: the armed confirm label «حذف نشست؟» — the one NEW string the session row's delete confirm added (the critique's P1: one tap destroyed the sitting), pinned to `SESSION_DELETE_CONFIRM_LABEL` in the shell's draft table. The resting label «حذف» existed on the sheet already and is now pinned beside it (`SESSION_DELETE_LABEL`).
+
+**Platform names (DRAFT — pending PM approval, 2026-09-29, the cost chip speaks credit)**: the chip's credit note «از اعتبار» — the phrase after the percentage that names the referent (the sitting's share of the Account's اعتبار), composed of the roster's approved word, pinned to `USAGE_CREDIT_NOTE` in the shell's draft table. The chip's other strings restate what the sheet already carries («هزینۀ نشست:»).
+
+**Platform names (DRAFT — pending PM approval, 2026-10-01, the selection popover + notebook, wayfinder map «selection + notebook»)**: the selection toolbar's two verbs «افزودن به یادداشت» / «پرسش از این متن» and the quick-save toast «به دفتر یادداشت اضافه شد» — the NEW strings the selection popover added, pinned to `ADD_TO_NOTE_LABEL` / `ASK_FROM_SELECTION_LABEL` / `NOTE_SAVED_TOAST` in the shell's draft table. The toast's «مشاهده» action («NOTE_VIEW_ACTION», same table) joins with the notebook panel. The notebook surface itself (panel title «دفتر یادداشت», the default category «بدون دسته», the opinion field «نظر من», the two-step delete «حذف یادداشت؟», the bulk verbs «کپی منتخب‌ها» / «خروجی PDF» / «حذف منتخب‌ها» and the row's «پرش به منبع») arrives with its store and carries its own DRAFT row then. No collision with «حالت پژوهش»: the toolbar's ask verb names the text, not the mode.
+
+**Platform names (DRAFT — pending PM approval, 2026-10-01, the notebook panel, wayfinder map «selection + notebook», ticket 08)**: the surface «دفتر یادداشت» (`NOTEBOOK_LABEL` — the topbar door and the panel title share it) and its tools: the search «جست‌وجو در یادداشت‌ها» (`NB_SEARCH_PLACEHOLDER`), the source filter «همهٔ منابع» / «کتاب‌ها» / «نشست‌ها» (`NB_FILTER_ALL` / `NB_FILTER_BOOKS` / `NB_FILTER_SESSIONS`), the sort «تازه‌ترین» / «کهنه‌ترین» (`NB_SORT_NEW` / `NB_SORT_OLD`), the empty state «هنوز یادداشتی نیست.» (`NB_EMPTY`), the row verbs «ویرایش» / «ذخیره» / «پرش به منبع» (`NB_EDIT` / `NB_SAVE` / `NOTE_SOURCE_JUMP`), the field «نظر من» (`NOTE_OPINION_LABEL`), the default category «بدون دسته» (`NOTE_UNCATEGORIZED`, the only row of `NOTE_CATEGORIES` until the PM list lands), the delete pair «حذف» (already pinned, `SESSION_DELETE_LABEL`) → «حذف یادداشت؟» (`NOTE_DELETE_CONFIRM_LABEL`), and the bulk bar «کپی منتخب‌ها» / «خروجی PDF» / «حذف منتخب‌ها» → «حذف منتخب‌ها؟» (`NOTE_COPY_SELECTED` / `NOTE_EXPORT_PDF` / `NOTE_DELETE_SELECTED` / `NB_DELETE_MANY_CONFIRM`) with its feedback «منتخب‌ها کپی شد.» (`NB_COPIED`). The quote is never rewritten — the source's own words; the PDF export is the browser's own printer over a plain print view.
+
+**Platform names (DRAFT — pending PM approval, 2026-10-01, the in-book chat, wayfinder map «selection + notebook», ticket 09)**: the drawer's title «پرسش از متن» (`IN_BOOK_CHAT_TITLE` — the toolbar verb's sibling; deliberately not «حالت پژوهش», which is taken, and built without the forbidden گفتگو/چت), its composer's prefill «این متن یعنی چه؟» (`NB_CHAT_PREFILL`) and the handoff jump «ادامه در چت اصلی» (`NB_CHAT_HANDOFF`). The send word reuses the roster's pinned «بپرس» (`ASK_SEND_LABEL`) and the cost line reuses the sheet's «هزینۀ نشست:» phrasing verbatim; no research toggle rides the drawer (v1).

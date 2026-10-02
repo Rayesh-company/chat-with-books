@@ -10,6 +10,11 @@ ui/accounts.sqlite3
 # The customer PDFs stay out of git; provision books/ from the
 # cognee storage export (see ADR-0007). The text indexes ship.
 books/*.pdf
+# The page rasters' disk cache (ADR-0017) — regenerable by design.
+render-cache/
+# The offline build's planted wheels (ui/Dockerfile) — they ride the
+# deploy tree, never git.
+ui/wheels/*.whl
 ~$*
 .agents/
 .claude/
@@ -22,3 +27,12 @@ books/*.pdf
 *.zip
 
 ui/usage_ledger.sqlite3
+ui/audit.sqlite3
+# The worktree's runtime stores — the deployed copies live on /data.
+ui/research.sqlite3
+ui/sessions.sqlite3
+
+# The pilot bench Accounts (credentials) — local only, never committed.
+benchmark/pilot/accounts.json
+# The pilot's run outputs (per-run JSON/CSV, the reports) — data, not code.
+benchmark/pilot/runs/

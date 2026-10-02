@@ -10,6 +10,7 @@ import sqlite3
 
 from tests.helpers import (
     TEST_BALANCE_TOMAN,
+    account_email_for_phone,
     ensure_account,
     patch_accounts,
     post,
@@ -20,6 +21,9 @@ from ui import accounts, dive, ledger, research, research_store, serve
 from ui.ledger import record
 
 PHONE = "09120000000"
+# The stores key by the ACCOUNT's email (T21): the seeded operator's
+# login phone is only the handle its Account is found by.
+ACCOUNT = account_email_for_phone(PHONE)
 
 
 class FakeUpstream:
@@ -82,10 +86,12 @@ def test_an_existing_accounts_store_migrates_in_place(tmp_path):
     original = accounts.ACCOUNTS_DB
     accounts.ACCOUNTS_DB = db
     try:
-        assert accounts.get_balance("09150000000") == 0
-        accounts.adjust_balance("09150000000", 5_000)
-        assert accounts.get_balance("09150000000") == 5_000
-        assert accounts.deduct_balance("09150000000", 2_000) == 3_000
+        # The Balance keys by the Account's email (T21): the old row's
+        # phone rides along as attached legacy data, never the key.
+        assert accounts.get_balance("old@x.ir") == 0
+        accounts.adjust_balance("old@x.ir", 5_000)
+        assert accounts.get_balance("old@x.ir") == 5_000
+        assert accounts.deduct_balance("old@x.ir", 2_000) == 3_000
     finally:
         accounts.ACCOUNTS_DB = original
 
@@ -96,11 +102,11 @@ def test_every_recorded_entry_deducts_through_one_wire(tmp_path):
     site can forget it."""
     patch_accounts(tmp_path)
     ensure_account(PHONE)
-    before = accounts.get_balance(PHONE)
+    before = accounts.get_balance(ACCOUNT)
     assert before == TEST_BALANCE_TOMAN
 
-    record(PHONE, "picker", 1_000_000, 0, metered=True)  # 2000 at the input rate
-    assert accounts.get_balance(PHONE) == before - 2000
+    record(ACCOUNT, "picker", 1_000_000, 0, metered=True)  # 2000 at the input rate
+    assert accounts.get_balance(ACCOUNT) == before - 2000
 
 
 def test_the_ask_gate_stops_an_empty_account_with_the_farsi_fix(tmp_path):
@@ -108,7 +114,7 @@ def test_the_ask_gate_stops_an_empty_account_with_the_farsi_fix(tmp_path):
     base, server, originals = with_gate(tmp_path, None)
     try:
         ensure_account(PHONE)  # seeds inside with_gate's own accounts DB
-        accounts.deduct_balance(PHONE, accounts.get_balance(PHONE))  # drain
+        accounts.deduct_balance(ACCOUNT, accounts.get_balance(ACCOUNT))  # drain
         status, payload = post(
             base, "/api/v1/recall", {"query": "پرسش؟"}, phone=PHONE
         )
@@ -124,7 +130,7 @@ def test_a_phase_gate_stops_an_empty_account(tmp_path):
     base, server, originals = with_gate(tmp_path, None)
     try:
         ensure_account(PHONE)
-        accounts.deduct_balance(PHONE, accounts.get_balance(PHONE))
+        accounts.deduct_balance(ACCOUNT, accounts.get_balance(ACCOUNT))
         status, payload = post(
             base,
             "/quote-selection",
@@ -144,7 +150,7 @@ def test_a_turn_that_cannot_be_paid_for_never_starts(tmp_path):
     base, server, originals = with_gate(tmp_path, None)
     try:
         ensure_account(PHONE)
-        accounts.deduct_balance(PHONE, accounts.get_balance(PHONE))
+        accounts.deduct_balance(ACCOUNT, accounts.get_balance(ACCOUNT))
         status, payload = post(
             base,
             "/research/message",
@@ -165,7 +171,7 @@ def test_a_funded_account_still_asks_and_the_ask_deducts(tmp_path):
     base, server, originals = with_gate(tmp_path, FakeUpstream())
     try:
         ensure_account(PHONE)
-        balance_before = accounts.get_balance(PHONE)
+        balance_before = accounts.get_balance(ACCOUNT)
         status, _ = post(
             base,
             "/api/v1/recall",
@@ -176,7 +182,7 @@ def test_a_funded_account_still_asks_and_the_ask_deducts(tmp_path):
     finally:
         stop_gate(server, originals)
 
-    assert accounts.get_balance(PHONE) <= balance_before
+    assert accounts.get_balance(ACCOUNT) <= balance_before
     rows = ledger_rows()
     assert any(row[0] == "ask" for row in rows), "the ask landed its entry"
 
@@ -190,10 +196,10 @@ def test_the_turns_composer_calls_land_turn_entries(tmp_path, monkeypatch):
 
     patch_accounts(tmp_path)
     ensure_account(PHONE)
-    balance_before = accounts.get_balance(PHONE)
+    balance_before = accounts.get_balance(ACCOUNT)
     research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
     session, error = research.ensure_session(
-        PHONE, None, "پیام آغازین", "پرسش پژوهش؟", []
+        ACCOUNT, None, "پیام آغازین", "پرسش پژوهش؟", []
     )
     assert session is not None, error
 
@@ -204,7 +210,7 @@ def test_the_turns_composer_calls_land_turn_entries(tmp_path, monkeypatch):
     for module, _ in originals:
         module.urlopen = upstream
     monkeypatch.setenv("LLM_API_KEY", "test-key")
-    turn = research.ResearchTurn(PHONE, session["id"], "شهود چیست؟")
+    turn = research.ResearchTurn(ACCOUNT, session["id"], "شهود چیست؟")
     research.RESEARCH_REGISTRY[turn.id] = turn
     try:
         research.run_research_turn(turn, session)
@@ -214,7 +220,7 @@ def test_the_turns_composer_calls_land_turn_entries(tmp_path, monkeypatch):
 
     turn_rows = [row for row in ledger_rows() if row[0] == "turn"]
     assert turn_rows, "the turn's composer calls never reached the ledger"
-    assert accounts.get_balance(PHONE) < balance_before, "the turn spent credit"
+    assert accounts.get_balance(ACCOUNT) < balance_before, "the turn spent credit"
 
 
 def test_the_daily_quota_still_applies_on_top(tmp_path, monkeypatch):
@@ -227,13 +233,13 @@ def test_the_daily_quota_still_applies_on_top(tmp_path, monkeypatch):
     ensure_account(PHONE)
     monkeypatch.setattr(quotas, "QUOTA_DB", str(tmp_path / "usage.sqlite3"))
     for _ in range(DAILY_CHAT_LIMIT):
-        record_chat(PHONE)
+        record_chat(ACCOUNT)
 
     base, server, originals = with_gate(tmp_path, FakeUpstream())
     try:
         # with_gate re-patches the quota DB; exhaust THAT file the same way
         for _ in range(DAILY_CHAT_LIMIT):
-            record_chat(PHONE)
+            record_chat(ACCOUNT)
         status, payload = post(
             base, "/api/v1/recall", {"query": "پرسش؟"}, phone=PHONE
         )

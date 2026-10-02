@@ -69,9 +69,147 @@ def test_guard_matches_when_the_composer_rejoins_backspace_split_words():
     assert kept == [{"text": sentence, "reference": "chunk 1 of document tarhe-kolli"}]
 
 
+def test_stream_with_offsets_mirrors_normalize_for_match():
+    # display_text locates a kept quote inside the RAW passage by walking
+    # the letter stream with per-letter offsets; the mirror must agree
+    # with the guard's own stream exactly, or the verbatim slice would
+    # mis-cut. The noisy layer text and clean proper Farsi both hold.
+    for text in (NOISY_PASSAGE, OTHER_PASSAGE, "انسان می‌تواند ـ باشـد؛"):
+        stream, _ = serve._stream_with_offsets(text)
+        assert stream == serve.normalize_for_match(text)
+
+
+def test_display_text_repairs_a_noisy_copy():
+    # The composer copied the passage's \b separators into the quote: the
+    # guard passes (letter streams compare equal) and the display text
+    # carries the separators as spaces — no control character may reach
+    # the sheet fused inside a quoted sentence.
+    noisy_copy = "قرآن\bکتابی\bاسـت\bبرای\bزندگی\bجمعی\bانسان‌ها"
+    kept = serve.guard_sentences([{"text": noisy_copy, "source": 0}], SOURCES)
+    assert kept and "\b" not in kept[0]["text"]
+    assert kept[0]["text"] == "قرآن کتابی اسـت برای زندگی جمعی انسان‌ها"
+
+
+def test_display_text_repairs_a_fused_copy():
+    # Worse: the composer dropped the separators outright. The passage's
+    # own slice — spacing and trailing punctuation included — is what
+    # the reader gets; the model's fused stream is never shown.
+    fused = "سخندرایناست"
+    kept = serve.guard_sentences([{"text": fused, "source": 0}], SOURCES)
+    assert kept and kept[0]["text"] == "سـخن در این اسـت؛"
+
+
+def test_guard_blocks_repairs_a_noisy_quote_end_to_end():
+    # The paragraph path repairs exactly like the sentence path: a quote
+    # part copied with the layer's backspaces renders spaced, while the
+    # proper-Farsi quotes and AI text around it are untouched.
+    blocks = [
+        {"type": "heading", "text": "۱. مفهوم‌شناسی"},
+        {
+            "type": "paragraph",
+            "parts": [
+                {"text": "پیش از هر چیز باید معنای واژه را روشن کرد: "},
+                {"quote": "قرآن\bکتابی\bاسـت\bبرای\bزندگی\bجمعی\bانسان‌ها", "source": 0},
+                {"text": " بر این اساس، ادامه می‌دهیم."},
+            ],
+        },
+    ]
+    kept = serve.guard_blocks(blocks, SOURCES)
+    assert kept[1]["parts"][1]["quote"] == "قرآن کتابی اسـت برای زندگی جمعی انسان‌ها"
+    assert kept[1]["parts"][0]["text"] == "پیش از هر چیز باید معنای واژه را روشن کرد:"
+
+
 def test_guard_drops_paraphrased_sentence():
     paraphrase = "قرآن برنامه‌ای برای زندگی شخصی انسان‌ها ارائه می‌دهد"
     assert serve.guard_sentences([{"text": paraphrase, "source": 0}], SOURCES) == []
+
+
+def test_normalize_rides_the_wider_arabic_script_variants():
+    # Teh marbuta, alef maqsura, and the hamza-bearing alef forms ride
+    # to their Farsi letters on BOTH sides of every comparison — some
+    # Books' layers spell Arabic-style (دربارة), the composer writes
+    # plain Farsi (درباره), and the pair must not read as different
+    # letters.
+    assert serve.normalize_for_match("دربارة") == serve.normalize_for_match("درباره")
+    assert serve.normalize_for_match("عيسى") == serve.normalize_for_match("عیسی")
+    assert serve.normalize_for_match("أثر") == serve.normalize_for_match("اثر")
+    assert serve.normalize_for_match("إسلام") == serve.normalize_for_match("اسلام")
+
+
+def test_fuzzy_window_bars():
+    # The fuzzy tier's bars, on letter streams the exact match already
+    # rejected: a couple of damaged letters stay (contiguous, high
+    # coverage), real rewrites scatter or thin out and drop.
+    needle = "abcdefghij" * 4  # 40 letters — over the tier's floor
+    near = needle[:19] + "XY" + needle[21:]
+    assert serve._fuzzy_window(needle, near) == (0, 40)
+    far = needle[:32] + "XXXXXXXX"  # a fifth of the letters gone
+    assert serve._fuzzy_window(needle, far) is None
+    half = needle[:20]  # half the quote is not in the passage
+    assert serve._fuzzy_window(needle, half) is None
+    # Short quotes never ride the fuzzy tier — only the exact match does.
+    assert serve._fuzzy_window(needle[:20], needle[:20]) is None
+    # Matches scattered across the passage (AI text stitched from two
+    # places) fail the window-precision bar even at full coverage.
+    scattered = needle[:20] + "." * 200 + needle[20:]
+    assert serve._fuzzy_window(needle, scattered) is None
+
+
+def test_fuzzy_tier_keeps_a_repaired_sentence_and_shows_the_passage():
+    # Book 70143-336's layer damage (verbatim from its pages.json): the
+    # digits print reversed and the spellings ride teh marbuta. A quote
+    # repairing exactly that damage — ۲۵۰ for ۰۵۲ — is not in the
+    # passage letter-for-letter, but its matches sit contiguous inside
+    # the stream, so the tier keeps it; what renders is the passage's
+    # own slice, the Book's letters, never the model's repair.
+    damaged = {
+        "reference": "chunk 1 of document 70143-336 (pages 2-10)",
+        "passage": "اطاع از این شرایط، به درک بهتر \nحرکت انسان ۰۵۲ ساله در این برهة "
+        "زمانی حساس کمک فراوانی می کند.",
+    }
+    repaired = (
+        "اطاع از این شرایط، به درک بهتر حرکت انسان ۲۵۰ ساله در این برهه "
+        "زمانی حساس کمک فراوانی می‌کند."
+    )
+    kept = serve.guard_sentences([{"text": repaired, "source": 0}], [damaged])
+    assert kept and "۰۵۲" in kept[0]["text"]
+    assert "۲۵۰" not in kept[0]["text"]
+    assert kept[0]["reference"] == damaged["reference"]
+
+
+def test_fuzzy_tier_drops_a_true_paraphrase():
+    # A rewording scatters its matches and thins its coverage — no
+    # contiguous near-verbatim span, no tier.
+    damaged = {
+        "reference": "chunk 1 of document 70143-336 (pages 2-10)",
+        "passage": "اطاع از این شرایط، به درک بهتر \nحرکت انسان ۰۵۲ ساله در این برهة "
+        "زمانی حساس کمک فراوانی می کند.",
+    }
+    paraphrase = (
+        "آشنایی با این شرایط، شناخت حرکت انسان ۲۵۰ ساله را در آن دوران "
+        "حساس ساده‌تر می‌کند."
+    )
+    assert serve.guard_sentences([{"text": paraphrase, "source": 0}], [damaged]) == []
+
+
+def test_fuzzy_tier_drops_a_short_reworded_quote():
+    # Short needles can full-cover by accident (a few words picked from
+    # anywhere in a passage); the tier's letter floor keeps them out —
+    # only the exact match, which proves word-for-word presence, may
+    # keep a short quote.
+    short = "کمک فراوانی حساس می‌کند"
+    assert serve.guard_sentences([{"text": short, "source": 0}], SOURCES) == []
+
+
+def test_fuzzy_tier_still_respects_the_claimed_source():
+    # The repaired sentence kept above, claiming the wrong passage: the
+    # tooltip would cite a passage it never came from — dropped, tier
+    # or no tier.
+    repaired = (
+        "اطاع از این شرایط، به درک بهتر حرکت انسان ۲۵۰ ساله در این برهه "
+        "زمانی حساس کمک فراوانی می‌کند."
+    )
+    assert serve.guard_sentences([{"text": repaired, "source": 1}], SOURCES) == []
 
 
 def test_guard_drops_sentence_claiming_the_wrong_source():
@@ -673,37 +811,39 @@ def test_session_ui_sentences_are_focusable_with_farsi_tooltip():
 def test_session_ui_quotes_carry_a_resting_highlight():
     # PM call, 2026-09-10: an embedded quote must read as Book text at a
     # glance — a clay tint plus solid underline at rest, deepening on
-    # hover/focus — not only the hover tooltip.
+    # hover/focus — not only the hover tooltip. The tint reads the
+    # --clay-soft token (ADR-0014) so it survives both themes.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
-    assert "background: rgba(196, 92, 38, 0.12)" in html
+    assert "background: var(--clay-soft)" in html
     assert "border-bottom: 1px solid var(--clay)" in html
 
 
 def test_session_ui_keeps_citations_in_the_first_phase_section():
-    # One section per phase now (PM brief, 2026-09-11): the Evidence list
-    # stays in phase 1's own tab — the swap no longer needs to hide it,
-    # because the sections themselves separate the phases. A new question
-    # resets the section as before.
+    # One place per phase in the ask's article (ADR-0014's thread shape,
+    # superseding the tabbed brief): the Evidence list stays in phase 1's
+    # own section — the swap no longer needs to hide it, because the
+    # article's sections separate the phases. A new question resets the
+    # section as before.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
-    assert 'id="citations-heading"' in html
-    assert 'id="citations"' in html
-    assert 'id="panel-1"' in html
-    assert 'id="panel-2"' in html
-    # The Evidence markup lives inside phase 1's panel, before phase 2's.
-    assert html.index('id="citations"') < html.index('id="panel-2"')
+    assert 'className = "citations-heading"' in html
+    assert 'className = "citations"' in html
+    assert 'className = "evidence-pool"' in html
+    assert 'className = "quoted-doc"' in html
+    # The Evidence markup builds before the Quoted answer's section.
+    assert html.index('className = "citations"') < html.index(
+        'className = "quoted-doc"'
+    )
     assert "citationsEl.hidden" not in html
 
 
-def test_session_ui_renders_only_verbatim_book_sentences_in_phase_1():
-    # ADR-0014: the ask is retrieval-only — there is no streamed prose
-    # and no markdown renderer on the sheet any more. Phase 1 shows the
-    # Quote selection (guarded verbatim sentences) or the honest
-    # selection-missed note; a model-written essay can never render as
-    # the first answer.
+def test_session_ui_renders_the_streamed_answer_as_markdown():
+    # Phase 1 (the streamed answer) arrives as markdown — headings, bold,
+    # bullets — and the sheet renders that structure during the live
+    # preview and at final, never the literal #/** characters (PM call,
+    # 2026-09-10).
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
-    assert "function renderMarkdown" not in html
-    assert "function markBold" not in html
-    assert "انتخاب نقل‌قول‌ها آماده نشد" in html
+    assert "function renderMarkdown" in html
+    assert "function markBold" in html
 
 
 def test_session_ui_shows_the_composer_phase_and_times_the_whole_pipeline():
@@ -719,15 +859,13 @@ def test_session_ui_shows_the_composer_phase_and_times_the_whole_pipeline():
     assert "composer-pulse" in html
     assert "const stopTimer" in html
     assert "clearInterval(tick)" in html
-    # Phase 2 settles and the pipeline clock stops — no phase-3 auto-start
-    # (ADR-0014: the call carries the ask's chat_id, not a draft answer).
-    assert "renderQuotedAnswer(query, chatId, lines, stopTimer)" in html
-    # Per-phase machinery: the running-phase line, and the timer chips on
-    # the phase 2 and 3 tabs.
-    assert 'id="phase-now"' in html
+    # Phase 2 settles and the pipeline clock stops — no phase-3 auto-start.
+    assert "renderQuotedAnswer(query, answer, citations, stopTimer)" in html
+    # Per-phase machinery: the running-phase line, and the timer on the
+    # phase marks (the tabs' replacement, ADR-0014).
+    assert 'className = "phase-now"' in html
     assert "در حال تولید:" in html
-    assert 'id="timer-2"' in html
-    assert 'id="timer-3"' in html
+    assert 'className = "phase-timer"' in html
     assert "startPhaseTimer(2)" in html
     assert "startPhaseTimer(3)" in html
     assert "stopPhaseTimer(2)" in html
@@ -771,27 +909,27 @@ def test_session_ui_keeps_the_llm_key_off_the_sheet():
 
 
 def test_the_sheet_carries_the_round_two_contract():
-    # ADR-0010: the widen chip, the Book-selection toggles, and the
-    # citation-landing machinery all live on the sheet.
+    # ADR-0010: the widen chip, the citation-landing machinery, and the
+    # Book scoping all live on the sheet. The round-two toggles are
+    # retired by the chat shell (ADR-0014) — the Book scoping rides the
+    # Session's pick into the ask's payloads instead.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
     assert "/recall-more" in html
     assert "جست‌وجوی بیشتر" in html
-    assert "book-toggle" in html
+    assert "book-card" in html
     assert "selectedDatasets" in html
     assert "locatorPassages" in html
 
 
 def test_the_sheet_carries_the_round_three_contract():
-    # ADR-0011: the single-pick Book gate (radio, persisted, ask
-    # disabled until picked) and the transcript re-fetch. The phase-1
-    # evidence fallback endpoint is retired from the sheet (ADR-0014:
-    # the ask itself is the retrieval — an empty pool lands the honest
-    # note directly), but its Farsi failure text still names the truth.
+    # ADR-0011: the single-pick Book gate (persisted, the ask bound to
+    # one Book — now picked from the empty state's cards at Session
+    # creation, ADR-0014), the phase-1 evidence fallback, and the
+    # transcript re-fetch.
     html = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
-    assert 'role="radiogroup"' in html
     assert 'localStorage.setItem("selectedBook"' in html
-    assert "اول یک کتاب انتخاب کنید" in html
-    assert "/evidence-fallback" not in html
+    assert "برای نشست تازه، یک کتاب برگزینید" in html
+    assert "/evidence-fallback" in html
     assert "استنادی از کتاب‌ها پیدا نشد" in html
     assert "/research/messages" in html
 
@@ -850,9 +988,10 @@ def test_readme_records_the_quoted_answer_contract():
     # retires the phrase (full-spec review, 2026-09-12).
     assert "streamed answer plus its Evidence list" not in text
     assert "the Quote selection — ten verbatim sentences" in text
-    # The tabbed sheet never swaps: the guarded document lands in phase
-    # 2's own tab or not at all — phase 1's answer stays.
+    # The threaded sheet never swaps (ADR-0014): the guarded document
+    # lands in phase 2's own section or not at all — phase 1's answer
+    # stays.
     assert "the sheet can swap it" not in text
     assert "the streamed answer stays put" not in text
     assert "the streamed answer and the Evidence citations stay" not in text
-    assert "lands in phase 2's tab" in text
+    assert "lands in phase 2's section" in text

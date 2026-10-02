@@ -29,7 +29,22 @@ from ui import (  # noqa: E402
     research,
     research_store,
     serve,
+    session_store,
 )
+
+
+def delete(base, path, phone=None):
+    """One DELETE; (status, payload) — the Session store's verb (T27
+    stage 3). The cookie translation is post()'s exactly."""
+    headers = {}
+    if phone is not None:
+        headers["Cookie"] = _login_cookie(base, phone)
+    request = urllib.request.Request(base + path, headers=headers, method="DELETE")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.load(exc)
 
 
 def post(base, path, payload, phone=None):
@@ -87,17 +102,19 @@ def account_email_for_phone(phone: str) -> str:
 TEST_BALANCE_TOMAN = 1_000_000
 
 
-def ensure_account(phone: str) -> None:
+def ensure_account(phone: str) -> str:
     """The seeded operator's Account carries a generous Balance — the
     house tests exercise the pipeline, not the prepaid stop; the tests
     that pin the stop drain their own Account explicitly and stay
     drained: the top-up rides CREATION only, so a re-ensure never
-    refills a drained Account."""
+    refills a drained Account. Returns the Account's EMAIL — the key
+    every store takes since T21."""
     email = account_email_for_phone(phone)
     existed = accounts.account_by_email(email) is not None
     accounts.create_account(email, TEST_PASSWORD, phone=phone, role="operator")
     if not existed:
-        accounts.adjust_balance(phone, TEST_BALANCE_TOMAN)
+        accounts.adjust_balance(email, TEST_BALANCE_TOMAN)
+    return email
 
 
 # Login cookies per (base, phone) — the token lives twelve hours, far
@@ -369,6 +386,7 @@ def with_gate(tmp_path, upstream):
     quotas.QUOTA_DB = tmp_path / "usage.sqlite3"
     research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
     chat_store.CHAT_DB = tmp_path / "chats.sqlite3"
+    session_store.SESSIONS_DB = tmp_path / "sessions.sqlite3"
     patch_accounts(tmp_path)
     research.RESEARCH_REGISTRY.clear()
     originals = [
