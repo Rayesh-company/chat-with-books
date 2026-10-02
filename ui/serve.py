@@ -604,13 +604,16 @@ def validated_datasets(raw):
     return [dataset for dataset in BOOK_DATASETS if dataset in picked]
 
 
-# The follow-up thread's budget (ADR-0015): the sitting's recent turns
-# ride as framing only — a short question (at most this many words) is
-# what gets rewritten, and each earlier answer contributes a capped
-# connective text, so the prompts stay small.
-REWRITE_MAX_WORDS = 8
+# The follow-up thread's budget (ADR-0015, widened by ADR-0019): the
+# sitting's recent turns ride as framing only — a follow-up-shaped
+# question (at most this many words) is what gets rewritten, and each
+# earlier answer contributes a capped connective text, so the prompts
+# stay small. 25 words: real clarifications and refinements run 5–20
+# words; a longer message almost always names its own subject and
+# rides raw.
+REWRITE_MAX_WORDS = 25
 _TAIL_TURNS = 3
-_TAIL_ANSWER_CHARS = 400
+_TAIL_ANSWER_CHARS = 800
 
 
 def _article_connective_text(payload) -> str:
@@ -1775,7 +1778,12 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 400, {"detail": "پرسش و استنادهای بازیابی‌شده را بفرستید."}
             )
             return
-        selections = pick_quote_selection(question, sources)
+        # The sitting's earlier turns ride the picker as framing too
+        # (the follow-up thread, ADR-0019) — the first answer the user
+        # sees should continue the thread, not re-answer the last ask.
+        # Same fail-soft tail as the writer's: no sitting, no context.
+        tail = _conversation_tail(account, session_id)
+        selections = pick_quote_selection(question, sources, tail)
         if (
             selections
             and isinstance(session_id, int)
@@ -2684,14 +2692,16 @@ class SessionHandler(SimpleHTTPRequestHandler):
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     def _contextual_query(self, account: str, session_id, query: str) -> str:
-        """A follow-up's self-contained search query (ADR-0015): when
-        the sitting has earlier turns and the question is short, ONE
-        fast glm-5.3-flash call rewrites it over the sitting's recent
-        turns — «بیشتر توضیح بده» alone retrieves noise, the rewritten
-        form retrieves the subject under discussion. Every failure is
-        the raw question: the store silent, the endpoint down, the
-        short timeout — the rewrite is a retrieval hint, never a gate,
-        and the sheet's displayed question is always the user's own
+        """A follow-up's self-contained search query (ADR-0015, ADR-0019):
+        when the sitting has earlier turns and the question is
+        follow-up-shaped (at most REWRITE_MAX_WORDS words), ONE fast
+        glm-5.3-flash call rewrites it over the sitting's recent turns —
+        «بیشتر توضیح بده» alone retrieves noise, the rewritten form
+        retrieves the subject under discussion; a self-contained message
+        rides back unchanged (the rewriter's own instruction). Every
+        failure is the raw question: the store silent, the endpoint down,
+        the short timeout — the rewrite is a retrieval hint, never a
+        gate, and the sheet's displayed question is always the user's own
         words."""
         history = _conversation_tail(account, session_id)
         if not history or len(query.split()) > REWRITE_MAX_WORDS:

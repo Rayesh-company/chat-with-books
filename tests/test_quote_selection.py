@@ -85,6 +85,20 @@ def test_picker_prompt_carries_question_passages_and_reply_shape():
     assert '"selections"' in prompt
 
 
+def test_picker_prompt_carries_the_sittings_tail():
+    # ADR-0019: the first answer the user sees continues the thread —
+    # the picker reads the sitting's tail as the same framing section
+    # the writer uses; the selections are still verbatim from the
+    # passages below, and without a sitting no framing rides.
+    tail = "Q: چهار دروازهٔ انسان ۲۵۰ ساله کدام‌اند؟\nA: انسان در حرکت است…"
+    prompt = serve.build_picker_prompt("پرسش؟", POOL, tail)
+    assert tail in prompt
+    assert "framing only" in prompt
+    assert "VERBATIM" in prompt
+    assert "exactly ONE" in prompt
+    assert "framing only" not in serve.build_picker_prompt("پرسش؟", POOL)
+
+
 def test_parse_picker_reply_accepts_plain_and_fenced_json():
     payload = {"selections": [{"text": "سخن در این است؛", "source": 0}]}
     assert serve.parse_picker_reply(json.dumps(payload)) == payload["selections"]

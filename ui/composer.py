@@ -129,20 +129,27 @@ def build_quoted_prompt(
     )
 
 
-def build_planner_prompt(question: str, sources) -> str:
+def build_planner_prompt(
+    question: str, sources, conversation_tail: str = ""
+) -> str:
     """The reasoning pass's brief: plan the document's structure and the
     cross-passage weaving — not write it (PM call, 2026-09-10). Kept
     short the same night after live phase 2 measured ~295s: reasoning
     time scales with what the planner reads and writes, so it plans
     from the question and passages alone — the draft answer is held
     back (the writer still gets it when the planner fails) — and the
-    plan itself is capped.
+    plan itself is capped. The sitting's earlier turns ride as framing
+    since ADR-0019 (the follow-up thread plans too: a follow-up's plan
+    that ignores what was already answered re-plans the last answer);
+    the tail is framing only, never quotable.
     """
     passages = _numbered_passages(sources)
+    tail = conversation_context(conversation_tail)
     return (
         "You are planning a Farsi Quoted answer for a Q&A sheet over one "
         "Book.\n\n"
         f"Question: {question}\n\n"
+        f"{tail}"
         "Passages (numbered, from the Book's retrieved Evidence; text-layer "
         "noise like \\b backspaces may appear between words):\n"
         f"{passages}\n\n"
@@ -304,17 +311,24 @@ def _composer_content(reply):
     return reply["choices"][0]["message"]["content"]
 
 
-def plan_quoted_document(question: str, sources) -> str:
+def plan_quoted_document(
+    question: str, sources, conversation_tail: str = ""
+) -> str:
     """Reason out the document plan; "" on any planner failure.
 
     The plan is loose plain text — it is never machine-guarded, only
     fed to the writer as context. "" means the writer falls back to
     the no-plan prompt, so a planner failure never empties the sheet
-    (AC-4, issue #23).
+    (AC-4, issue #23). The sitting's earlier turns ride the planner as
+    framing too (conversation_tail, ADR-0019) — a follow-up's plan
+    knows what the sitting already covered.
     """
     try:
         content = _composer_content(
-            _composer_reply(build_planner_prompt(question, sources), "enabled")
+            _composer_reply(
+                build_planner_prompt(question, sources, conversation_tail),
+                "enabled",
+            )
         )
     except (KeyError, ValueError, OSError):
         return ""
@@ -356,8 +370,8 @@ def compose_quoted_answer(
     is best-effort — on any planner failure the writer runs without a
     plan (the single-call shape), so the sheet is never left empty.
     Each call gets its own COMPOSER_TIMEOUT. The sitting's earlier
-    turns ride the writer only (conversation_tail, ADR-0015) — the
-    planner plans from the question and passages alone.
+    turns ride both phases as framing (conversation_tail, ADR-0015's
+    writer framing, ADR-0019's planner framing).
 
     Returns (blocks, truncated). A reply stopped by the output ceiling
     (finish_reason "length") dies mid-JSON — the live 2026-09-10 run
@@ -372,7 +386,7 @@ def compose_quoted_answer(
     writer retry — same plan, no planner re-run — and the better
     attempt rides; both attempts failing keeps the honest fallback.
     """
-    plan = plan_quoted_document(question, sources)
+    plan = plan_quoted_document(question, sources, conversation_tail)
     blocks, truncated = _write_quoted_once(
         question, answer, sources, plan, conversation_tail
     )
@@ -410,14 +424,17 @@ def _write_quoted_once(
 
 
 def rewrite_followup_query(query: str, history: str) -> str:
-    """A short follow-up made self-contained for the searcher (the
-    follow-up thread, ADR-0015): ONE fast glm-5.3-flash call over the
-    sitting's recent turns. The retrieval's quality is only as good as
-    the query it sees — «بیشتر توضیح بده» alone retrieves noise, the
-    rewritten form retrieves the discussed subject. Raises on any
-    failure; the caller (serve.py's _contextual_query) falls back to
-    the raw question — the rewrite is a better retrieval hint, never a
-    gate."""
+    """A follow-up made self-contained for the searcher (the follow-up
+    thread, ADR-0015): ONE fast glm-5.3-flash call over the sitting's
+    recent turns. The retrieval's quality is only as good as the query
+    it sees — «بیشتر توضیح بده» alone retrieves noise, the rewritten
+    form retrieves the discussed subject. A self-contained message —
+    one that names its own subject, a topic switch, a brand-new
+    question — comes back unchanged (ADR-0019): the sitting's context
+    must never drag an independent question back to the old subject.
+    Raises on any failure; the caller (serve.py's _contextual_query)
+    falls back to the raw question — the rewrite is a better retrieval
+    hint, never a gate."""
     prompt = (
         "You are making a follow-up question self-contained for a Book "
         "search engine.\n\n"
@@ -427,9 +444,11 @@ def rewrite_followup_query(query: str, history: str) -> str:
         "Task: rewrite the new message as ONE standalone Farsi search "
         "query that carries the context it needs from the earlier turns "
         "— name the subject it refers to, keep it a question or a short "
-        "keyword phrase, add nothing the turns do not support. Reply "
-        "with ONLY the rewritten query: no quotes, no explanation, no "
-        "extra words."
+        "keyword phrase, add nothing the turns do not support. If the "
+        "new message is already self-contained — it names its own "
+        "subject and needs nothing from the earlier turns — return it "
+        "UNCHANGED. Reply with ONLY the rewritten query: no quotes, no "
+        "explanation, no extra words."
     )
     reply = _composer_reply(
         prompt,

@@ -9,7 +9,11 @@ from __future__ import annotations
 from urllib.request import urlopen
 
 try:
-    from ui.composer import _composer_content, _composer_reply
+    from ui.composer import (
+        _composer_content,
+        _composer_reply,
+        conversation_context,
+    )
     from ui.guard import (
         _citation_labels,
         _count_word,
@@ -18,7 +22,7 @@ try:
         guard_sentences,
     )
 except ImportError:  # the container runs serve.py as a script beside the modules
-    from composer import _composer_content, _composer_reply
+    from composer import _composer_content, _composer_reply, conversation_context
     from guard import (
         _citation_labels,
         _count_word,
@@ -39,18 +43,27 @@ QUOTE_SELECTION_CEILING = 12
 QUOTE_SELECTION_FLOOR = 4
 
 
-def build_picker_prompt(question: str, sources) -> str:
+def build_picker_prompt(
+    question: str, sources, conversation_tail: str = ""
+) -> str:
     """The picker's brief: select, don't write.
 
     The aim wording is derived from QUOTE_SELECTION_AIM — the two cannot
     drift — and the reply shape is the selection list guard_sentences
-    already consumes.
+    already consumes. The sitting's earlier turns ride as framing since
+    ADR-0019 (the follow-up thread, same conversation_context section
+    the writer uses): the first answer the user sees should know what
+    the sitting already covered — a follow-up's selection that ignores
+    the thread re-answers the last ask. Framing only: the selections
+    themselves are still verbatim passages from below.
     """
     passages = _numbered_passages(sources)
+    tail = conversation_context(conversation_tail)
     return (
         "You are selecting the Quote selection for a Farsi Q&A sheet "
         "over the Books.\n\n"
         f"Question: {question}\n\n"
+        f"{tail}"
         "Passages (numbered, from the Books' retrieved Evidence; "
         "text-layer noise like \\b backspaces may appear between "
         "words):\n"
@@ -85,11 +98,16 @@ def parse_picker_reply(content):
     return selections if isinstance(selections, list) else []
 
 
-def pick_quote_selection(question: str, sources):
+def pick_quote_selection(
+    question: str, sources, conversation_tail: str = ""
+):
     """One picker call over the pool; the guarded selections, or [].
 
     Exactly ONE composer call (glm-5.3-flash, thinking disabled,
-    COMPOSER_MAX_TOKENS, endpoint-default temperature). The reply runs
+    COMPOSER_MAX_TOKENS, endpoint-default temperature). The sitting's
+    earlier turns ride as framing (conversation_tail, ADR-0019) — same
+    fail-soft semantics as the writer's tail: no sitting, an empty
+    string. The reply runs
     the existing verbatim letter-stream guard — a paraphrase, or a
     verbatim sentence claiming the wrong index, drops; the survivors cap
     at QUOTE_SELECTION_CEILING, and fewer than QUOTE_SELECTION_FLOOR of
@@ -100,7 +118,7 @@ def pick_quote_selection(question: str, sources):
     """
     try:
         reply = _composer_reply(
-            build_picker_prompt(question, sources),
+            build_picker_prompt(question, sources, conversation_tail),
             "disabled",
             urlopen_fn=urlopen,
         )

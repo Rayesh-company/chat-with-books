@@ -751,6 +751,54 @@ def test_quoted_prompt_slots_the_plan_in_place_of_the_draft_answer():
     assert '"blocks"' in planned
 
 
+# The follow-up thread rides every generation surface (ADR-0019): the
+# sitting's earlier turns are one framing section — framing only,
+# never quotable — read by the picker, the planner, and the writer.
+THREAD_TAIL = "Q: چهار دروازهٔ انسان ۲۵۰ ساله کدام‌اند؟\nA: انسان در حرکت است…"
+
+
+def test_quoted_prompt_carries_the_sittings_tail():
+    prompt = serve.build_quoted_prompt(
+        "پرسش؟", "پیش‌نویس پاسخ", SOURCES, conversation_tail=THREAD_TAIL
+    )
+    assert THREAD_TAIL in prompt
+    assert "framing only" in prompt
+    assert "CURRENT question" in prompt
+    # The verbatim rules stay byte-identical beside the tail.
+    assert "copied VERBATIM" in prompt
+    # Without a sitting the section is absent — no empty framing.
+    assert (
+        "framing only"
+        not in serve.build_quoted_prompt("پرسش؟", "پیش‌نویس پاسخ", SOURCES)
+    )
+
+
+def test_planner_prompt_carries_the_sittings_tail():
+    # ADR-0019 amends ADR-0015's writer-only tail: a follow-up's plan
+    # knows what the sitting already covered. The draft answer stays
+    # held back and the plan cap is unchanged.
+    prompt = serve.build_planner_prompt("پرسش؟", SOURCES, THREAD_TAIL)
+    assert THREAD_TAIL in prompt
+    assert "framing only" in prompt
+    assert "پیش‌نویس پاسخ" not in prompt
+    assert "under 150 words" in prompt
+    assert "framing only" not in serve.build_planner_prompt("پرسش؟", SOURCES)
+
+
+def test_compose_forwards_the_tail_to_the_planner_and_the_writer():
+    (kept, truncated), captured = run_call_with_replies(
+        lambda: serve.compose_quoted_answer(
+            "پرسش؟", "پیش‌نویس پاسخ", SOURCES, conversation_tail=THREAD_TAIL
+        ),
+        [planner_reply(PLAN_MARKER), writer_reply()],
+    )
+    assert kept == WRITER_KEPT and truncated is False
+    planner_prompt = captured["payloads"][0]["messages"][0]["content"]
+    writer_prompt = captured["payloads"][1]["messages"][0]["content"]
+    assert THREAD_TAIL in planner_prompt
+    assert THREAD_TAIL in writer_prompt
+
+
 def test_serve_pins_the_composer_endpoint_and_model():
     text = SERVE.read_text(encoding="utf-8")
     assert "/quoted-answer" in text

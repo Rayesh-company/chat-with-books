@@ -500,11 +500,14 @@ def _sitting_with_a_turn(base):
 
 
 def test_a_short_followup_is_rewritten_over_the_sitting(tmp_path):
-    """The follow-up thread (ADR-0015): with an existing sitting, a
-    short question is rewritten into a self-contained query over the
-    sitting's stored turns BEFORE the relay — the sitting's id never
-    rides upstream. A long question rides raw with no rewrite call at
-    all, and the rewrite's spend is metered like every composer call."""
+    """The follow-up thread (ADR-0015, gate widened by ADR-0019): with
+    an existing sitting, a follow-up-shaped question is rewritten into
+    a self-contained query over the sitting's stored turns BEFORE the
+    relay — the sitting's id never rides upstream. A mid-length
+    clarification — over the old eight-word gate, under the new
+    twenty-five — rewrites too; a self-contained question beyond the
+    gate rides raw with no rewrite call at all, and the rewrite's
+    spend is metered like every composer call."""
     upstream = RewriteUpstream()
     base, server, originals = with_gate(tmp_path, upstream)
     try:
@@ -527,8 +530,31 @@ def test_a_short_followup_is_rewritten_over_the_sitting(tmp_path):
         relayed = upstream.relay_bodies[0]
         assert relayed["query"] == REWRITE_CONTENT
         assert "session_id" not in relayed
-        # A long question is its own query — the rewriter sleeps.
-        long_query = "این یک پرسش بلند و خودبسنده با بیش از هشت واژه است که نیازی به بازنویسی ندارد"
+        # A mid-length clarification rides the widened gate too — the
+        # band past the old eight words is where real refinements live.
+        mid_query = (
+            "نه منظورم فصل دوم همان کتاب بود لطفا با ذکر مثال توضیح بده"
+        )
+        assert 8 < len(mid_query.split()) <= serve.REWRITE_MAX_WORDS
+        status, _ = post(
+            base,
+            "/api/v1/recall",
+            {"query": mid_query, "session_id": session_id},
+            phone=PHONE,
+        )
+        assert status == 200
+        assert len(upstream.composer_bodies) == 2
+        assert len(upstream.relay_bodies) == 2
+        assert upstream.relay_bodies[1]["query"] == REWRITE_CONTENT
+        assert "session_id" not in upstream.relay_bodies[1]
+        # A self-contained question beyond the gate is its own query —
+        # the rewriter sleeps.
+        long_query = (
+            "این یک پرسش بلند و خودبسنده با موضوعی روشن است که هیچ "
+            "ارجاعی به پرسش پیشین خود ندارد و نیازی به بازنویسی ندارد "
+            "پس عینا به موتور جست‌وجو فرستاده می شود"
+        )
+        assert len(long_query.split()) > serve.REWRITE_MAX_WORDS
         status, _ = post(
             base,
             "/api/v1/recall",
@@ -536,8 +562,64 @@ def test_a_short_followup_is_rewritten_over_the_sitting(tmp_path):
             phone=PHONE,
         )
         assert status == 200
-        assert len(upstream.composer_bodies) == 1
-        assert upstream.relay_bodies[1]["query"] == long_query
+        assert len(upstream.composer_bodies) == 2
+        assert upstream.relay_bodies[2]["query"] == long_query
+    finally:
+        stop_gate(server, originals)
+
+
+def test_the_sittings_tail_rides_the_picker_planner_and_writer(tmp_path):
+    """ADR-0019: the follow-up thread rides every generation surface —
+    the picker (the first answer the user sees), the planner, and the
+    writer all read the sitting's tail as framing. The stored turn's
+    words are the marker: the follow-up's question is different, so
+    their presence in each composer prompt is the tail's ride."""
+    composer = FakeComposer(
+        [
+            picker_reply(verbatim_selections(4)),
+            planner_reply(PLAN_MARKER),
+            writer_reply(),
+        ]
+    )
+    base, server, originals = with_gate(tmp_path, composer)
+    try:
+        serve.record_chat(account_email_for_phone(PHONE))
+        session_id = _sitting_with_a_turn(base)
+        followup = "بیشتر دربارهٔ دروازۀ دوم توضیح بده"
+        ask_key = "ask-1727100000001"
+        status, _ = post(
+            base,
+            "/quote-selection",
+            {
+                "question": followup,
+                "sources": POOL,
+                "session_id": session_id,
+                "ask_key": ask_key,
+            },
+            phone=PHONE,
+        )
+        assert status == 200
+        status, _ = post(
+            base,
+            "/quoted-answer",
+            {
+                "question": followup,
+                "sources": POOL,
+                "session_id": session_id,
+                "ask_key": ask_key,
+            },
+            phone=PHONE,
+        )
+        assert status == 200
+        assert len(composer.payloads) == 3
+        prompts = [p["messages"][0]["content"] for p in composer.payloads]
+        for prompt in prompts:  # picker, planner, writer
+            assert "framing only" in prompt
+            assert ASK["text"] in prompt
+        # The stored answer's connective text rides too — the writer's
+        # "unhappy with the answer" signal.
+        marker = "پیش از هر چیز باید معنای واژه را روشن کرد"
+        assert all(marker in prompt for prompt in prompts)
     finally:
         stop_gate(server, originals)
 
