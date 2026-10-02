@@ -177,10 +177,11 @@ def test_ask_gates_and_records_exactly_one_chat(tmp_path):
     assert status == 200
     assert payload["pool_size"] == len(payload["sources"]) == 2
     assert isinstance(payload["chat_id"], str) and payload["chat_id"]
-    # The ask is the ask: ONE chat recorded for the asking phone, one
-    # for the second asker, and no upstream call for the rejected one.
-    assert serve.chats_today(PHONE) == 1
-    assert serve.chats_today(OTHER_PHONE) == 1
+    # The ask is the ask: ONE chat recorded for the asking Account, one
+    # for the second asker, and no upstream call for the rejected one
+    # (the stores key by the Account's email, T21).
+    assert serve.chats_today(account_email_for_phone(PHONE)) == 1
+    assert serve.chats_today(account_email_for_phone(OTHER_PHONE)) == 1
     assert len(upstream.search_bodies) == 4  # two per ask
 
 
@@ -188,7 +189,7 @@ def test_ask_rejects_a_body_without_a_query(tmp_path):
     upstream = AskUpstream()
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(account_email_for_phone(PHONE))
         bad, _ = post(base, "/ask", {}, phone=PHONE)
     finally:
         stop_gate(server, original)
@@ -200,7 +201,7 @@ def test_ask_validates_the_dataset_selection(tmp_path):
     upstream = AskUpstream(documents=[sample_document()])
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(account_email_for_phone(PHONE))
         status, payload = post(
             base,
             "/ask",
@@ -221,7 +222,7 @@ def test_ask_answers_the_honest_empty_when_retrieval_finds_nothing(tmp_path):
     upstream = AskUpstream(documents=["", ""])  # both Books come back empty
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(account_email_for_phone(PHONE))
         status, payload = post(base, "/ask", {"query": "پرسش؟"}, phone=PHONE)
     finally:
         stop_gate(server, original)
@@ -283,7 +284,7 @@ def test_the_phases_persist_their_replies_under_the_ask_row(tmp_path):
     upstream = _ComposerAndSearchUpstream(picker_content)
     base, server, original = with_gate(tmp_path, upstream)
     try:
-        serve.record_chat(PHONE)
+        serve.record_chat(account_email_for_phone(PHONE))
         ask_status, ask_payload = post(
             base, "/ask", {"query": "پرسش؟", "datasets": ["tarhe-kolli"]},
             phone=PHONE,
@@ -313,7 +314,7 @@ def test_the_phases_persist_their_replies_under_the_ask_row(tmp_path):
     assert ask_status == 200
     assert pick_status == 200
     assert quoted_status == 200
-    row = chat_store.latest_chat(PHONE)
+    row = chat_store.latest_chat(account_email_for_phone(PHONE))
     # An empty selection and an empty document are the honest shapes —
     # the row records them as they landed, never invents content.
     assert row["selections"] == []
