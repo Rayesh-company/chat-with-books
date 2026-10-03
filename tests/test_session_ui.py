@@ -72,6 +72,13 @@ def test_notebook_panel_pins_the_pm_batch_strings():
     assert 'NB_EDIT = "ویرایش"' in html
     assert 'NB_SAVE = "ذخیره"' in html
     assert 'NB_COPIED = "منتخب‌ها کپی شد."' in html
+    # The 2026-10-03 polish batch: the editor's cancel verb, the row
+    # checkbox's own label (it wrongly rode the bulk verb's «کپی
+    # منتخب‌ها»), and the empty state's hint (CONTEXT.md DRAFT row,
+    # 2026-10-03).
+    assert 'NB_CANCEL = "انصراف"' in html
+    assert 'NB_NOTE_CHECK_LABEL = "انتخاب یادداشت"' in html
+    assert "متنی را در گفتگو یا کتاب انتخاب کنید" in html
     assert "NOTE_CATEGORIES = [NOTE_UNCATEGORIZED]" in html
     # The topbar door's markup is string-free — the constant labels it.
     assert 'id="notebook-open"' in html
@@ -102,6 +109,14 @@ def test_notebook_panel_is_a_real_surface():
         "nbDelManyEl.textContent = NB_DELETE_MANY_CONFIRM",
         "del.textContent = NOTE_DELETE_CONFIRM_LABEL",
         "SESSION_DELETE_LABEL;",
+        # The polish pass (2026-10-03): the editor carries a cancel verb,
+        # the selection mode rides a panel class the bulk pill pays room
+        # for, and the category select stays hidden while the PM list has
+        # one row.
+        '"nb-cancel"',
+        '"nb-actions"',
+        "notebookEl.classList.toggle",
+        "NOTE_CATEGORIES.length > 1",
         "openCitation(",
         "openStoreSession(sid);",
         'note.source.dead = true;',

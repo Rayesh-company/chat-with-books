@@ -1921,7 +1921,11 @@
 
       /* The Notebook panel (ticket 02's shape): a slide-over beside the
          thread in the reader's visual language — token-driven, so both
-         themes dress it; full-width under 640px. */
+         themes dress it; full-width under 640px. The 2026-10-03 polish
+         keeps the shape and tightens the surface: one control height in
+         the tools row, a floating bulk pill that never shifts the list,
+         the meta split into a source line and its actions, and an editor
+         that labels itself. */
       #notebook {
         position: fixed;
         z-index: 65;
@@ -1938,23 +1942,42 @@
       #notebook[hidden] {
         display: none;
       }
+      @media (max-width: 639.98px) {
+        #notebook {
+          width: 100%;
+          border-inline-end: 0;
+        }
+      }
       @keyframes nb-in {
         from {
           opacity: 0;
           transform: translateX(28px);
         }
       }
+      @media (prefers-reduced-motion: reduce) {
+        #notebook {
+          animation: none;
+        }
+      }
       .nb-head {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        gap: 10px;
         padding: 14px 18px;
         border-bottom: 1px solid var(--rule);
       }
       .nb-head h2 {
         margin: 0;
-        font-size: 1rem;
+        font-size: 1.05rem;
         color: var(--clay);
+      }
+      .nb-count {
+        font-size: 11.5px;
+        font-weight: 700;
+        color: var(--gold);
+        background: var(--gold-soft);
+        border-radius: 999px;
+        padding: 2px 9px;
       }
       .nb-head button {
         border: 0;
@@ -1962,11 +1985,21 @@
         color: var(--mute);
         font-size: 16px;
         cursor: pointer;
+        width: 34px;
+        height: 34px;
+        margin-inline-start: auto;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+      }
+      .nb-head button:hover {
+        background: var(--clay-soft);
+        color: var(--ink);
       }
       .nb-tools {
         display: flex;
         gap: 8px;
-        padding: 10px 18px;
+        padding: 12px 18px;
         border-bottom: 1px solid var(--rule);
       }
       .nb-tools input[type="search"] {
@@ -1974,66 +2007,152 @@
         min-width: 0;
         font: inherit;
         font-size: 13px;
+        height: 34px;
         border: 1px solid var(--rule);
-        border-radius: 7px;
-        padding: 6px 10px;
+        border-radius: 8px;
+        padding: 0 12px;
         background: var(--raised);
         color: var(--ink);
       }
-      .nb-tools select {
+      .nb-tools input[type="search"]::placeholder {
+        color: var(--mute);
+      }
+      /* The selects shed the native chrome — the chevron is drawn here so
+         it matches the sheet. The two inline hexes are --mute's own
+         values: a data-URI cannot read a custom property, so each theme
+         carries its own copy of the same color. */
+      .nb-tools select,
+      .nb-editor select {
         font: inherit;
-        font-size: 12.5px;
+        font-size: 13px;
+        height: 34px;
         border: 1px solid var(--rule);
-        border-radius: 7px;
-        padding: 6px 6px;
-        background: var(--raised);
+        border-radius: 8px;
+        padding: 0 10px;
+        padding-inline-end: 26px;
+        background: var(--raised)
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236d5e48' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E")
+          no-repeat left 9px center;
+        appearance: none;
         color: var(--ink);
+        cursor: pointer;
       }
+      :root[data-theme="dark"] .nb-tools select,
+      :root[data-theme="dark"] .nb-editor select {
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a9997c' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+      }
+      /* The bulk bar floats as a pill over the list's foot — appearing
+         never shifts the cards above it; the list pays it room only
+         while a selection is live. The gold border is the selection
+         mode's own signal, the unanswered card's language. */
       .nb-bulk {
+        position: absolute;
+        inset-inline: 16px;
+        bottom: 14px;
+        z-index: 2;
         display: flex;
         gap: 8px;
-        padding: 10px 18px;
-        border-bottom: 1px solid var(--rule);
-        background: var(--gold-soft);
+        padding: 10px;
+        border: 1px solid var(--gold);
+        border-radius: 12px;
+        background: var(--raised);
+        box-shadow: 0 10px 26px var(--shadow);
       }
       .nb-bulk[hidden] {
         display: none;
       }
       .nb-bulk button {
+        flex: 1;
         font: inherit;
         font-size: 12.5px;
-        padding: 6px 12px;
-        border-radius: 7px;
+        height: 34px;
+        padding: 0 10px;
+        border-radius: 8px;
         border: 1px solid var(--rule);
-        background: var(--raised);
+        background: var(--surface);
         color: var(--ink);
         cursor: pointer;
+      }
+      .nb-bulk button:hover:not(:disabled) {
+        border-color: var(--clay);
       }
       .nb-bulk .nb-danger {
         color: var(--bad);
       }
+      .nb-bulk .nb-danger:hover:not(:disabled) {
+        border-color: var(--bad);
+      }
       .nb-list {
         overflow: auto;
         flex: 1;
-        padding: 12px 18px 24px;
+        padding: 4px 18px 24px;
+        scrollbar-width: thin;
+        scrollbar-color: var(--rule) transparent;
+      }
+      .nb-list::-webkit-scrollbar {
+        width: 8px;
+      }
+      .nb-list::-webkit-scrollbar-thumb {
+        background: var(--rule);
+        border-radius: 8px;
+      }
+      #notebook.nb-selecting .nb-list {
+        padding-bottom: 86px;
       }
       .nb-group {
-        font-size: 12px;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 11.5px;
+        font-weight: 700;
         color: var(--mute);
-        margin: 10px 0;
+        background: var(--surface);
+        padding: 12px 2px 8px;
+        margin: 0;
+      }
+      .nb-group::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--rule);
+        opacity: 0.7;
       }
       .nb-empty {
         color: var(--mute);
-        font-size: 13.5px;
         text-align: center;
-        margin-top: 40px;
+        margin: 48px 12px 0;
+      }
+      .nb-empty .nb-empty-glyph {
+        display: block;
+        margin: 0 auto 12px;
+        color: var(--gold);
+        opacity: 0.75;
+      }
+      .nb-empty .nb-empty-title {
+        display: block;
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--ink);
+        margin-bottom: 6px;
+      }
+      .nb-empty .nb-empty-hint {
+        display: block;
+        font-size: 12.5px;
+        line-height: 1.9;
       }
       .nb-note {
         background: var(--raised);
         border: 1px solid var(--rule);
-        border-radius: 9px;
-        padding: 12px 14px;
-        margin-bottom: 10px;
+        border-radius: 12px;
+        padding: 14px 16px;
+        margin-bottom: 12px;
+        transition: border-color 0.15s ease;
+      }
+      .nb-note:hover {
+        border-color: var(--mute);
       }
       .nb-note .nb-row {
         display: flex;
@@ -2041,29 +2160,43 @@
         align-items: flex-start;
       }
       .nb-note .nb-row input[type="checkbox"] {
-        margin-top: 6px;
+        width: 16px;
+        height: 16px;
+        flex: none;
+        margin: 5px 0 0;
         accent-color: var(--clay);
+        cursor: pointer;
       }
       .nb-note .nb-body {
         flex: 1;
         min-width: 0;
       }
       .nb-note .nb-quote {
-        font-size: 13.5px;
+        font-size: 14px;
+        line-height: 1.9;
         border-inline-start: 3px solid var(--clay);
-        padding-inline-start: 10px;
+        padding-inline-start: 12px;
       }
       .nb-note .nb-op {
-        font-size: 13px;
+        font-size: 13.5px;
+        line-height: 1.85;
         color: var(--ink);
-        margin-top: 8px;
+        margin-top: 10px;
+      }
+      .nb-note .nb-op-label {
+        font-size: 11.5px;
+        font-weight: 700;
+        color: var(--mute);
+        margin-inline-end: 6px;
       }
       .nb-note .nb-meta {
-        font-size: 11.5px;
+        font-size: 12px;
         color: var(--mute);
-        margin-top: 8px;
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid var(--rule);
         display: flex;
-        gap: 12px;
+        gap: 8px;
         align-items: center;
         flex-wrap: wrap;
       }
@@ -2071,55 +2204,131 @@
         border: 0;
         background: transparent;
         font: inherit;
-        font-size: 11.5px;
-        color: var(--clay);
+        font-size: 12px;
+        color: var(--mute);
         cursor: pointer;
+        padding: 3px 8px;
+        border-radius: 6px;
+        transition: color 0.12s ease, background 0.12s ease;
+      }
+      .nb-note .nb-meta button:hover:not(:disabled) {
+        color: var(--ink);
+        background: var(--clay-soft);
+      }
+      /* The jump is the row's one loud verb; ویرایش and resting حذف stay
+         quiet until hovered, and the armed delete turns into the solid
+         danger chip — the two-step's second press is unmissable. */
+      .nb-note .nb-meta .nb-jump {
+        color: var(--clay);
+        font-weight: 600;
+      }
+      .nb-note .nb-meta .nb-jump:hover:not(:disabled) {
+        color: var(--clay);
+        background: transparent;
         text-decoration: underline;
-        padding: 0;
       }
       .nb-note .nb-meta button:disabled {
         color: var(--mute);
+        opacity: 0.55;
         cursor: default;
-        text-decoration: none;
       }
-      .nb-note .nb-meta .nb-del {
-        color: var(--bad);
+      /* The row's verbs travel as one cluster — a long source line wraps
+         under itself instead of scattering the buttons across lines. */
+      .nb-note .nb-actions {
+        display: flex;
+        align-items: center;
+        gap: 2px;
         margin-inline-start: auto;
+      }
+      .nb-note .nb-meta .nb-del:hover:not(:disabled) {
+        color: var(--bad);
+        background: var(--bad-soft);
+      }
+      .nb-note .nb-meta .nb-del.armed,
+      .nb-note .nb-meta .nb-del.armed:hover:not(:disabled) {
+        color: var(--surface);
+        background: var(--bad);
+        font-weight: 700;
       }
       .nb-note .nb-editor {
         display: none;
-        margin-top: 10px;
-        border-top: 1px dashed var(--rule);
-        padding-top: 10px;
+        margin-top: 12px;
+        border-top: 1px solid var(--rule);
+        padding-top: 12px;
       }
       .nb-note .nb-editor.open {
         display: block;
       }
-      .nb-note .nb-editor select,
-      .nb-note .nb-editor textarea {
+      .nb-note .nb-editor select {
         width: 100%;
-        font: inherit;
-        font-size: 13px;
-        border: 1px solid var(--rule);
-        border-radius: 7px;
-        padding: 6px 8px;
-        background: var(--surface);
-        color: var(--ink);
         margin-bottom: 8px;
       }
       .nb-note .nb-editor textarea {
-        min-height: 60px;
+        width: 100%;
+        font: inherit;
+        font-size: 13.5px;
+        line-height: 1.85;
+        border: 1px solid var(--rule);
+        border-radius: 8px;
+        padding: 9px 12px;
+        background: var(--surface);
+        color: var(--ink);
+        min-height: 72px;
         resize: vertical;
+      }
+      .nb-note .nb-editor textarea:focus {
+        border-color: var(--clay);
+      }
+      .nb-note .nb-editor-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
       }
       .nb-note .nb-editor .nb-save {
         font: inherit;
         font-size: 12.5px;
-        padding: 6px 16px;
-        border-radius: 7px;
+        font-weight: 700;
+        padding: 7px 18px;
+        border-radius: 8px;
         border: 1px solid var(--clay);
         background: var(--clay);
         color: var(--surface);
         cursor: pointer;
+      }
+      .nb-note .nb-editor .nb-save:hover:not(:disabled) {
+        background: var(--ink);
+        border-color: var(--ink);
+      }
+      .nb-note .nb-editor .nb-cancel {
+        font: inherit;
+        font-size: 12.5px;
+        padding: 7px 14px;
+        border-radius: 8px;
+        border: 1px solid var(--rule);
+        background: transparent;
+        color: var(--mute);
+        cursor: pointer;
+      }
+      .nb-note .nb-editor .nb-cancel:hover:not(:disabled) {
+        color: var(--ink);
+        border-color: var(--mute);
+        background: transparent;
+      }
+      @media (pointer: coarse) {
+        .nb-head button {
+          width: 40px;
+          height: 40px;
+        }
+        .nb-note .nb-meta button {
+          padding: 8px 10px;
+        }
+        .nb-note .nb-row input[type="checkbox"] {
+          width: 18px;
+          height: 18px;
+        }
+        .nb-bulk button {
+          height: 40px;
+        }
       }
 
       /* The in-book chat drawer (variant A): docked at the inline end —
@@ -2794,6 +3003,7 @@
     <aside id="notebook" hidden aria-label="دفتر یادداشت">
       <header class="nb-head">
         <h2 id="nb-title"></h2>
+        <span id="nb-count" class="nb-count" hidden></span>
         <button type="button" id="nb-close" aria-label="بستن">✕</button>
       </header>
       <div class="nb-tools">
@@ -2936,6 +3146,14 @@
       const NB_EDIT = "ویرایش";
       const NB_SAVE = "ذخیره";
       const NB_COPIED = "منتخب‌ها کپی شد.";
+      // The 2026-10-03 polish batch: the editor's cancel verb, the row
+      // checkbox's own label (it wrongly rode the bulk verb's «کپی
+      // منتخب‌ها»), and the empty state's hint — NEW draft strings for
+      // the PM batch (CONTEXT.md row, 2026-10-03).
+      const NB_CANCEL = "انصراف";
+      const NB_NOTE_CHECK_LABEL = "انتخاب یادداشت";
+      const NB_EMPTY_HINT =
+        "متنی را در گفتگو یا کتاب انتخاب کنید و «افزودن به یادداشت» را بزنید.";
       const NOTE_CATEGORIES = [NOTE_UNCATEGORIZED];
       // The in-book chat (ticket 03/09): the drawer's own NEW draft
       // strings — the title takes the name the PM batch already met as
@@ -7003,9 +7221,11 @@
       const nbExportEl = document.getElementById("nb-export");
       const nbDelManyEl = document.getElementById("nb-del-many");
       const nbListEl = document.getElementById("nb-list");
+      const nbCountEl = document.getElementById("nb-count");
       nbTitleEl.textContent = NOTEBOOK_LABEL;
       notebookOpenBtn.textContent = NOTEBOOK_LABEL;
       nbSearchEl.placeholder = NB_SEARCH_PLACEHOLDER;
+      nbSearchEl.setAttribute("aria-label", NB_SEARCH_PLACEHOLDER);
       nbFilterEl.options[0].textContent = NB_FILTER_ALL;
       nbFilterEl.options[1].textContent = NB_FILTER_BOOKS;
       nbFilterEl.options[2].textContent = NB_FILTER_SESSIONS;
@@ -7032,7 +7252,11 @@
       });
       nbCloseEl.addEventListener("click", closeNotebook);
       document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && !notebookEl.hidden) closeNotebook();
+        if (e.key !== "Escape" || notebookEl.hidden) return;
+        // Escape peels one layer: the open editor first, then the panel.
+        const openEditor = notebookEl.querySelector(".nb-editor.open");
+        if (openEditor) openEditor.classList.remove("open");
+        else closeNotebook();
       });
       [nbSearchEl, nbFilterEl, nbSortEl].forEach((el) =>
         el.addEventListener("input", renderNotes)
@@ -7106,13 +7330,29 @@
         nbChecks.clear();
         const rows = visibleNotes();
         nbBulkEl.hidden = true;
+        notebookEl.classList.remove("nb-selecting");
         nbDelManyEl.textContent = NOTE_DELETE_SELECTED;
         nbDelManyEl.disabled = false;
+        // The head badge counts the whole notebook, not the filtered view
+        // — the filters' job is the list, not the total.
+        nbCountEl.textContent = toPersianDigits(noteStaging.length);
+        nbCountEl.hidden = !noteStaging.length;
         if (!rows.length) {
           nbListEl.replaceChildren();
           const empty = document.createElement("p");
           empty.className = "nb-empty";
-          empty.textContent = NB_EMPTY;
+          const glyph = document.createElement("span");
+          glyph.className = "nb-empty-glyph";
+          glyph.setAttribute("aria-hidden", "true");
+          glyph.innerHTML =
+            '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>';
+          const title = document.createElement("span");
+          title.className = "nb-empty-title";
+          title.textContent = NB_EMPTY;
+          const hint = document.createElement("span");
+          hint.className = "nb-empty-hint";
+          hint.textContent = NB_EMPTY_HINT;
+          empty.append(glyph, title, hint);
           nbListEl.append(empty);
           return;
         }
@@ -7142,11 +7382,12 @@
         row.className = "nb-row";
         const check = document.createElement("input");
         check.type = "checkbox";
-        check.setAttribute("aria-label", NOTE_COPY_SELECTED);
+        check.setAttribute("aria-label", NB_NOTE_CHECK_LABEL);
         check.addEventListener("change", () => {
           if (check.checked) nbChecks.add(note.id);
           else nbChecks.delete(note.id);
           nbBulkEl.hidden = nbChecks.size === 0;
+          notebookEl.classList.toggle("nb-selecting", nbChecks.size > 0);
         });
         const body = document.createElement("div");
         body.className = "nb-body";
@@ -7157,7 +7398,10 @@
         if (note.opinion) {
           const op = document.createElement("div");
           op.className = "nb-op";
-          op.textContent = `${NOTE_OPINION_LABEL}: ${note.opinion}`;
+          const opLabel = document.createElement("span");
+          opLabel.className = "nb-op-label";
+          opLabel.textContent = NOTE_OPINION_LABEL;
+          op.append(opLabel, note.opinion);
           body.append(op);
         }
         const meta = document.createElement("div");
@@ -7169,6 +7413,7 @@
         meta.append(src);
         const jump = document.createElement("button");
         jump.type = "button";
+        jump.className = "nb-jump";
         jump.textContent = NOTE_SOURCE_JUMP;
         if ((note.source || {}).kind === "book" && note.doc) {
           jump.addEventListener("click", () => {
@@ -7200,30 +7445,34 @@
         } else {
           jump.disabled = true;
         }
-        meta.append(jump);
         const edit = document.createElement("button");
         edit.type = "button";
+        edit.className = "nb-edit";
         edit.textContent = NB_EDIT;
         edit.addEventListener("click", () => {
+          const opening = !editor.classList.contains("open");
           editor.classList.toggle("open");
+          if (opening) op.focus();
         });
-        meta.append(edit);
         const del = document.createElement("button");
         del.type = "button";
         del.className = "nb-del";
         del.textContent = SESSION_DELETE_LABEL;
         del.addEventListener("click", async () => {
-          // The sheet's two-step delete (the critique's P1 pattern).
+          // The sheet's two-step delete (the critique's P1 pattern): the
+          // armed state is a solid danger chip, disarmed after 3s.
           if (del.textContent !== NOTE_DELETE_CONFIRM_LABEL) {
             del.textContent = NOTE_DELETE_CONFIRM_LABEL;
+            del.classList.add("armed");
             clearTimeout(nbArmTimer);
-            nbArmTimer = setTimeout(
-              () => (del.textContent = SESSION_DELETE_LABEL),
-              3000
-            );
+            nbArmTimer = setTimeout(() => {
+              del.textContent = SESSION_DELETE_LABEL;
+              del.classList.remove("armed");
+            }, 3000);
             return;
           }
           clearTimeout(nbArmTimer);
+          del.classList.remove("armed");
           if (note.id) {
             try {
               await fetch(`/notes/${note.id}`, { method: "DELETE" });
@@ -7232,27 +7481,42 @@
           noteStaging = noteStaging.filter((n) => n !== note);
           renderNotes();
         });
-        meta.append(del);
+        // The verbs ride one cluster so a wrapping source line never
+        // scatters them across the meta row.
+        const rowActions = document.createElement("span");
+        rowActions.className = "nb-actions";
+        rowActions.append(jump, edit, del);
+        meta.append(src, rowActions);
         body.append(meta);
         const editor = document.createElement("div");
         editor.className = "nb-editor";
-        const cat = document.createElement("select");
-        for (const c of NOTE_CATEGORIES) {
-          const opt = document.createElement("option");
-          opt.value = c;
-          opt.textContent = c;
-          if ((note.category || NOTE_UNCATEGORIZED) === c) opt.selected = true;
-          cat.append(opt);
+        // The category select only renders once the PM's list gives it
+        // more than one row — a single-option dropdown is noise (the
+        // polish pass, 2026-10-03); its return is automatic.
+        let cat = null;
+        if (NOTE_CATEGORIES.length > 1) {
+          cat = document.createElement("select");
+          for (const c of NOTE_CATEGORIES) {
+            const opt = document.createElement("option");
+            opt.value = c;
+            opt.textContent = c;
+            if ((note.category || NOTE_UNCATEGORIZED) === c)
+              opt.selected = true;
+            cat.append(opt);
+          }
+          editor.append(cat);
         }
         const op = document.createElement("textarea");
         op.placeholder = NOTE_OPINION_LABEL;
         op.value = note.opinion || "";
+        const actions = document.createElement("div");
+        actions.className = "nb-editor-actions";
         const save = document.createElement("button");
         save.type = "button";
         save.className = "nb-save";
         save.textContent = NB_SAVE;
         save.addEventListener("click", async () => {
-          const category = cat.value;
+          const category = cat ? cat.value : note.category || NOTE_UNCATEGORIZED;
           const opinion = op.value.trim();
           if (note.id) {
             try {
@@ -7274,7 +7538,15 @@
           }
           renderNotes();
         });
-        editor.append(cat, op, save);
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "nb-cancel";
+        cancel.textContent = NB_CANCEL;
+        cancel.addEventListener("click", () =>
+          editor.classList.remove("open")
+        );
+        actions.append(save, cancel);
+        editor.append(op, actions);
         body.append(editor);
         row.append(check, body);
         card.append(row);
