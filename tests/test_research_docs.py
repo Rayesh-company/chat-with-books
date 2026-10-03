@@ -37,10 +37,10 @@ def test_readme_research_section_locks_the_two_layers_and_the_commands():
     assert "conversation layer" in section
     assert "research state layer" in section
     # The four deterministic chip commands.
-    assert "شواهد بیشتری از کتاب‌ها پیدا کن" in section
-    assert "شواهد را تحلیل و جمع‌بندی کن" in section
-    assert "خلاصۀ پژوهش را بنویس" in section
-    assert "ادعاها و استنادها را بازبینی کن" in section
+    assert "بیشتر جست‌وجو کن" in section
+    assert "شواهد را جمع‌بندی کن" in section
+    assert "ژورنال را بنویس" in section
+    assert "استنادها را بررسی کن" in section
 
 
 def test_readme_research_section_locks_the_checkpoint_rule():
@@ -135,7 +135,7 @@ def test_readme_locks_the_journey_layer():
     assert "stage machine" in section
     assert "NEVER answers its own question" in section
     assert "فعلاً همین کافی است؛ ادامه بده" in section
-    assert "نقشۀ پژوهش" in section
+    assert "وضعیت پژوهش" in section
     # The deterministic targeted chip resolves by pattern.
     assert "را پیدا کن" in section
 
@@ -213,8 +213,8 @@ def test_the_sheet_carries_the_research_ui_contract():
     assert 'id="research-suggest"' in html
     assert 'id="research-form"' in html
     # The map, not a status strip (ADR-0009).
-    assert "نقشۀ پژوهش" in html
-    assert "مراحل سفر پژوهش" in html
+    assert "وضعیت پژوهش" in html
+    assert "مراحل پژوهش" in html
     assert "sessionResearch" in html
     # The compass (ADR-0018): the map's mobile body rides the composer
     # dock — one thin bar raising the full map, never a <details>.
@@ -386,7 +386,7 @@ def test_readme_and_architecture_lock_the_state_caps_and_the_map_keeper():
     assert "keep their NEWEST entries" in readme
     assert "map keeper" in readme
     assert "نقشه‌بان" in readme
-    assert "نقشه را مرتب کن" in readme
+    assert "برنامه را مرتب کن" in readme
     assert "never re-parks" in readme
     assert "provenance stays append-only" in readme
     section = ARCHITECTURE.read_text(encoding="utf-8").split(
@@ -406,7 +406,7 @@ def test_context_names_the_state_caps_and_the_keeper_chip():
     text = CONTEXT.read_text(encoding="utf-8")
     assert "**State caps (T12)**" in text
     assert "| map keeper | نقشه‌بان |" in text
-    assert "نقشه را مرتب کن" in text
+    assert "برنامه را مرتب کن" in text
     assert "the map keeper's survey (T12)" in text
 
 
@@ -417,7 +417,7 @@ def test_readme_and_architecture_lock_the_fog_probe():
     readme = research_section()
     assert "fog probe" in readme
     assert "کاوشگر" in readme
-    assert "مه را کاوش کن" in readme
+    assert "نامشخص‌ها را بررسی کن" in readme
     assert "Diagnoser's early Gap prediction" in readme
     assert "out-of-scope items never graduate" in readme
     section = ARCHITECTURE.read_text(encoding="utf-8").split(
@@ -435,7 +435,7 @@ def test_context_glossary_holds_the_fog_probe():
     # own row.
     text = CONTEXT.read_text(encoding="utf-8")
     assert "| fog probe | کاوشگر |" in text
-    assert "مه را کاوش کن" in text
+    assert "نامشخص‌ها را بررسی کن" in text
     assert "the fog probe (T13)" in text
     assert (
         "the fog probe (کاوشگر) makes that graduation earn itself" in text

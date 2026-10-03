@@ -237,8 +237,8 @@ def test_the_keeper_parks_one_cleanup_and_moves_nothing(tmp_path):
     assert proposal[0]["drop_questions"] == ["q1", "d0"]
     assert proposal[0]["drop_fog"] == ["f1"]
     notes = [block["text"] for block in turn.result["reply"]]
-    assert any("پالایش نقشه" in text for text in notes)
-    assert any("پرسش «کهنه» از نقشه برداشته می‌شود" in text for text in notes)
+    assert any("مرتب‌کردن برنامه" in text for text in notes)
+    assert any("پرسش «کهنه» از برنامه برداشته می‌شود" in text for text in notes)
     assert (json.dumps(session["state"]["subquestions"]), json.dumps(
         session["state"]["map"]["fog"]
     )) == before
@@ -273,14 +273,14 @@ def test_the_accepted_cleanup_applies_exactly_its_named_rows(tmp_path):
     assert state["map"]["fog"] == []
     assert state["evidence"] == []
     # The decision line names what went; the provenance is untouched.
-    assert "نقشه پالایش شد" in state["decisions"][-1]["text"]
+    assert "برنامه مرتب شد" in state["decisions"][-1]["text"]
     assert "«کهنه»" in state["decisions"][-1]["text"]
     assert len(state["research_question"]["versions"]) == 1
     # The usual cooldown damps the kind.
     assert state["proposal_cooldowns"]["map_cleanup"] == (
         research.PROPOSAL_COOLDOWN_TURNS
     )
-    assert any("نقشه پالایش شد" in block["text"] for block in result["reply"])
+    assert any("برنامه مرتب شد" in block["text"] for block in result["reply"])
 
 
 def test_the_reject_records_the_refusal_damps_and_never_reproposes(tmp_path):

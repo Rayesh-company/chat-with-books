@@ -2697,7 +2697,7 @@
               aria-controls="compass-panel"
             >
               <span id="compass-dots" class="compass-dots" aria-hidden="true"></span>
-              <span class="compass-label">نقشۀ پژوهش</span>
+              <span class="compass-label">وضعیت پژوهش</span>
               <span id="compass-now" class="compass-now"></span>
               <span class="compass-chevron" aria-hidden="true">
                 <svg viewBox="0 0 12 8" width="12" height="8" focusable="false"><path d="M1 6.5 6 1.5 11 6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
@@ -2707,7 +2707,7 @@
               <nav
                 id="compass-journey"
                 class="research-journey"
-                aria-label="مراحل سفر پژوهش"
+                aria-label="مراحل پژوهش"
                 hidden
               ></nav>
               <div id="compass-state-body"></div>
@@ -2878,7 +2878,7 @@
       // string, pinned here for the PM.
       const RESEARCH_MODE_LABEL = "حالت پژوهش";
       const RESEARCH_SECTION_NOTE =
-        "پرسش پژوهشی خود را از همین کامپوزر پایین بپرسید؛ نقشۀ پژوهش کنار گفتگو می‌آید.";
+        "پرسش پژوهشی خود را از همین کامپوزر پایین بپرسید؛ وضعیت پژوهش کنار گفتگو می‌آید.";
       const RESEARCH_PLACEHOLDER = "پیام پژوهش خود را بنویسید";
       const RESEARCH_SEND_LABEL = "فرستادن";
       const ASK_PLACEHOLDER = "پرسش خود را بنویسید";
@@ -4251,16 +4251,16 @@
                 <button type="submit" id="research-send" disabled>فرستادن</button>
               </form>
             </div>
-            <aside id="research-rail" class="research-rail" aria-label="نقشۀ پژوهش">
-              <h2 class="research-rail-title">نقشۀ پژوهش</h2>
+            <aside id="research-rail" class="research-rail" aria-label="وضعیت پژوهش">
+              <h2 class="research-rail-title">وضعیت پژوهش</h2>
               <nav
                 id="research-journey"
                 class="research-journey"
-                aria-label="مراحل سفر پژوهش"
+                aria-label="مراحل پژوهش"
                 hidden
               ></nav>
               <div id="research-state-body">
-                <p class="empty">پس از آغاز گفتگو، نقشۀ پژوهش اینجا می‌آید.</p>
+                <p class="empty">پس از آغاز گفتگو، وضعیت پژوهش اینجا می‌آید.</p>
               </div>
             </aside>
           </div>`;
@@ -4419,11 +4419,11 @@
       // desktop rail (#research-rail) and the mobile compass
       // (#research-compass); CSS picks which is visible.
       const RESEARCH_STAGE_LIST = [
-        ["orientation", "نام‌گذاری مقصد"],
-        ["mapping", "نقشه‌برداری"],
-        ["investigating", "گردآوری شواهد"],
+        ["orientation", "هدف‌گذاری"],
+        ["mapping", "آشنایی با کتاب"],
+        ["investigating", "جست‌وجو در کتاب"],
         ["synthesizing", "تحلیل و جمع‌بندی"],
-        ["drafting", "نوشتن خلاصه"],
+        ["drafting", "نوشتن ژورنال"],
       ];
 
       function renderResearchJourney(stage) {

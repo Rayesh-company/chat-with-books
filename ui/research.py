@@ -112,10 +112,10 @@ RESEARCH_MODEL = "glm-5.3-flash"
 # turn runs AT MOST one operation, and the fixed chip commands below map
 # to one deterministically — the chips the sheet offers are exactly
 # these texts, so a chip press needs no classification luck.
-COMMAND_GATHER = "شواهد بیشتری از کتاب‌ها پیدا کن"
-COMMAND_SYNTHESIZE = "شواهد را تحلیل و جمع‌بندی کن"
-COMMAND_BRIEF = "خلاصۀ پژوهش را بنویس"
-COMMAND_AUDIT = "ادعاها و استنادها را بازبینی کن"
+COMMAND_GATHER = "بیشتر جست‌وجو کن"
+COMMAND_SYNTHESIZE = "شواهد را جمع‌بندی کن"
+COMMAND_BRIEF = "ژورنال را بنویس"
+COMMAND_AUDIT = "استنادها را بررسی کن"
 COMMAND_MOVES = {
     COMMAND_GATHER: "gather",
     COMMAND_SYNTHESIZE: "synthesize",
@@ -127,7 +127,7 @@ COMMAND_MOVES = {
 # without an answer, and the guide chip that pulls the journey back on
 # track after a conversational detour. All resolve server-side — no
 # classification luck.
-COMMAND_GATHER_ALL = "همهٔ پرسش‌های باز را جست‌وجو کن"
+COMMAND_GATHER_ALL = "همهٔ پرسش‌ها را جست‌وجو کن"
 GRILLING_SKIP = "فعلاً همین کافی است؛ ادامه بده"
 # The skip's landing as a decision (T10 #11): the map's decisions index
 # records the user declining the guided question — the same record in
@@ -135,7 +135,7 @@ GRILLING_SKIP = "فعلاً همین کافی است؛ ادامه بده"
 GRILLING_SKIP_DECISION = (
     "کاربر پاسخ دادن به پرسش راهنما را رد کرد؛ ادامه با وضع موجود."
 )
-COMMAND_GUIDE = "ادامهٔ سفر پژوهش"
+COMMAND_GUIDE = "ادامهٔ پژوهش"
 # The stall escape's stop (T6, ADR-0012): the operator ends a starved
 # session on their own word — the map and the ledgers stay, no Brief is
 # fabricated to close with. Closing is the ONLY permanent door into
@@ -164,12 +164,12 @@ COMMAND_REVISE = "بازنویسی بخش‌های ناکام خلاصه"
 # survey — the keeper proposes the cleanups it finds as the user's
 # decision, never applying one. Resolved server-side like every fixed
 # command, no classification luck.
-COMMAND_KEEP_MAP = "نقشه را مرتب کن"
+COMMAND_KEEP_MAP = "برنامه را مرتب کن"
 # The fog probe's chip (T13, ADR-0012): one tap sends کاوشگر at the
 # oldest fog note still without a verdict — the map grows on evidence,
 # not vibes. Resolved server-side like every fixed command, no
 # classification luck.
-COMMAND_PROBE_FOG = "مه را کاوش کن"
+COMMAND_PROBE_FOG = "نامشخص‌ها را بررسی کن"
 # The Session report's chip (T19, GitLab #22): the sheet's door to the
 # walk-away artifact (گزارش نشست) once a Brief section stands. NOT a
 # turn command — it is a DOWNLOAD (the sheet fetches the report read
@@ -186,11 +186,11 @@ TARGETED_GATHER_RE = re.compile(r"^شواهدِ «(.+)» را پیدا کن$")
 # observable state — the model proposes content, never moves stages.
 RESEARCH_STAGES = ("orientation", "mapping", "investigating", "synthesizing", "drafting")
 STAGE_LABELS = {
-    "orientation": "نام‌گذاری مقصد",
-    "mapping": "نقشه‌برداری",
-    "investigating": "گردآوری شواهد",
+    "orientation": "هدف‌گذاری",
+    "mapping": "آشنایی با کتاب",
+    "investigating": "جست‌وجو در کتاب",
     "synthesizing": "تحلیل و جمع‌بندی",
-    "drafting": "نوشتن خلاصه",
+    "drafting": "نوشتن ژورنال",
 }
 # A guided-question (grilling) round asks ONE thing and waits; the stage
 # gives up asking after this many rounds and proceeds on what it has.
@@ -654,7 +654,7 @@ REVIEW_FINDING_LABELS = {
 # document: the honest refusal — the review never fabricates a Brief to
 # review.
 RESEARCH_REVIEW_NO_DOCUMENT_DETAIL = (
-    "خلاصه‌ای برای بازبینی نوشته نشده؛ اول خلاصۀ پژوهش را بنویسید."
+    "خلاصه‌ای برای بازبینی نوشته نشده؛ اول ژورنال را بنویسید."
 )
 # The budget's honest stop (T3): the timeline event and the note the
 # transcript keeps. An over-budget turn names its stop — never a fake
@@ -669,7 +669,7 @@ RESEARCH_BUDGET_STOP_DETAIL = (
 # and ledgers intact, never a fabricated Brief.
 RESEARCH_STOP_DECISION = "کاربر پژوهش را در همین نقطه متوقف کرد."
 RESEARCH_STOP_DETAIL = (
-    "پژوهش متوقف شد؛ نقشه و شواهد ثبت‌شده همین‌جا می‌مانند و خلاصه‌ای "
+    "پژوهش متوقف شد؛ وضعیت و شواهد ثبت‌شده همین‌جا می‌مانند و خلاصه‌ای "
     "نوشته نمی‌شود. برای ادامه، گفتگوی پژوهش تازه‌ای بسازید."
 )
 # An adjustment decision without one of the parked menu's choices is
@@ -681,10 +681,10 @@ RESEARCH_ADJUSTMENT_CHOICE_DETAIL = (
 # one the cooldown still damps, and one whose exact cleanup the
 # operator already decided — each says which, never a fake proposal.
 RESEARCH_MAP_CLEAN_NOTE = (
-    "نقشه تمیز است؛ پرسش تکراری یا مهِ قدیمی برای پاک‌سازی پیدا نشد."
+    "برنامه تمیز است؛ پرسش تکراری یا نامشخصِ قدیمی برای پاک‌سازی پیدا نشد."
 )
 RESEARCH_MAP_COOLDOWN_NOTE = (
-    "پالایش نقشه به‌تازگی تصمیم گرفت؛ چند پیام دیگر دوباره بررسی می‌شود."
+    "مرتب‌کردن برنامه به‌تازگی تصمیم گرفت؛ چند پیام دیگر دوباره بررسی می‌شود."
 )
 RESEARCH_MAP_DECIDED_NOTE = (
     "این پاک‌سازی پیش‌تر پیشنهاد شد و تصمیمش ثبت است؛ چیزی تازه برای "
@@ -693,7 +693,7 @@ RESEARCH_MAP_DECIDED_NOTE = (
 # The fog probe's honest landing when the map holds no note left to
 # probe (T13): every note carries its verdict already, or the fog is
 # empty — either way the turn costs one honest note and no search.
-RESEARCH_PROBE_NO_FOG_DETAIL = "مه‌ای برای کاوش روی نقشه نیست."
+RESEARCH_PROBE_NO_FOG_DETAIL = "نامشخصی برای بررسی نیست."
 
 _FARSI_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 
@@ -3431,20 +3431,20 @@ def _checkpoint_reply(state: dict) -> list:
             # exact question or fog line the acceptance would remove —
             # the diff the user decides on, nothing vague.
             blocks.append(
-                {"type": "note", "text": f"پالایش نقشه: {proposal['text']}"}
+                {"type": "note", "text": f"مرتب‌کردن برنامه: {proposal['text']}"}
             )
             for name in proposal.get("question_names", []):
                 blocks.append(
                     {
                         "type": "note",
-                        "text": f"پرسش «{name}» از نقشه برداشته می‌شود.",
+                        "text": f"پرسش «{name}» از برنامه برداشته می‌شود.",
                     }
                 )
             for fog_text in proposal.get("fog_texts", []):
                 blocks.append(
                     {
                         "type": "note",
-                        "text": f"مهِ «{fog_text}» از نقشه برداشته می‌شود.",
+                        "text": f"مهِ «{fog_text}» از برنامه برداشته می‌شود.",
                     }
                 )
     return blocks
@@ -3665,11 +3665,11 @@ def _apply_map_cleanup(state: dict, proposal: dict) -> str:
         parts.append(
             "پرسش‌های "
             + "، ".join(f"«{name}»" for name in dropped_names)
-            + " از نقشه برداشته شد"
+            + " از برنامه برداشته شد"
         )
     if fog_dropped:
         parts.append(f"{_farsi_digits(fog_dropped)} مهِ قدیمی پاک شد")
-    return "نقشه پالایش شد: " + "؛ ".join(parts) + "."
+    return "برنامه مرتب شد: " + "؛ ".join(parts) + "."
 
 
 # --- the fog probe (T13, ADR-0012) -------------------------------------------
@@ -3803,7 +3803,7 @@ def _probe_fog(state: dict, turn: ResearchTurn, note: dict) -> list:
                 "type": "note",
                 "text": (
                     f"کاوشگر: مهِ «{text}» پربار بود، اما پرسش تازه‌ای "
-                    "روی نقشه جا نشد؛ مه سر جای خود ماند."
+                    "در برنامه جا نشد؛ نامشخص سر جای خود ماند."
                 ),
             }
         ]
@@ -4610,7 +4610,7 @@ def _mapping_turn(turn: ResearchTurn, state: dict):
             {
                 "type": "note",
                 "text": (
-                    "کتاب‌ها برای این پرسش چیزی برای نقشه‌برداری ندادند؛ "
+                    "کتاب‌ها برای این پرسش در آشنایی با کتاب چیزی ندادند؛ "
                     "مستقیم وارد گردآوری شواهد می‌شویم."
                 ),
             }
@@ -4665,7 +4665,7 @@ def _skip_reply(state: dict) -> list:
         return [
             {
                 "type": "note",
-                "text": "نقشه همین است؛ وارد گردآوری شواهد می‌شویم.",
+                "text": "وضعیت همین است؛ وارد جست‌وجو در کتاب می‌شویم.",
             }
         ]
     return [{"type": "note", "text": "ادامه می‌دهیم."}]
@@ -4679,7 +4679,7 @@ def _map_ready_reply(state: dict) -> list:
         f"«{item.get('name', '')}»" for item in _pending_questions(state)[:6]
     )
     return [
-        {"type": "note", "text": f"نقشۀ پژوهش آماده شد؛ پرسش‌های باز: {names}."},
+        {"type": "note", "text": f"وضعیت پژوهش آماده شد؛ پرسش‌های باز: {names}."},
         {
             "type": "note",
             "text": (
@@ -4700,7 +4700,7 @@ def _narration_facts(state: dict, move: str, searched: list, starved: list) -> d
     }
     return {
         "finished_move": {
-            "gather": "گردآوری شواهد",
+            "gather": "جست‌وجو در کتاب",
             "synthesize": "تحلیل و جمع‌بندی شواهد",
             "brief": "نوشتن خلاصۀ پژوهش",
         }.get(move, move),
