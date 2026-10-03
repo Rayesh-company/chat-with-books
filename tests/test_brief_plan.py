@@ -38,6 +38,20 @@ PLAN_SECTIONS = [
     {"title": "جمع‌بندی", "question": "دو", "claims": ["c1", "c2"]},
 ]
 
+
+def accepted_sections(sections):
+    """Decision 03's landed shape: acceptance stamps every section with
+    its stable key and the accepted status — per-item steering's
+    address space."""
+    return [
+        {
+            **section,
+            "key": research.normalize_for_match(section["title"]),
+            "status": "accepted",
+        }
+        for section in sections
+    ]
+
 OTHER_PLAN_SECTIONS = [
     {"title": "مقدمه‌ای دیگر", "question": "یکی", "claims": ["c2"]},
 ]
@@ -188,8 +202,8 @@ def test_accepting_a_plan_appends_a_version_and_sets_it_current(tmp_path):
     assert error is None
     loaded = research_store.load_session(session["id"])
     plan = loaded["state"]["brief_plan"]
-    assert plan["current"] == {"sections": PLAN_SECTIONS}
-    assert [v["sections"] for v in plan["versions"]] == [PLAN_SECTIONS]
+    assert plan["current"] == {"sections": accepted_sections(PLAN_SECTIONS)}
+    assert [v["sections"] for v in plan["versions"]] == [accepted_sections(PLAN_SECTIONS)]
     # The decision lands in the index and the proposal leaves the queue.
     assert any("پذیرفته شد" in d["text"] for d in loaded["state"]["decisions"])
     assert loaded["state"]["pending_proposals"] == []
@@ -221,10 +235,10 @@ def test_plan_acceptance_is_append_only(tmp_path):
     assert error is None
     plan = research_store.load_session(session["id"])["state"]["brief_plan"]
     assert [v["sections"] for v in plan["versions"]] == [
-        PLAN_SECTIONS,
-        OTHER_PLAN_SECTIONS,
+        accepted_sections(PLAN_SECTIONS),
+        accepted_sections(OTHER_PLAN_SECTIONS),
     ]
-    assert plan["current"] == {"sections": OTHER_PLAN_SECTIONS}
+    assert plan["current"] == {"sections": accepted_sections(OTHER_PLAN_SECTIONS)}
 
 
 def test_rejecting_a_plan_records_the_decision_and_its_cooldown(tmp_path):
@@ -353,7 +367,20 @@ def test_the_summary_projects_the_plan_and_the_claim_ids():
     summary = research.research_state_summary(state)
     assert summary["brief_plan"]["accepted"] is True
     assert summary["brief_plan"]["versions"] == 1
-    assert summary["brief_plan"]["sections"] == ["شهود و ساحت", "جمع‌بندی"]
+    # Decision 03's projection: per-item shape — the title, the stable
+    # key, and the three-state status the plan panel steers by.
+    assert summary["brief_plan"]["sections"] == [
+        {
+            "title": "شهود و ساحت",
+            "key": research.normalize_for_match("شهود و ساحت"),
+            "status": "accepted",
+        },
+        {
+            "title": "جمع‌بندی",
+            "key": research.normalize_for_match("جمع‌بندی"),
+            "status": "accepted",
+        },
+    ]
 
 
 def test_the_skill_table_declares_the_plan_touches():

@@ -290,10 +290,12 @@ def test_the_all_starved_stall_offers_the_escape():
         {"id": "e1", "reference": "r", "passage": SENTENCE}
     ]
     assert research.next_best_move(state) == "synthesize"
+    # The plan-request chip (decision 03) rides beside the stall escape.
     assert [chip["id"] for chip in research.research_suggestions(state)] == [
         "gather",
         "synthesize",
         "stop",
+        "plan",
     ]
 
 

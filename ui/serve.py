@@ -156,6 +156,7 @@ try:
         ResearchTurn,
         pause_account_research,
         abort_research_turn,
+        decide_plan_item,
         resume_closed_session,
         build_classify_prompt,
         build_conversational_prompt,
@@ -297,6 +298,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         ResearchTurn,
         pause_account_research,
         abort_research_turn,
+        decide_plan_item,
         resume_closed_session,
         build_classify_prompt,
         build_conversational_prompt,
@@ -1515,6 +1517,16 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 return
             self._research_decide(account)
             return
+        if path == "/research/plan-item":
+            # The per-item plan door (decision 03, the research-mode v2
+            # wayfinder map): one section accepted, rejected, or edited
+            # by its stable key — bookkeeping, the same gate as every
+            # research write.
+            account = self._research_account()
+            if account is None:
+                return
+            self._research_plan_item(account)
+            return
         if path == "/next-tier-recall":
             if self._quoted_account() is None:
                 return
@@ -2558,6 +2570,41 @@ class SessionHandler(SimpleHTTPRequestHandler):
             proposal_id.strip(),
             accept,
             choice=(choice or None),
+        )
+        if result is None:
+            self._send_json(error[0], {"detail": error[1]})
+            return
+        self._send_json(200, result)
+
+    def _research_plan_item(self, account: str) -> None:
+        """The per-item plan door (decision 03): one accepted plan's
+        section is accepted, rejected, or edited by its stable key —
+        synchronous bookkeeping, no upstream call, nothing to meter. A
+        user's own steering never arms a cooldown."""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            session_id = payload["session_id"]
+            key = payload["key"]
+            status = payload["status"]
+            edited = payload.get("edited")
+            if not isinstance(session_id, str) or not session_id.strip():
+                raise ValueError("session_id is required")
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("key is required")
+            if not isinstance(status, str):
+                raise ValueError("status is required")
+            if edited is not None and not isinstance(edited, str):
+                raise ValueError("edited must be a string")
+        except (ValueError, KeyError, TypeError):
+            self._send_json(400, {"detail": "تصمیم بخش برنامه را بفرستید."})
+            return
+        result, error = decide_plan_item(
+            account,
+            session_id.strip(),
+            key.strip(),
+            status.strip(),
+            edited=(edited or None),
         )
         if result is None:
             self._send_json(error[0], {"detail": error[1]})

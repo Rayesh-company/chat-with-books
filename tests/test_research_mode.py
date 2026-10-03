@@ -355,7 +355,17 @@ def test_suggestions_lead_with_proposal_chips_then_the_moves():
     ]
     state["claims"] = [{"id": "c1", "text": "ادعا", "status": "direct_support"}]
     chips = research.research_suggestions(state)
-    assert {chip["id"] for chip in chips} == {"brief", "audit"}
+    # The plan-request chip (decision 03, the research-mode v2 map):
+    # while no plan is accepted and none waits, the chip-only user's
+    # exit from the plan gate rides beside the work moves.
+    assert {chip["id"] for chip in chips} == {"brief", "audit", "plan"}
+    # An accepted plan retires it.
+    state["brief_plan"] = {
+        "current": {"sections": [{"title": "بخش", "key": "k1", "status": "accepted"}]},
+        "versions": [],
+    }
+    chips = research.research_suggestions(state)
+    assert "plan" not in {chip["id"] for chip in chips}
 
 
 def test_classify_updates_park_consequential_changes_as_proposals():
@@ -2096,3 +2106,153 @@ def test_an_abort_landing_before_the_next_write_is_never_overwritten():
     assert turn.state == "aborted"
     assert research.RESEARCH_EVENT_SEARCHING not in turn.events
     del research.RESEARCH_REGISTRY[turn.id]
+
+
+# --- stage B (research-mode v2): the steering doors -------------------------
+
+
+def test_a_corpus_change_parks_and_decides_as_its_own_checkpoint():
+    # Decision 05 (option B): a cross-Book message parks a corpus
+    # proposal — exploration-only, never the set the session already
+    # searches — and the decide flow flips state["datasets"], which
+    # every searcher reads at call time.
+    state = research.new_research_state("پرسش؟")
+    state["datasets"] = ["tarhe-kolli"]
+    research._apply_classify_updates(
+        state,
+        {
+            "intent": "research_exploration",
+            "corpus": ["tarhe-kolli", "70143-336"],
+        },
+    )
+    parked = [p for p in state["pending_proposals"] if p["kind"] == "corpus"]
+    assert len(parked) == 1
+    assert parked[0]["datasets"] == ["tarhe-kolli", "70143-336"]
+    # The same set never re-parks; a working turn never parks at all.
+    research._apply_classify_updates(
+        state,
+        {"intent": "research_exploration", "corpus": ["tarhe-kolli", "70143-336"]},
+    )
+    assert (
+        len([p for p in state["pending_proposals"] if p["kind"] == "corpus"]) == 1
+    )
+    fresh = research.new_research_state("پرسش؟")
+    fresh["datasets"] = ["tarhe-kolli"]
+    research._apply_classify_updates(
+        fresh,
+        {"intent": "active_research", "corpus": ["tarhe-kolli", "70143-336"]},
+    )
+    assert fresh["pending_proposals"] == []
+    # The decide applies the flip; the state summary carries the corpus
+    # the session searches (the engine's corpus-blindness ends).
+    state["pending_proposals"] = []
+    decision = research._apply_decision(state, parked[0], True)
+    assert state["datasets"] == ["tarhe-kolli", "70143-336"]
+    assert "دامنۀ کتاب‌های پژوهش به‌روز شد" in decision
+    assert research.research_state_summary(state)["datasets"] == [
+        "tarhe-kolli",
+        "70143-336",
+    ]
+
+
+def test_the_plan_request_chip_parks_a_plan_deterministically(tmp_path):
+    # Decision 03's deadlock exit: the chip resolves without the
+    # classifier's luck — one dedicated composer call asks ONLY for the
+    # section plan, and the plan parks as the checkpoint the decide
+    # flow owns.
+    plan_reply = composer_reply(
+        json.dumps(
+            {
+                "brief_plan": [
+                    {"title": "تز کتاب", "question": "یکی", "claims": []},
+                    {"title": "شواهد", "question": "دو", "claims": []},
+                ]
+            },
+            ensure_ascii=False,
+        )
+    )
+    upstream = ResearchUpstream(
+        composer_replies=[classify_reply("research_exploration"), plan_reply]
+    )
+    session = make_session(tmp_path)
+    turn = run_turn_sync(
+        session, research.COMMAND_SUGGEST_PLAN, upstream, tmp_path
+    )
+    assert turn.state == "done"
+    loaded = research_store.load_session(session["id"])["state"]
+    parked = [
+        p for p in loaded["pending_proposals"] if p["kind"] == "brief_plan"
+    ]
+    assert len(parked) == 1
+    assert [s["title"] for s in parked[0]["sections"]] == ["تز کتاب", "شواهد"]
+    # The reply IS the checkpoint card, and the decide chips ride it.
+    assert any(
+        "یک تصمیم پیش روی شماست" in b.get("text", "")
+        for b in turn.result["reply"]
+        if isinstance(b, dict)
+    )
+    assert any(chip.get("id") == parked[0]["id"] for chip in turn.result["suggestions"])
+
+
+def test_the_plan_item_door_steers_sections_individually(tmp_path):
+    # Decision 03's per-item door: an accepted plan's sections are
+    # rejected, edited, and re-accepted by their stable keys — the
+    # contracts follow, and an all-rejected plan refuses the Brief as
+    # honestly as no plan at all.
+    session = make_session(tmp_path)
+    state = session["state"]
+    sections = [
+        {"title": "یکی", "question": "", "claims": [], "key": "k1", "status": "accepted"},
+        {"title": "دو", "question": "", "claims": [], "key": "k2", "status": "accepted"},
+    ]
+    state["brief_plan"] = {"current": {"sections": sections}, "versions": []}
+    state["section_contracts"] = research._section_contracts_from_plan(
+        state, sections
+    )
+    research_store.save_session(session["id"], state)
+    result, error = research.decide_plan_item(
+        PHONE, session["id"], "k2", "rejected"
+    )
+    assert error is None
+    assert "رد شد" in result["reply"][0]["text"]
+    loaded = research_store.load_session(session["id"])["state"]
+    statuses = {
+        s["key"]: s["status"]
+        for s in loaded["brief_plan"]["current"]["sections"]
+    }
+    assert statuses == {"k1": "accepted", "k2": "rejected"}
+    assert {
+        c["key"]: c["status"] for c in loaded["section_contracts"]
+    } == statuses
+    # The edit takes a new title and lands as its own decision kind.
+    result, error = research.decide_plan_item(
+        PHONE, session["id"], "k1", "accepted", edited="عنوان تازه"
+    )
+    assert error is None
+    loaded = research_store.load_session(session["id"])["state"]
+    first = loaded["brief_plan"]["current"]["sections"][0]
+    assert first["title"] == "عنوان تازه" and first["status"] == "edited"
+    assert loaded["section_contracts"][0]["title"] == "عنوان تازه"
+    # Bad status vocabulary is the door's own 400.
+    _, bad = research.decide_plan_item(PHONE, session["id"], "k1", "maybe")
+    assert bad == (400, research.RESEARCH_PLAN_ITEM_DETAIL)
+    # An all-rejected plan refuses the Brief before any writer call.
+    fresh = make_session(tmp_path)
+    fresh["state"]["claims"] = [
+        {"id": "c1", "text": "ادعا", "status": "direct_support"}
+    ]
+    rejected = [
+        {"title": "یکی", "question": "", "claims": [], "key": "k1", "status": "rejected"}
+    ]
+    fresh["state"]["brief_plan"] = {
+        "current": {"sections": rejected},
+        "versions": [],
+    }
+    fresh["state"]["section_contracts"] = research._section_contracts_from_plan(
+        fresh["state"], rejected
+    )
+    turn = research.ResearchTurn(PHONE, fresh["id"], "خلاصه")
+    blocks = research._brief(turn, fresh["state"])
+    assert blocks == [
+        {"type": "note", "text": research.RESEARCH_BRIEF_NO_SECTIONS_DETAIL}
+    ]

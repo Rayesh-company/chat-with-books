@@ -155,6 +155,8 @@ def test_accepting_a_plan_derives_the_section_contracts(tmp_path):
     assert loaded["section_contracts"] == [
         {
             "title": "شهود و ساحت",
+            "key": research.normalize_for_match("شهود و ساحت"),
+            "status": "accepted",
             "question": "یکی",
             "claims": ["c1"],
             "scope_in": [],
@@ -162,6 +164,8 @@ def test_accepting_a_plan_derives_the_section_contracts(tmp_path):
         },
         {
             "title": "جمع‌بندی",
+            "key": research.normalize_for_match("جمع‌بندی"),
+            "status": "accepted",
             "question": "دو",
             "claims": ["c2"],
             "scope_in": [],
