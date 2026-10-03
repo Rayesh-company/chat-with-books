@@ -1812,10 +1812,27 @@ def test_a_second_message_while_one_runs_is_rejected_farsi_busy(tmp_path):
     assert busy["detail"] == research.RESEARCH_BUSY_ACCOUNT_DETAIL
 
 
-def test_a_new_ask_aborts_the_turn_and_closes_the_session(tmp_path):
+def test_a_new_ask_pauses_research_without_closing_it(tmp_path):
+    # Decision 04 (the research-mode v2 wayfinder map): a new normal
+    # ask pauses the Account's in-flight research turn — cooperatively
+    # — and queues its message for the resume chip. The session itself
+    # stays OPEN: no close, no 409, the investigation lives beside the
+    # ask, and the chip re-runs the USER'S words, never its own text.
     gate = threading.Event()
+    paused_message = "تحلیل جامع نوآوری‌های کتاب را پیش ببر"
+    fed_pool = [
+        {
+            "reference": "chunk 1 of document tarhe-kolli (pages 10-12)",
+            "passage": SENTENCE,
+        },
+        {"reference": "chunk 29 of document tarhe-kolli", "passage": OTHER_SENTENCE},
+    ]
     upstream = ResearchUpstream(
-        composer_replies=[classify_reply("active_research", subquestions=["زیرپرسش؟"])],
+        composer_replies=[
+            classify_reply("research_exploration"),
+            classify_reply("casual_question"),
+            composer_reply(json.dumps(guarded_blocks(fed_pool), ensure_ascii=False)),
+        ],
         gate=gate,
     )
     base, server, original = with_gate(tmp_path, upstream)
@@ -1824,12 +1841,12 @@ def test_a_new_ask_aborts_the_turn_and_closes_the_session(tmp_path):
         _, body = post(
             base,
             "/research/message",
-            {"text": research.COMMAND_GATHER, "question": "پرسش؟"},
+            {"text": paused_message, "question": "پرسش؟"},
             phone=PHONE,
         )
         turn_id, session_id = body["turn_id"], body["session_id"]
-        # The new ask: phase 1 records the chat, and that same POST
-        # aborts the phone's in-flight turn and closes its session.
+        # The new ask: the in-flight turn aborts cooperatively — a
+        # pause, never a close.
         ask_status, _ = post(
             base, "/api/v1/recall", {"query": "پرسش جدید؟"}, phone=PHONE
         )
@@ -1839,24 +1856,94 @@ def test_a_new_ask_aborts_the_turn_and_closes_the_session(tmp_path):
         )
         assert poll_status == 200
         assert payload["state"] == "aborted"
-        # A later message to the closed session answers the closed
-        # detail — the old investigation never resumes beside the new
-        # ask.
-        closed_status, closed = post(
+        gate.set()
+        wait_turn_done(turn_id)
+        # The state endpoint answers 200 — the session never closed —
+        # and its chip row leads with the resume chip.
+        state_status, state = get(
+            base, f"/research/state?session={session_id}", phone=PHONE
+        )
+        assert state_status == 200
+        assert {
+            "kind": "move",
+            "id": "resume",
+            "text": research.COMMAND_RESUME,
+        } in state["suggestions"]
+        # The resume chip re-runs the paused message: the classifier
+        # sees the user's own words, never the chip text.
+        resume_status, resumed = post(
             base,
             "/research/message",
-            {"text": "ادامه", "session_id": session_id},
+            {"text": research.COMMAND_RESUME, "session_id": session_id},
             phone=PHONE,
         )
-        gate.set()
-        turn = wait_turn_done(turn_id)
+        assert resume_status == 202
+        turn = wait_turn_done(resumed["turn_id"])
+        assert turn.state == "done"
+        assert research._PAUSED_MESSAGES.get(session_id) is None
+        # Composer order: the paused turn's classify, the resumed
+        # turn's classify, its writer — the SECOND is the proof: the
+        # re-run classified the user's paused words, never the chip.
+        composer_at = [
+            i for i, call in enumerate(upstream.calls)
+            if "chat/completions" in call
+        ]
+        assert len(composer_at) >= 2, "no classify call reached the upstream"
+        resumed_request = json.loads(upstream.bodies[composer_at[1]])
+        resumed_prompt = " ".join(
+            message.get("content", "")
+            for message in resumed_request.get("messages", [])
+        )
+        # The swap's proof: the classify prompt's LATEST message is the
+        # user's paused words (the chip text may ride the transcript
+        # tail as history — that is where the sheet's own record put
+        # it).
+        assert f"Latest message: {paused_message}" in resumed_prompt
     finally:
         gate.set()
         stop_gate(server, original)
-    assert closed_status == 409
-    assert closed["detail"] == research.RESEARCH_SESSION_CLOSED_DETAIL
-    assert turn.state == "aborted"
-    assert turn.result is None
+    assert turn.result is not None
+
+
+def test_stop_closes_and_the_closed_door_forks_the_state(
+    tmp_path, monkeypatch
+):
+    # Decision 04's other half: closing is the user's word alone
+    # (COMMAND_STOP keeps its behavior), and the closed door
+    # (resume_closed_session) forks the stopped state into a fresh
+    # open session — evidence and decisions ride along, the old row
+    # stays closed, an open session never forks, and a foreign account
+    # never sees the door.
+    monkeypatch.setattr(
+        research.research_store, "RESEARCH_DB", tmp_path / "research.sqlite3"
+    )
+    state = research.new_research_state("هدف پژوهش")
+    state["evidence"].append(
+        {
+            "id": "e1",
+            "reference": "chunk 1 of document tarhe-kolli (pages 1-9)",
+            "passage": "متن شاهد",
+            "found_for": "هدف پژوهش",
+        }
+    )
+    state["closed"] = True
+    research.research_store.create_session("stopped", ACCOUNT, state)
+    research.research_store.create_session(
+        "open", ACCOUNT, research.new_research_state("هدف دوم")
+    )
+    forked, error = research.resume_closed_session(ACCOUNT, "stopped")
+    assert error is None and forked is not None
+    fork = research.research_store.load_session(forked["session_id"])
+    assert fork["account"] == ACCOUNT
+    assert not fork["state"].get("closed")
+    assert len(fork["state"]["evidence"]) == 1
+    assert "ادامهٔ پژوهش از وضعیت" in fork["state"]["decisions"][-1]["text"]
+    stopped = research.research_store.load_session("stopped")
+    assert stopped["state"].get("closed") is True
+    _, still_open = research.resume_closed_session(ACCOUNT, "open")
+    assert still_open == (409, research.RESEARCH_RESUME_OPEN_DETAIL)
+    _, foreign = research.resume_closed_session(OTHER_ACCOUNT, "stopped")
+    assert foreign == (404, research.RESEARCH_SESSION_NOT_FOUND_DETAIL)
 
 
 def test_a_new_ask_by_another_phone_never_aborts_someone_elses_turn(tmp_path):

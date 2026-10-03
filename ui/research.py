@@ -136,8 +136,15 @@ GRILLING_SKIP_DECISION = (
 COMMAND_GUIDE = "ادامهٔ سفر پژوهش"
 # The stall escape's stop (T6, ADR-0012): the operator ends a starved
 # session on their own word — the map and the ledgers stay, no Brief is
-# fabricated to close with.
+# fabricated to close with. Closing is the ONLY permanent door into
+# closed (decision 04): a new ask pauses, never closes.
 COMMAND_STOP = "توقف پژوهش"
+# The pause queue's chip (decision 04, the research-mode v2 wayfinder
+# map): a new normal ask pauses the in-flight research turn and keeps
+# its message queued; this chip re-runs exactly that message — the
+# user's own words, not the chip text, ride the classifier. DRAFT
+# display name (the CONTEXT.md PM row owns the rename).
+COMMAND_RESUME = "پیام قبلی را دوباره اجرا کن"
 # The Closing review's revise chip (T9, ADR-0012): the second chip of
 # the review's verdict — one tap reruns ONLY the failing sections, the
 # review then faces the reassembled document again. Resolved
@@ -557,7 +564,24 @@ RESEARCH_BUSY_GLOBAL_DETAIL = (
 )
 RESEARCH_TURN_NOT_FOUND_DETAIL = "چنین پیام پژوهشی پیدا نشد."
 RESEARCH_SESSION_NOT_FOUND_DETAIL = "چنین گفتگوی پژوهشی پیدا نشد."
-RESEARCH_SESSION_CLOSED_DETAIL = "این گفتگوی پژوهش بسته است؛ پرسش تازه‌ای بپرسید."
+# The closed session's friendly door (decision 04, the research-mode v2
+# wayfinder map): a stop is the user's word alone — the text says what
+# the sheet can do today; ui/index.html's RESEARCH_CLOSED_NOTE mirrors
+# it verbatim (ADR-0016's contract).
+RESEARCH_SESSION_CLOSED_DETAIL = (
+    "این پژوهش بسته شده است؛ پرسش تازه‌ای بپرسید تا پژوهش تازه‌ای شروع شود."
+)
+# The resume chip's two honest answers (decision 04): nothing paused
+# means nothing to re-run — the user's next words, not the chip, are
+# the move.
+RESEARCH_RESUME_EMPTY_DETAIL = (
+    "پیام نگه‌داشته‌شده‌ای برای اجرای دوباره نیست؛ پرسش خود را بفرستید."
+)
+# A fork was asked of a session that is not closed: the door is for
+# stopped investigations only — a live conversation continues itself.
+RESEARCH_RESUME_OPEN_DETAIL = (
+    "این پژوهش هنوز باز است؛ همان گفتگو را ادامه دهید."
+)
 RESEARCH_PROPOSAL_NOT_FOUND_DETAIL = "چنین پیشنهادی پیدا نشد."
 RESEARCH_SESSION_CAP_DETAIL = (
     "این گفتگوی پژوهش طولانی شده است؛ پیشنهاد می‌شود خلاصۀ پژوهش را "
@@ -1407,6 +1431,8 @@ def resolve_command(message: str):
         return "guide", None
     if stripped == COMMAND_STOP:
         return "stop", None
+    if stripped == COMMAND_RESUME:
+        return "resume", None
     if stripped == COMMAND_REVISE:
         return "revise", None
     if stripped == COMMAND_KEEP_MAP:
@@ -2490,9 +2516,17 @@ def research_session_state(account: str, session_id: str):
     if session["state"].get("closed"):
         return None, (409, RESEARCH_SESSION_CLOSED_DETAIL)
     ensure_state_shape(session["state"])
+    suggestions = research_suggestions(session["state"])
+    if _PAUSED_MESSAGES.get(session_id):
+        # The paused turn's door back in (decision 04): the refresh's
+        # chip row leads with the re-run, so the message the new ask
+        # paused is one tap away — the conversation itself never died.
+        suggestions = [
+            {"kind": "move", "id": "resume", "text": COMMAND_RESUME}
+        ] + suggestions
     return {
         "research_state": research_state_summary(session["state"]),
-        "suggestions": research_suggestions(session["state"]),
+        "suggestions": suggestions,
     }, None
 
 
@@ -2730,11 +2764,24 @@ def _fold_decision_records(session_id: str, state: dict, records: list) -> dict:
 research_store.on_stale_save = _fold_decision_records
 
 
-def abort_account_research(account: str) -> None:
-    """A new ask owns the sheet: the Account's in-flight research turns
-    abort cooperatively and their sessions close — a later message to a
-    closed session answers the closed detail, never resurrects the old
-    investigation beside the new ask."""
+# The pause queue (decision 04): session_id -> the paused turn's
+# message, set by pause_account_research and consumed by the resume
+# chip's runner path. In-memory by design, exactly like the registry
+# and the decision ledger — a restart empties it with the in-flight
+# turns, never with a session.
+_PAUSED_MESSAGES: dict[str, str] = {}
+
+
+def pause_account_research(account: str) -> None:
+    """A new ask PAUSES the Account's research (decision 04, the
+    research-mode v2 wayfinder map): the in-flight turn aborts
+    cooperatively and its message returns to the pause queue — the
+    session itself stays OPEN, its map, evidence, and plan intact, and
+    the very next research message (or the resume chip) continues the
+    same investigation. Closing is the user's word alone
+    (COMMAND_STOP). The queue is in-memory by design, exactly like the
+    turn registry: a restart loses only the queued re-run, never the
+    session. Another Account's research is never touched."""
     with RESEARCH_REGISTRY_LOCK:
         own = [
             turn
@@ -2742,12 +2789,38 @@ def abort_account_research(account: str) -> None:
             if turn.account == account and turn.state not in TURN_TERMINAL_STATES
         ]
     for turn in own:
-        if not abort_research_turn(turn):
-            continue
-        session = research_store.load_session(turn.session_id)
-        if session is not None and not session["state"].get("closed"):
-            session["state"]["closed"] = True
-            research_store.save_session(turn.session_id, session["state"])
+        if abort_research_turn(turn):
+            _PAUSED_MESSAGES[turn.session_id] = turn.message
+
+
+def resume_closed_session(account: str, session_id):
+    """The closed session's door (decision 04): fork one STOPPED
+    session into a fresh, open one carrying everything worth keeping —
+    the question's history, scope, open questions, evidence, claims,
+    gaps, decisions, the accepted plan, any standing brief — so a
+    stopped investigation continues without re-paying its journey. The
+    old row stays closed exactly as the user left it (a stop is
+    honest); the fork's first decision records the door's use.
+    ({"session_id"}, None) or (None, (status, Farsi detail)) — unknown
+    or foreign sessions 404, an open session 409 (it continues
+    itself)."""
+    session = research_store.load_session(session_id)
+    if session is None or session["account"] != account:
+        return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
+    state = session["state"]
+    if not isinstance(state, dict) or not state.get("closed"):
+        return None, (409, RESEARCH_RESUME_OPEN_DETAIL)
+    fork = json.loads(json.dumps(state))
+    fork.pop("closed", None)
+    fork.pop("queued_message", None)
+    fork.pop(research_store.SAVE_BASE_VERSION, None)
+    _add_decision(fork, "ادامهٔ پژوهش از وضعیتِ پژوهشِ بسته‌شدهٔ قبلی آغاز شد.")
+    fork_id = uuid.uuid4().hex
+    research_store.create_session(fork_id, account, fork)
+    linked = research_store.chat_session_for(account, session_id)
+    if linked:
+        research_store.attach_chat_session(fork_id, account, linked)
+    return {"session_id": fork_id}, None
 
 
 def start_research_turn(account: str, session: dict, message: str):
@@ -2782,6 +2855,26 @@ def start_research_turn(account: str, session: dict, message: str):
         target=run_research_turn, args=(turn, session), daemon=True
     ).start()
     return turn, None
+
+
+def _settle_research_turn(turn, session, state, blocks) -> None:
+    """Settle one turn synchronously with a code-authored reply — the
+    resume chip's empty-queue answer (decision 04): a friendly note,
+    the state's own chips, the same store-and-transcript honesty as
+    every settled turn."""
+    result = {
+        "reply": blocks,
+        "suggestions": research_suggestions(state),
+        "research_state": research_state_summary(state),
+    }
+    with RESEARCH_REGISTRY_LOCK:
+        if turn.state in TURN_TERMINAL_STATES:
+            return
+        turn.result = result
+        turn.state = "done"
+        turn.events.append(RESEARCH_EVENT_DONE)
+    research_store.save_session(session["id"], state)
+    research_store.append_message(session["id"], "assistant", blocks)
 
 
 # --- the turn's operations -------------------------------------------------
@@ -4547,6 +4640,22 @@ def run_research_turn(
     try:
         state["turns"] = state.get("turns", 0) + 1
         message = turn.message
+        # The resume chip (decision 04): the paused turn's message swaps
+        # in for the chip text BEFORE the classifier — the re-run sees
+        # the user's own words, and the chip never pays a classify call.
+        # With nothing paused the chip settles honestly instead.
+        if resolve_command(message) == ("resume", None):
+            queued = _PAUSED_MESSAGES.pop(session["id"], None)
+            if queued is None:
+                _settle_research_turn(
+                    turn,
+                    session,
+                    state,
+                    [{"type": "note", "text": RESEARCH_RESUME_EMPTY_DETAIL}],
+                )
+                return
+            message = queued
+            turn.message = queued
         budget.require(1)  # the classify call
         resolved = resolve_command(message)
         classified = classify_message(message, state, session["messages"])

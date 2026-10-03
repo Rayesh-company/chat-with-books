@@ -2886,9 +2886,11 @@
       // The closed conversation's resume note (ADR-0016): not a new
       // name — the exact text of ui/research.py's
       // RESEARCH_SESSION_CLOSED_DETAIL, mirrored client-side because
-      // the 409's detail rides no payload once the fetch fails.
+      // the 409's detail rides no payload once the fetch fails. The
+      // v2 wording (decision 04, the research-mode wayfinder map): a
+      // stop is the user's word alone — normal asks pause, never close.
       const RESEARCH_CLOSED_NOTE =
-        "این گفتگوی پژوهش بسته است؛ پرسش تازه‌ای بپرسید.";
+        "این پژوهش بسته شده است؛ پرسش تازه‌ای بپرسید تا پژوهش تازه‌ای شروع شود.";
       // The map's clamp toggles (ADR-0018) — the two NEW draft strings
       // the compass/rail redesign added, pinned here for the PM.
       const MAP_MORE_LABEL = "نمایش بیشتر";
@@ -4930,6 +4932,13 @@
           }
           if (payload.state === "aborted") {
             settleResearchTurn("پاسخ پژوهش لغو شد.");
+            // The pause door (decision 04, the research-mode v2
+            // wayfinder map): an aborted turn means the session was
+            // PAUSED — often by a normal ask — and its message sits in
+            // the server's pause queue. Re-hydrating paints the resume
+            // chip the state endpoint now leads with; the conversation
+            // itself never died.
+            if (researchSessionId) hydrateResearch(researchSessionId);
             return;
           }
           // Still running: an honest timer across a reload, and the
