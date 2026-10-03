@@ -2442,6 +2442,34 @@
           scroll-behavior: auto !important;
         }
       }
+      /* Stage B (research-mode v2): the plan panel's item rows, the
+         resume door, and the guided tour (map tickets 03/12). */
+      .plan-item{border:1px solid rgba(185,138,47,.35);border-radius:10px;padding:6px 10px;margin:6px 0;background:rgba(255,253,246,.55)}
+      .plan-item .pi-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+      .plan-item .pi-title{font-weight:600}
+      .plan-item .pi-status{font-size:11.5px;border-radius:99px;padding:0 10px;margin-inline-start:auto}
+      .plan-item .pi-status.accepted{background:#e2eee5;color:#3e6b4f}
+      .plan-item .pi-status.rejected{background:#f3e0dc;color:#8c3b2e}
+      .plan-item .pi-status.edited{background:#dfe8f0;color:#1b3a56}
+      .plan-item .pi-status.proposed{background:#f3e7c6;color:#b98a2f}
+      .plan-item .pi-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+      .plan-item button{font:inherit;font-size:12.5px;border-radius:8px;padding:2px 12px;cursor:pointer;border:1px solid rgba(39,75,109,.45);background:transparent;color:inherit}
+      .plan-item button.pi-danger{border-color:#8c3b2e;color:#8c3b2e}
+      .plan-item input.pi-edit{width:100%;font:inherit;border:1px solid #b98a2f;border-radius:8px;padding:3px 10px;margin-top:6px;background:#fffdf6;color:inherit}
+      .resume-door{font:inherit;font-size:13px;border:1px solid #b98a2f;color:#b98a2f;background:transparent;border-radius:99px;padding:3px 16px;margin:6px 0;cursor:pointer;display:block}
+      .research-helpbtn{font:inherit;font-size:12.5px;border:1px solid rgba(185,138,47,.6);color:#b98a2f;background:transparent;border-radius:99px;padding:1px 12px;margin-inline-start:auto;cursor:pointer}
+      .research-helpbtn:hover{background:#f3e7c6}
+      .rtour-back{position:fixed;inset:0;background:rgba(43,33,24,.45);z-index:90;display:flex;align-items:center;justify-content:center;padding:16px}
+      .rtour-card{background:#fffdf6;border:1.5px solid #b98a2f;border-radius:16px;max-width:430px;width:100%;padding:18px 20px;box-shadow:0 10px 30px rgba(27,58,86,.25)}
+      .rtour-card .rt-no{font-size:12px;color:#b98a2f}
+      .rtour-card h3{font-size:17px;margin:4px 0 8px}
+      .rtour-card p{font-size:14px;line-height:1.9;white-space:pre-line}
+      .rtour-card .rt-dots{display:flex;gap:6px;margin:12px 0}
+      .rtour-card .rt-dots i{width:8px;height:8px;border-radius:50%;background:rgba(185,138,47,.3)}
+      .rtour-card .rt-dots i.on{background:#b98a2f}
+      .rtour-card .rt-row{display:flex;gap:8px;align-items:center}
+      .rtour-card .rt-row button.go{font:inherit;font-size:13.5px;border:0;border-radius:10px;padding:5px 18px;background:#b98a2f;color:#fff;cursor:pointer}
+      .rtour-card .rt-row button.skip{font:inherit;font-size:13px;background:none;border:none;cursor:pointer;text-decoration:underline;opacity:.75;margin-inline-start:auto;color:inherit}
     </style>
   </head>
   <body>
@@ -4212,6 +4240,7 @@
         researchSectionEl.innerHTML = `
           <div class="phase-row">
             <span class="phase-mark" data-phase="3" data-state="idle"><span class="phase-dot" aria-hidden="true"></span>${PHASE_NAMES[3]}<span class="phase-timer" hidden></span></span>
+            <button type="button" id="research-help-btn" class="research-helpbtn" hidden>راهنما ؟</button>
           </div>
           <!-- Research Mode (ADR-0008 + 0009): the guided research
                journey. The map rides as the persistent side rail
@@ -4278,6 +4307,13 @@
         researchChatEl.replaceChildren(
           researchText(RESEARCH_SECTION_NOTE, "empty")
         );
+        // The tour's reopen door (decision 12) and its one first-show.
+        const helpBtn = researchSectionEl.querySelector("#research-help-btn");
+        if (helpBtn) {
+          helpBtn.hidden = false;
+          helpBtn.addEventListener("click", () => showResearchTour(0));
+        }
+        maybeShowResearchTour();
         researchFormEl.addEventListener("submit", (event) => {
           event.preventDefault();
           sendResearchMessage();
@@ -4553,6 +4589,30 @@
           }
           return sec;
         };
+        // Stage B (research-mode v2, decisions 05/03): the corpus the
+        // session actually searches, and the plan panel whose sections
+        // the operator steers item by item — both read the state
+        // summary the server already carries.
+        if (Array.isArray(state.datasets) && state.datasets.length) {
+          const sec = section("datasets", "کتاب‌های در حال جست‌وجو");
+          const list = document.createElement("ul");
+          list.className = "map-lines";
+          state.datasets.forEach((id) => {
+            const li = document.createElement("li");
+            li.textContent = bookTitleForDataset(id) || id;
+            list.append(li);
+          });
+          sec.append(list);
+          body.append(sec);
+        }
+        const planSections = (state.brief_plan || {}).sections;
+        if (Array.isArray(planSections) && planSections.length) {
+          const sec = section("brief_plan", "برنامۀ پژوهش");
+          planSections.forEach((item) => {
+            if (item && item.key) sec.append(planItemRow(item));
+          });
+          body.append(sec);
+        }
         if (state.frontier) {
           const sec = section("frontier", "در حال پرداختن");
           lineList(sec, "frontier", [`«${state.frontier}»`]).querySelector("li").className =
@@ -4612,6 +4672,211 @@
         );
         body.append(stats);
         container.replaceChildren(body);
+      }
+
+      // ===== Stage B (research-mode v2): the steering doors =====
+
+      // The dataset id -> Farsi title map (the title roster, mirrored
+      // client-side for the corpus row).
+      const DATASET_TITLES = Object.fromEntries(
+        Object.entries(BOOK_DATASET_BY_TITLE).map(([title, id]) => [id, title])
+      );
+      function bookTitleForDataset(id) {
+        return DATASET_TITLES[id] || "";
+      }
+
+      // One plan row: the title, its three-state badge, and the item's
+      // own decisions — reject, re-accept, edit — hitting the
+      // /research/plan-item door (decision 03). The user's steering
+      // never waits for a turn and never arms a cooldown.
+      const PLAN_STATUS_LABELS = {
+        accepted: "پذیرفته",
+        rejected: "ردشده",
+        edited: "ویرایش‌شده",
+        proposed: "پیشنهاد",
+      };
+      function planItemRow(item) {
+        const row = document.createElement("div");
+        row.className = "plan-item";
+        const head = document.createElement("div");
+        head.className = "pi-head";
+        const title = document.createElement("span");
+        title.className = "pi-title";
+        title.textContent = item.title || "—";
+        const badge = document.createElement("span");
+        badge.className = "pi-status " + (item.status || "accepted");
+        badge.textContent = PLAN_STATUS_LABELS[item.status] || item.status || "";
+        head.append(title, badge);
+        row.append(head);
+        const actions = document.createElement("div");
+        actions.className = "pi-actions";
+        const act = (label, danger, fn) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          if (danger) b.className = "pi-danger";
+          b.textContent = label;
+          b.addEventListener("click", fn);
+          actions.append(b);
+        };
+        if (item.status !== "rejected") {
+          act("ویرایش", false, () => {
+            if (row.querySelector("input.pi-edit")) return;
+            const input = document.createElement("input");
+            input.className = "pi-edit";
+            input.value = item.title || "";
+            const save = document.createElement("button");
+            save.type = "button";
+            save.textContent = "ذخیرۀ ویرایش";
+            save.addEventListener("click", () => {
+              const edited = input.value.trim();
+              if (edited) planItemDecide(item.key, "accepted", edited);
+            });
+            row.append(input, save);
+            input.focus();
+          });
+          act("رد می‌کنم", true, () => planItemDecide(item.key, "rejected"));
+        } else {
+          act("بپذیرم", false, () => planItemDecide(item.key, "accepted"));
+        }
+        row.append(actions);
+        return row;
+      }
+
+      async function planItemDecide(key, status, edited) {
+        if (!researchSessionId) return;
+        const body = { session_id: researchSessionId, key, status };
+        if (edited) body.edited = edited;
+        try {
+          const res = await fetch("/research/plan-item", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify(body),
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            appendResearchError(payload.detail || "تصمیم بخش برنامه ثبت نشد.");
+            return;
+          }
+          if (Array.isArray(payload.reply)) {
+            appendResearchMessage("assistant", researchBlocksNode(payload.reply));
+          }
+          if (payload.research_state) renderResearchState(payload.research_state);
+          scrollThreadEnd(false);
+        } catch {
+          appendResearchError("ارتباط با سرویس پژوهش قطع شد.");
+        }
+      }
+
+      // The closed session's door (decision 04): fork the stopped
+      // investigation into a fresh session and continue in it.
+      async function resumeClosedResearch() {
+        if (!researchSessionId) return;
+        try {
+          const res = await fetch("/research/resume-from", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ session_id: researchSessionId }),
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok || !payload.session_id) {
+            appendResearchError(payload.detail || "ادامهٔ پژوهش ممکن نشد.");
+            return;
+          }
+          researchSessionId = payload.session_id;
+          storeResearch({ session_id: researchSessionId });
+          await hydrateResearch(researchSessionId);
+        } catch {
+          appendResearchError("ارتباط با سرویس پژوهش قطع شد.");
+        }
+      }
+
+      // ===== The guided tour (decision 12): 4 steps, skippable, one
+      // first-show per browser, reopened by «راهنما ؟». =====
+      const RESEARCH_TOUR_STEPS = [
+        {
+          t: "این حالت چیست؟",
+          b: "پرسشت را همین‌جا بپرس. کتاب‌ها جست‌وجو می‌شوند و جواب با نقل‌قول و شمارهٔ صفحه می‌آید — نه از حافظهٔ مدل.",
+        },
+        {
+          t: "برنامۀ پژوهش",
+          b: "مسیرِ پژوهش اینجاست: پرسش‌ها، بخش‌ها و شواهد. هر بخش را جداگانه قبول، رد یا ویرایش کن — کل یا هیچ نیست.",
+        },
+        {
+          t: "پیام تو فرمان می‌برد",
+          b: "هر پیامی که بفرستی، اگر قرار باشد مسیر عوض شود، یک «اصلاح برنامه» پیشنهاد می‌شود؛ چیزی بدون تایید تو اجرا نمی‌شود.",
+        },
+        {
+          t: "پایان مسیر: ژورنال",
+          b: "خروجیِ نهایی یک نوشتهٔ مشترکِ تو و کتاب‌هاست — هر ادعا یا نقل‌قولِ ارجاع‌دار است یا با برچسب «دیدگاه پژوهشگر» می‌آید.",
+        },
+      ];
+      const RESEARCH_TOUR_FLAG = "cwb-research-tour-done";
+      function showResearchTour(step) {
+        if (step === undefined) step = 0;
+        const old = document.getElementById("rtour-back");
+        if (old) old.remove();
+        const back = document.createElement("div");
+        back.className = "rtour-back";
+        back.id = "rtour-back";
+        const card = document.createElement("div");
+        card.className = "rtour-card";
+        card.setAttribute("role", "dialog");
+        card.setAttribute("aria-label", "راهنمای حالت پژوهش");
+        const no = document.createElement("div");
+        no.className = "rt-no";
+        no.textContent =
+          "مرحلهٔ " + toPersianDigits(step + 1) +
+          " از " + toPersianDigits(RESEARCH_TOUR_STEPS.length);
+        const h = document.createElement("h3");
+        h.textContent = RESEARCH_TOUR_STEPS[step].t;
+        const bodyText = document.createElement("p");
+        bodyText.textContent = RESEARCH_TOUR_STEPS[step].b;
+        const dots = document.createElement("div");
+        dots.className = "rt-dots";
+        RESEARCH_TOUR_STEPS.forEach(function (_, i) {
+          const dot = document.createElement("i");
+          if (i === step) dot.className = "on";
+          dots.append(dot);
+        });
+        const row = document.createElement("div");
+        row.className = "rt-row";
+        const next = document.createElement("button");
+        next.type = "button";
+        next.className = "go";
+        next.textContent =
+          step === RESEARCH_TOUR_STEPS.length - 1 ? "شروع پژوهش" : "بعدی";
+        next.addEventListener("click", function () {
+          if (step < RESEARCH_TOUR_STEPS.length - 1) showResearchTour(step + 1);
+          else closeResearchTour(true);
+        });
+        const skip = document.createElement("button");
+        skip.type = "button";
+        skip.className = "skip";
+        skip.textContent = "رد کردن";
+        skip.addEventListener("click", function () {
+          closeResearchTour(true);
+        });
+        row.append(next, skip);
+        card.append(no, h, bodyText, dots, row);
+        back.append(card);
+        back.addEventListener("click", function (event) {
+          if (event.target === back) closeResearchTour(true);
+        });
+        document.body.append(back);
+      }
+      function closeResearchTour(markDone) {
+        const node = document.getElementById("rtour-back");
+        if (node) node.remove();
+        if (markDone) {
+          try {
+            localStorage.setItem(RESEARCH_TOUR_FLAG, "1");
+          } catch (err) {}
+        }
+      }
+      function maybeShowResearchTour() {
+        try {
+          if (!localStorage.getItem(RESEARCH_TOUR_FLAG)) showResearchTour(0);
+        } catch (err) {}
       }
 
       function renderResearchState(state) {
@@ -5034,6 +5299,18 @@
             appendResearchError(
               payload.detail || "پیام پژوهش فرستاده نشد؛ دوباره تلاش کنید."
             );
+            // The closed session's door (decision 04): the 409 means
+            // the investigation was STOPPED on the operator's word —
+            // the fork button offers to continue from exactly that
+            // state in a fresh session.
+            if (res.status === 409 && researchSessionId) {
+              const door = document.createElement("button");
+              door.type = "button";
+              door.className = "resume-door";
+              door.textContent = "ادامه از همین state";
+              door.addEventListener("click", resumeClosedResearch);
+              researchChatEl.append(door);
+            }
             setPhaseState(3, "ready");
             setRunningPhase(null);
             armResearchInput();
@@ -5065,10 +5342,10 @@
         researchSources = sources;
       }
 
-      // A new ask owns the thread: stop polling, drop the stored
-      // identities, and close the research section — the server
-      // aborts the Account's in-flight turn and closes its session on
-      // the ask's own recall POST (ADR 0008).
+      // A new ask owns the THREAD only (decision 04): stop polling and
+      // drop the stored identities — the server PAUSES the Account's
+      // in-flight turn and keeps its session open on the ask's own
+      // recall POST, so the sidebar's linkage still finds the trail.
       function resetResearch() {
         researchRun += 1;
         stopResearchPolling();

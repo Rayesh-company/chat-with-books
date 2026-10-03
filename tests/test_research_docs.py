@@ -440,3 +440,28 @@ def test_context_glossary_holds_the_fog_probe():
     assert (
         "the fog probe (کاوشگر) makes that graduation earn itself" in text
     )
+
+
+def test_the_stage_b_steering_surfaces_are_pinned():
+    # The research-mode v2 doors (2026-10-04, wayfinder tickets 03/12):
+    # the plan panel's item rows and their per-item decisions, the
+    # closed session's fork button, and the guided tour's reopen door —
+    # every NEW visible string rides one pinned block.
+    html = INDEX.read_text(encoding="utf-8")
+    for literal in (
+        "research-help-btn",
+        "راهنما ؟",
+        "برنامۀ پژوهش",
+        "کتاب‌های در حال جست‌وجو",
+        "PLAN_STATUS_LABELS",
+        "بخش برنامه",  # the plan-item door's error/reply texts ride the
+        # server's own constants; the panel's status vocabulary is the
+        # one client-side roster.
+        "ادامه از همین state",
+        "resume-door",
+        "rtour-card",
+        "رد کردن",
+        "شروع پژوهش",
+        "دیدگاه پژوهشگر",
+    ):
+        assert literal in html, literal
