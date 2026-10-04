@@ -225,20 +225,20 @@ def test_the_keeper_parks_one_cleanup_and_moves_nothing(tmp_path):
     # operator's decision.
     state = crowded_state()
     before = json.dumps(state["subquestions"]), json.dumps(state["map"]["fog"])
-    upstream = ResearchUpstream(composer_replies=[classify_reply("map_keeper")])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=state)
     turn = keeper_turn(session, upstream, tmp_path)
     assert turn.state == "done"
-    # The survey is free: the classify call was the turn's only
-    # upstream call.
-    assert len(composer_bodies(upstream)) == 1
+    # The survey is free — and W4 (stage C) took the chip's classify
+    # call: the turn's upstream footprint is exactly zero.
+    assert len(composer_bodies(upstream)) == 0
     proposal = session["state"]["pending_proposals"]
     assert [item["kind"] for item in proposal] == ["map_cleanup"]
     assert proposal[0]["drop_questions"] == ["q1", "d0"]
     assert proposal[0]["drop_fog"] == ["f1"]
     notes = [block["text"] for block in turn.result["reply"]]
-    assert any("پالایش نقشه" in text for text in notes)
-    assert any("پرسش «کهنه» از نقشه برداشته می‌شود" in text for text in notes)
+    assert any("مرتب‌کردن برنامه" in text for text in notes)
+    assert any("پرسش «کهنه» از برنامه برداشته می‌شود" in text for text in notes)
     assert (json.dumps(session["state"]["subquestions"]), json.dumps(
         session["state"]["map"]["fog"]
     )) == before
@@ -273,14 +273,14 @@ def test_the_accepted_cleanup_applies_exactly_its_named_rows(tmp_path):
     assert state["map"]["fog"] == []
     assert state["evidence"] == []
     # The decision line names what went; the provenance is untouched.
-    assert "نقشه پالایش شد" in state["decisions"][-1]["text"]
+    assert "برنامه مرتب شد" in state["decisions"][-1]["text"]
     assert "«کهنه»" in state["decisions"][-1]["text"]
     assert len(state["research_question"]["versions"]) == 1
     # The usual cooldown damps the kind.
     assert state["proposal_cooldowns"]["map_cleanup"] == (
         research.PROPOSAL_COOLDOWN_TURNS
     )
-    assert any("نقشه پالایش شد" in block["text"] for block in result["reply"])
+    assert any("برنامه مرتب شد" in block["text"] for block in result["reply"])
 
 
 def test_the_reject_records_the_refusal_damps_and_never_reproposes(tmp_path):
@@ -345,11 +345,13 @@ def test_a_clean_map_costs_one_honest_note(tmp_path):
     state["subquestions"] = [
         {"id": "q1", "name": "یکی", "text": "یکی؟", "status": "pending"}
     ]
-    upstream = ResearchUpstream(composer_replies=[classify_reply("map_keeper")])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=state)
     turn = keeper_turn(session, upstream, tmp_path)
     assert turn.state == "done"
-    assert len(composer_bodies(upstream)) == 1
+    # W4 (stage C): the chip turn's classify call is gone — the clean
+    # map's honest note costs zero composer calls.
+    assert len(composer_bodies(upstream)) == 0
     assert session["state"]["pending_proposals"] == []
     assert session["state"]["subquestions"][0]["id"] == "q1"
     notes = [block["text"] for block in turn.result["reply"]]

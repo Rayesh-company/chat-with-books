@@ -57,7 +57,7 @@ from urllib.request import urlopen
 
 try:
     from ui.composer import _composer_content, _composer_reply, set_meter
-    from ui.ledger import record_composer_call
+    from ui.ledger import record_composer_call, record_search_estimate
     from ui.dive import (
         BOOK_DATASETS,
         DIVE_MAX_SUB_QUESTIONS,
@@ -67,8 +67,10 @@ try:
         dive_retrieve,
         graph_hop,
         run_tool,
+        set_search_meter,
     )
     from ui.guard import (
+        _BOOK_TITLES,
         _count_word,
         _json_object,
         _numbered_passages,
@@ -80,7 +82,7 @@ try:
     from ui import research_store
 except ImportError:  # the container runs serve.py as a script beside the modules
     from composer import _composer_content, _composer_reply, set_meter
-    from ledger import record_composer_call
+    from ledger import record_composer_call, record_search_estimate
     from dive import (
         BOOK_DATASETS,
         DIVE_MAX_SUB_QUESTIONS,
@@ -90,8 +92,10 @@ except ImportError:  # the container runs serve.py as a script beside the module
         dive_retrieve,
         graph_hop,
         run_tool,
+        set_search_meter,
     )
     from guard import (
+        _BOOK_TITLES,
         _count_word,
         _json_object,
         _numbered_passages,
@@ -110,10 +114,10 @@ RESEARCH_MODEL = "glm-5.3-flash"
 # turn runs AT MOST one operation, and the fixed chip commands below map
 # to one deterministically — the chips the sheet offers are exactly
 # these texts, so a chip press needs no classification luck.
-COMMAND_GATHER = "شواهد بیشتری از کتاب‌ها پیدا کن"
-COMMAND_SYNTHESIZE = "شواهد را تحلیل و جمع‌بندی کن"
-COMMAND_BRIEF = "خلاصۀ پژوهش را بنویس"
-COMMAND_AUDIT = "ادعاها و استنادها را بازبینی کن"
+COMMAND_GATHER = "بیشتر جست‌وجو کن"
+COMMAND_SYNTHESIZE = "شواهد را جمع‌بندی کن"
+COMMAND_BRIEF = "ژورنال را بنویس"
+COMMAND_AUDIT = "استنادها را بررسی کن"
 COMMAND_MOVES = {
     COMMAND_GATHER: "gather",
     COMMAND_SYNTHESIZE: "synthesize",
@@ -125,7 +129,7 @@ COMMAND_MOVES = {
 # without an answer, and the guide chip that pulls the journey back on
 # track after a conversational detour. All resolve server-side — no
 # classification luck.
-COMMAND_GATHER_ALL = "همهٔ پرسش‌های باز را جست‌وجو کن"
+COMMAND_GATHER_ALL = "همهٔ پرسش‌ها را جست‌وجو کن"
 GRILLING_SKIP = "فعلاً همین کافی است؛ ادامه بده"
 # The skip's landing as a decision (T10 #11): the map's decisions index
 # records the user declining the guided question — the same record in
@@ -133,11 +137,26 @@ GRILLING_SKIP = "فعلاً همین کافی است؛ ادامه بده"
 GRILLING_SKIP_DECISION = (
     "کاربر پاسخ دادن به پرسش راهنما را رد کرد؛ ادامه با وضع موجود."
 )
-COMMAND_GUIDE = "ادامهٔ سفر پژوهش"
+COMMAND_GUIDE = "ادامهٔ پژوهش"
 # The stall escape's stop (T6, ADR-0012): the operator ends a starved
 # session on their own word — the map and the ledgers stay, no Brief is
-# fabricated to close with.
+# fabricated to close with. Closing is the ONLY permanent door into
+# closed (decision 04): a new ask pauses, never closes.
 COMMAND_STOP = "توقف پژوهش"
+# The pause queue's chip (decision 04, the research-mode v2 wayfinder
+# map): a new normal ask pauses the in-flight research turn and keeps
+# its message queued; this chip re-runs exactly that message — the
+# user's own words, not the chip text, ride the classifier. DRAFT
+# display name (the CONTEXT.md PM row owns the rename).
+COMMAND_RESUME = "پیام قبلی را دوباره اجرا کن"
+# The plan-request chip (decision 03, the research-mode v2 wayfinder
+# map): one deterministic tap asks for the section plan — the chip-only
+# user's exit from the plan gate (the deadlock the pilot recorded: no
+# chip proposed a plan, and the Brief refuses without one). No
+# classification luck between the user and their plan: one dedicated
+# composer call, the plan parks as a pending proposal the decide flow
+# owns. DRAFT display name (the CONTEXT.md PM row owns the rename).
+COMMAND_SUGGEST_PLAN = "برنامۀ پژوهش را پیشنهاد بده"
 # The Closing review's revise chip (T9, ADR-0012): the second chip of
 # the review's verdict — one tap reruns ONLY the failing sections, the
 # review then faces the reassembled document again. Resolved
@@ -147,12 +166,12 @@ COMMAND_REVISE = "بازنویسی بخش‌های ناکام خلاصه"
 # survey — the keeper proposes the cleanups it finds as the user's
 # decision, never applying one. Resolved server-side like every fixed
 # command, no classification luck.
-COMMAND_KEEP_MAP = "نقشه را مرتب کن"
+COMMAND_KEEP_MAP = "برنامه را مرتب کن"
 # The fog probe's chip (T13, ADR-0012): one tap sends کاوشگر at the
 # oldest fog note still without a verdict — the map grows on evidence,
 # not vibes. Resolved server-side like every fixed command, no
 # classification luck.
-COMMAND_PROBE_FOG = "مه را کاوش کن"
+COMMAND_PROBE_FOG = "نامشخص‌ها را بررسی کن"
 # The Session report's chip (T19, GitLab #22): the sheet's door to the
 # walk-away artifact (گزارش نشست) once a Brief section stands. NOT a
 # turn command — it is a DOWNLOAD (the sheet fetches the report read
@@ -169,11 +188,11 @@ TARGETED_GATHER_RE = re.compile(r"^شواهدِ «(.+)» را پیدا کن$")
 # observable state — the model proposes content, never moves stages.
 RESEARCH_STAGES = ("orientation", "mapping", "investigating", "synthesizing", "drafting")
 STAGE_LABELS = {
-    "orientation": "نام‌گذاری مقصد",
-    "mapping": "نقشه‌برداری",
-    "investigating": "گردآوری شواهد",
+    "orientation": "هدف‌گذاری",
+    "mapping": "آشنایی با کتاب",
+    "investigating": "جست‌وجو در کتاب",
     "synthesizing": "تحلیل و جمع‌بندی",
-    "drafting": "نوشتن خلاصه",
+    "drafting": "نوشتن ژورنال",
 }
 # A guided-question (grilling) round asks ONE thing and waits; the stage
 # gives up asking after this many rounds and proceeds on what it has.
@@ -557,7 +576,24 @@ RESEARCH_BUSY_GLOBAL_DETAIL = (
 )
 RESEARCH_TURN_NOT_FOUND_DETAIL = "چنین پیام پژوهشی پیدا نشد."
 RESEARCH_SESSION_NOT_FOUND_DETAIL = "چنین گفتگوی پژوهشی پیدا نشد."
-RESEARCH_SESSION_CLOSED_DETAIL = "این گفتگوی پژوهش بسته است؛ پرسش تازه‌ای بپرسید."
+# The closed session's friendly door (decision 04, the research-mode v2
+# wayfinder map): a stop is the user's word alone — the text says what
+# the sheet can do today; ui/index.html's RESEARCH_CLOSED_NOTE mirrors
+# it verbatim (ADR-0016's contract).
+RESEARCH_SESSION_CLOSED_DETAIL = (
+    "این پژوهش بسته شده است؛ پرسش تازه‌ای بپرسید تا پژوهش تازه‌ای شروع شود."
+)
+# The resume chip's two honest answers (decision 04): nothing paused
+# means nothing to re-run — the user's next words, not the chip, are
+# the move.
+RESEARCH_RESUME_EMPTY_DETAIL = (
+    "پیام نگه‌داشته‌شده‌ای برای اجرای دوباره نیست؛ پرسش خود را بفرستید."
+)
+# A fork was asked of a session that is not closed: the door is for
+# stopped investigations only — a live conversation continues itself.
+RESEARCH_RESUME_OPEN_DETAIL = (
+    "این پژوهش هنوز باز است؛ همان گفتگو را ادامه دهید."
+)
 RESEARCH_PROPOSAL_NOT_FOUND_DETAIL = "چنین پیشنهادی پیدا نشد."
 RESEARCH_SESSION_CAP_DETAIL = (
     "این گفتگوی پژوهش طولانی شده است؛ پیشنهاد می‌شود خلاصۀ پژوهش را "
@@ -572,6 +608,28 @@ RESEARCH_EMPTY_REPLY_DETAIL = "پاسخ نگارنده قابل استفاده �
 RESEARCH_BRIEF_NEEDS_PLAN_DETAIL = (
     "خلاصۀ پژوهش بدون برنامۀ پذیرفتۀ بخش‌ها نوشته نمی‌شود؛ اول برنامۀ "
     "بخش‌ها را بپذیرید."
+)
+# The all-rejected plan (decision 03): per-item steering can empty the
+# plan — the Brief refuses as honestly as it does without a plan.
+RESEARCH_BRIEF_NO_SECTIONS_DETAIL = (
+    "همهٔ بخش‌های برنامهٔ پژوهش رد شده‌اند؛ بخشی برای نوشتن نمانده است."
+)
+# The plan-item door's validation (decision 03): the status vocabulary
+# is two words, nothing else.
+RESEARCH_PLAN_ITEM_DETAIL = "وضعیت بخش برنامه درست نیست؛ فقط پذیرش یا رد معتبر است."
+# The plan-request chip's honest block (decision 03): the park gates
+# said no — a plan waits, a fresh cooldown runs, or the proposal would
+# restate a decision the operator already made.
+RESEARCH_PLAN_REQUEST_BLOCKED_NOTE = (
+    "برنامهٔ تازه‌ای الان پیشنهاد نمی‌کنم؛ یا برنامه‌ای در انتظار تصمیم شماست "
+    "یا همین برنامه را همین اواخر تصمیم گرفتید."
+)
+# The journey's own cost ceiling (stage C, findings-02 lever 5): the
+# visible metered spend a session may accumulate before the engine
+# itself says enough — the honest note, never a silent stop.
+RESEARCH_SESSION_COST_CAP_TOMAN = 2000
+RESEARCH_SESSION_COST_CAP_DETAIL = (
+    "سقف هزینهٔ این پژوهش پر شده است؛ جمع‌بندی کن یا در پژوهشی تازه ادامه بده."
 )
 # A section's honest-gap fallback (T8): after the guard and exactly one
 # retry, a section its contract cannot feed is written AS a gap — the
@@ -605,7 +663,7 @@ REVIEW_FINDING_LABELS = {
 # document: the honest refusal — the review never fabricates a Brief to
 # review.
 RESEARCH_REVIEW_NO_DOCUMENT_DETAIL = (
-    "خلاصه‌ای برای بازبینی نوشته نشده؛ اول خلاصۀ پژوهش را بنویسید."
+    "خلاصه‌ای برای بازبینی نوشته نشده؛ اول ژورنال را بنویسید."
 )
 # The budget's honest stop (T3): the timeline event and the note the
 # transcript keeps. An over-budget turn names its stop — never a fake
@@ -620,7 +678,7 @@ RESEARCH_BUDGET_STOP_DETAIL = (
 # and ledgers intact, never a fabricated Brief.
 RESEARCH_STOP_DECISION = "کاربر پژوهش را در همین نقطه متوقف کرد."
 RESEARCH_STOP_DETAIL = (
-    "پژوهش متوقف شد؛ نقشه و شواهد ثبت‌شده همین‌جا می‌مانند و خلاصه‌ای "
+    "پژوهش متوقف شد؛ وضعیت و شواهد ثبت‌شده همین‌جا می‌مانند و خلاصه‌ای "
     "نوشته نمی‌شود. برای ادامه، گفتگوی پژوهش تازه‌ای بسازید."
 )
 # An adjustment decision without one of the parked menu's choices is
@@ -632,10 +690,10 @@ RESEARCH_ADJUSTMENT_CHOICE_DETAIL = (
 # one the cooldown still damps, and one whose exact cleanup the
 # operator already decided — each says which, never a fake proposal.
 RESEARCH_MAP_CLEAN_NOTE = (
-    "نقشه تمیز است؛ پرسش تکراری یا مهِ قدیمی برای پاک‌سازی پیدا نشد."
+    "برنامه تمیز است؛ پرسش تکراری یا نامشخصِ قدیمی برای پاک‌سازی پیدا نشد."
 )
 RESEARCH_MAP_COOLDOWN_NOTE = (
-    "پالایش نقشه به‌تازگی تصمیم گرفت؛ چند پیام دیگر دوباره بررسی می‌شود."
+    "مرتب‌کردن برنامه به‌تازگی تصمیم گرفت؛ چند پیام دیگر دوباره بررسی می‌شود."
 )
 RESEARCH_MAP_DECIDED_NOTE = (
     "این پاک‌سازی پیش‌تر پیشنهاد شد و تصمیمش ثبت است؛ چیزی تازه برای "
@@ -644,7 +702,7 @@ RESEARCH_MAP_DECIDED_NOTE = (
 # The fog probe's honest landing when the map holds no note left to
 # probe (T13): every note carries its verdict already, or the fog is
 # empty — either way the turn costs one honest note and no search.
-RESEARCH_PROBE_NO_FOG_DETAIL = "مه‌ای برای کاوش روی نقشه نیست."
+RESEARCH_PROBE_NO_FOG_DETAIL = "نامشخصی برای بررسی نیست."
 
 _FARSI_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 
@@ -710,6 +768,7 @@ def new_research_state(goal: str) -> dict:
             "research_question": 0,
             "scope": 0,
             "brief_plan": 0,
+            "corpus": 0,
             "map_cleanup": 0,
         },
         "pending_proposals": [],
@@ -792,6 +851,14 @@ def _section_contracts_from_plan(state: dict, sections: list) -> list:
     return [
         {
             "title": section.get("title", ""),
+            "key": section.get(
+                "key", normalize_for_match(section.get("title", ""))
+            ),
+            # The item's three-state status rides the contract (decision
+            # 03): the Brief writes the accepted and edited sections and
+            # skips the rejected — old plans without statuses read as
+            # accepted (their whole-plan acceptance said exactly that).
+            "status": section.get("status", "accepted"),
             "question": section.get("question", ""),
             "claims": [
                 claim_id
@@ -917,7 +984,10 @@ def _add_open_question(state: dict, text: str, name: str = "") -> bool:
         return False
     state["subquestions"].append(
         {
-            "id": f"q{len(state['subquestions']) + 1}",
+            # The ledger's own id mint (the pm incident's four q13s:
+            # length+1 re-mints the same id once the cap trims the
+            # list — _next_ledger_id scans the survivors' own ids).
+            "id": _next_ledger_id(state["subquestions"], "q"),
             "name": (str(name).strip() or _short_name(text))[:60],
             "text": text,
             "status": "pending",
@@ -1111,6 +1181,17 @@ def research_state_summary(state: dict) -> dict:
             item.get("text", "") for item in state.get("map", {}).get("fog", [])[:6]
         ],
         "out_of_scope": list(state.get("scope", {}).get("out", []))[:6],
+        # The corpus the session actually searches (decision 05): the
+        # router, the guide, and the sheet's plan panel all read it —
+        # the engine is corpus-blind no more, so a «کل کتب» message has
+        # a pathway besides a new session.
+        "datasets": [
+            str(item) for item in (state.get("datasets") or []) if item
+        ][:6],
+        # The journey's visible spend so far (stage C): metered composer
+        # calls accumulated into the state — the sheet's cost line and
+        # the session cap both read it.
+        "cost_toman": int(state.get("cost_toman") or 0),
         "grilling": {
             "question": grilling.get("current_question", ""),
             "options": list(grilling.get("options", []))[:4],
@@ -1123,7 +1204,15 @@ def research_state_summary(state: dict) -> dict:
             "accepted": bool(plan_current),
             "versions": len(plan.get("versions", [])),
             "sections": [
-                section.get("title", "") for section in plan_current.get("sections", [])
+                {
+                    "title": section.get("title", ""),
+                    "key": section.get(
+                        "key", normalize_for_match(section.get("title", ""))
+                    ),
+                    "status": section.get("status", "accepted"),
+                }
+                for section in plan_current.get("sections", [])
+                if isinstance(section, dict)
             ][:6],
         },
         # The standing Brief document and the Closing review's
@@ -1348,6 +1437,17 @@ def research_suggestions(state: dict) -> list:
             suggestions.append({"kind": "move", "id": "brief", "text": COMMAND_BRIEF})
         if stalled:
             suggestions.append({"kind": "move", "id": "stop", "text": COMMAND_STOP})
+    # The plan-request chip (decision 03): while no plan is accepted and
+    # none waits, one deterministic tap proposes it — the chip-only
+    # user's exit from the plan gate (the pilot's recorded deadlock). A
+    # working move, so it rides AHEAD of the housekeeping chips.
+    if not (state.get("brief_plan") or {}).get("current") and not any(
+        item.get("kind") == "brief_plan"
+        for item in state.get("pending_proposals", [])
+    ):
+        suggestions.append(
+            {"kind": "move", "id": "plan", "text": COMMAND_SUGGEST_PLAN}
+        )
     # The fog probe's chip (T13): one tap sends کاوشگر at the oldest
     # fog note still without a verdict — the map grows on evidence, not
     # vibes. A note the probe already judged is never probed twice (the
@@ -1407,6 +1507,10 @@ def resolve_command(message: str):
         return "guide", None
     if stripped == COMMAND_STOP:
         return "stop", None
+    if stripped == COMMAND_RESUME:
+        return "resume", None
+    if stripped == COMMAND_SUGGEST_PLAN:
+        return "plan_request", None
     if stripped == COMMAND_REVISE:
         return "revise", None
     if stripped == COMMAND_KEEP_MAP:
@@ -1489,10 +1593,10 @@ def build_classify_prompt(message: str, state: dict, tail: str) -> str:
         f"\"{COMMAND_PROBE_FOG}\" -> fog_probe.\n\n"
         "Also propose, ONLY when the message gives real cause (empty or "
         "empty list otherwise). The map-mode rule: rq_proposal, "
-        "scope_in/scope_out, and brief_plan are CHART edits — propose "
-        "them ONLY when you chose intent research_exploration; on an "
-        "active-research, drafting, or audit turn the user is WORKING, "
-        "so leave them empty:\n"
+        "scope_in/scope_out, corpus, and brief_plan are CHART edits — "
+        "propose them ONLY when you chose intent research_exploration; "
+        "on an active-research, drafting, or audit turn the user is "
+        "WORKING, so leave them empty:\n"
         "- rq_proposal: a refined research question in Farsi, materially "
         "sharper than the current one — never a restatement\n"
         "- reason: one short Farsi sentence saying why the refinement "
@@ -1503,6 +1607,11 @@ def build_classify_prompt(message: str, state: dict, tail: str) -> str:
         "the Books for\n"
         "- scope_in, scope_out: short Farsi phrases naming what the "
         "investigation should include or exclude\n"
+        f"- corpus: ONLY when the message asks to change WHICH Books the "
+        f"research searches (for example a cross-Book or whole-library "
+        f"question): the new dataset id list as JSON, each id one of "
+        f"{json.dumps(BOOK_DATASETS)}; empty otherwise. The session "
+        f"currently searches the datasets named in the state summary\n"
         "- brief_plan: when the message asks to PLAN the closing Brief "
         "— its shape before any writing — the proposed section plan as "
         "a JSON list of two to five objects "
@@ -1525,8 +1634,8 @@ def build_classify_prompt(message: str, state: dict, tail: str) -> str:
         "Reply with ONLY a JSON object, no prose, no code fence:\n"
         '{"intent": "casual_question", "rq_proposal": "", "reason": "", '
         '"concepts": [], "subquestions": [], "scope_in": [], '
-        '"scope_out": [], "brief_plan": [], "answer_gist": "", "fog": [], '
-        '"new_open_questions": []}'
+        '"scope_out": [], "corpus": [], "brief_plan": [], '
+        '"answer_gist": "", "fog": [], "new_open_questions": []}'
     )
 
 
@@ -1565,9 +1674,29 @@ def parse_classify_strict(content):
             }
         )
     out["new_open_questions"] = questions[:4]
-    # The Brief plan's sections (T7): each keeps a title, the named
-    # open question it answers, and its claim ids — junk entries and
-    # titleless sections drop, the rest cap at five.
+    # The corpus proposal (decision 05): only ids the deployment
+    # actually holds ever ride; anything else drops silently to a no-op.
+    corpus_raw = parsed.get("corpus")
+    out["corpus"] = [
+        item.strip()
+        for item in (corpus_raw if isinstance(corpus_raw, list) else [])
+        if isinstance(item, str) and item.strip() in BOOK_DATASETS
+    ][: len(BOOK_DATASETS)]
+    out["brief_plan"] = _plan_sections_from(parsed)
+    out["concepts"] = out["concepts"][:DIVE_MAX_SUB_QUESTIONS]
+    out["subquestions"] = out["subquestions"][:DIVE_MAX_SUB_QUESTIONS]
+    out["scope_in"] = out["scope_in"][:4]
+    out["scope_out"] = out["scope_out"][:4]
+    out["fog"] = out["fog"][:4]
+    return out
+
+
+def _plan_sections_from(parsed: dict) -> list:
+    """The Brief plan's sections out of any reply object (T7): each
+    keeps a title, the named open question it answers, and its claim
+    ids — junk entries and titleless sections drop, the rest cap at
+    five. Shared by the classify parse and the plan-request chip's own
+    dedicated call."""
     sections = []
     for item in parsed.get("brief_plan") or []:
         if not isinstance(item, dict):
@@ -1593,13 +1722,7 @@ def parse_classify_strict(content):
                 "claims": claims[:6],
             }
         )
-    out["brief_plan"] = sections[:5]
-    out["concepts"] = out["concepts"][:DIVE_MAX_SUB_QUESTIONS]
-    out["subquestions"] = out["subquestions"][:DIVE_MAX_SUB_QUESTIONS]
-    out["scope_in"] = out["scope_in"][:4]
-    out["scope_out"] = out["scope_out"][:4]
-    out["fog"] = out["fog"][:4]
-    return out
+    return sections[:5]
 
 
 def parse_classify_reply(content):
@@ -1685,6 +1808,58 @@ def plan_subquestions(question: str) -> list:
     except (KeyError, ValueError, OSError):
         return [question]
     return subquestions_from_reply(content, question)
+
+
+def build_plan_prompt(state: dict) -> str:
+    """The plan-request chip's dedicated brief (decision 03): unlike
+    the classify pass this call asks ONLY for the section plan — the
+    chip means the user asked for a plan, so no classification luck
+    stands between them and it."""
+    summary = json.dumps(research_state_summary(state), ensure_ascii=False)
+    return (
+        "You are the planning assistant of a Farsi research conversation "
+        "over a fixed set of Books. The user asked for a section plan of "
+        "the closing research summary (the journal). Plan TWO to FIVE "
+        "sections: each answers ONE of the investigation's named open "
+        "questions and is supported by the recorded claim ids.\n\n"
+        f"Current research state (JSON):\n{summary}\n\n"
+        "Reply with ONLY a JSON object, no prose, no code fence:\n"
+        '{"brief_plan": [{"title": "<short Farsi section title>", '
+        '"question": "<the name of ONE open question from the state>", '
+        '"claims": ["<claim id>", ...]}]}'
+    )
+
+
+def _plan_request_turn(turn: ResearchTurn, state: dict) -> list:
+    """The plan-request chip's turn (decision 03): one dedicated
+    composer call asks only for the section plan; the SAME park gates
+    decide whether it lands (cooldown, one at a time, no restating a
+    decided plan). A plan already waiting simply re-presents its
+    checkpoint — the tap is never wasted and never double-parks."""
+    if any(
+        item.get("kind") == "brief_plan"
+        for item in state.get("pending_proposals", [])
+    ):
+        return _checkpoint_reply(state)
+    turn.budget.require(1)
+    _turn_write(turn, "planning", RESEARCH_EVENT_PLANNING)
+    try:
+        reply = _composer_reply(
+            build_plan_prompt(state),
+            "enabled",
+            RESEARCH_MODEL,
+            urlopen_fn=urlopen,
+        )
+        content = _composer_content(reply)
+    except (KeyError, ValueError, OSError):
+        return [{"type": "note", "text": RESEARCH_FAILED_DETAIL}]
+    parsed = _json_object(content) if isinstance(content, str) else None
+    sections = _plan_sections_from(parsed if isinstance(parsed, dict) else {})
+    if not sections:
+        return [{"type": "note", "text": RESEARCH_EMPTY_REPLY_DETAIL}]
+    if _park_brief_plan(state, sections):
+        return _checkpoint_reply(state)
+    return [{"type": "note", "text": RESEARCH_PLAN_REQUEST_BLOCKED_NOTE}]
 
 
 # --- the guided-question author and the journey narrator (ADR-0009) --------
@@ -2490,9 +2665,17 @@ def research_session_state(account: str, session_id: str):
     if session["state"].get("closed"):
         return None, (409, RESEARCH_SESSION_CLOSED_DETAIL)
     ensure_state_shape(session["state"])
+    suggestions = research_suggestions(session["state"])
+    if _PAUSED_MESSAGES.get(session_id):
+        # The paused turn's door back in (decision 04): the refresh's
+        # chip row leads with the re-run, so the message the new ask
+        # paused is one tap away — the conversation itself never died.
+        suggestions = [
+            {"kind": "move", "id": "resume", "text": COMMAND_RESUME}
+        ] + suggestions
     return {
         "research_state": research_state_summary(session["state"]),
-        "suggestions": research_suggestions(session["state"]),
+        "suggestions": suggestions,
     }, None
 
 
@@ -2548,12 +2731,38 @@ def _apply_decision(state: dict, proposal: dict, accept: bool, choice=None) -> s
         # DERIVES the Section contracts (T8): one per planned section,
         # snapped against the claim ledger and the scope as they stand
         # now — the record each section is written against.
+        # Decision 03 (the research-mode v2 wayfinder map): every
+        # section lands as its OWN addressable decision too — a stable
+        # key plus a three-state status the plan-item door can steer
+        # item by item afterwards; whole-plan acceptance starts them
+        # accepted (the harness's chip flow is one tap, not two).
         sections = proposal.get("sections", [])
+        for section in sections:
+            if isinstance(section, dict):
+                section.setdefault(
+                    "key",
+                    normalize_for_match(section.get("title", ""))
+                    or uuid.uuid4().hex[:8],
+                )
+                section["status"] = "accepted"
         plan = state.setdefault("brief_plan", {"current": None, "versions": []})
         plan["versions"].append({"sections": sections, "turn": state["turns"]})
         plan["current"] = {"sections": sections}
         state["section_contracts"] = _section_contracts_from_plan(state, sections)
         return f"برنامۀ خلاصۀ پژوهش پذیرفته شد: {proposal['text']}"
+    if proposal["kind"] == "corpus":
+        # The mid-journey corpus flip (decision 05): every searcher
+        # reads state["datasets"] at call time, so the decision alone
+        # changes the shelf the very next search hits. Old-book
+        # evidence stays — every row names its own document — and the
+        # searched questions keep their status (a widen feeds NEW
+        # questions, per findings-05's honest v1).
+        state["datasets"] = [
+            item
+            for item in proposal.get("datasets", [])
+            if item in BOOK_DATASETS
+        ] or list(BOOK_DATASETS)
+        return f"دامنۀ کتاب‌های پژوهش به‌روز شد: {proposal['text']}"
     if proposal["kind"] == "closing_review":
         # The verdict's acceptance (T9): the Brief is marked reviewed —
         # the newest review run's status flips in place, the decision
@@ -2644,6 +2853,79 @@ def decide_proposal(
     )
 
 
+def _apply_plan_item(state: dict, record: dict) -> str:
+    """One plan-item decision's mutation (decision 03): accept, reject,
+    or edit-with-accept by the section's stable key — the SINGLE
+    mutation both the live call and the stale-save replay run. The
+    plan's current sections and their contracts take the status (and
+    the edited title) together, so the Brief writes exactly what the
+    operator decided. A user's item decision never arms a cooldown —
+    the damper exists for the ENGINE's proposals, never for the
+    operator's own steering."""
+    key = record.get("key", "")
+    status = record.get("status", "")
+    edited = (record.get("edited") or "").strip()
+    plan = state.get("brief_plan") or {}
+    current = plan.get("current") or {}
+    for section in current.get("sections", []):
+        if not isinstance(section, dict) or section.get("key") != key:
+            continue
+        if edited:
+            section["title"] = edited[:80]
+            section["status"] = "edited"
+        elif status in ("accepted", "rejected"):
+            section["status"] = status
+        for contract in state.get("section_contracts", []):
+            if contract.get("key") == key:
+                contract["status"] = section.get("status", "accepted")
+                if edited:
+                    contract["title"] = section["title"]
+        if edited:
+            return f"بخش برنامه به «{section['title']}» ویرایش شد (به دست کاربر)."
+        if status == "rejected":
+            return f"بخش «{section.get('title', '')}» از برنامه رد شد (به دست کاربر)."
+        return f"بخش «{section.get('title', '')}» پذیرفته شد (به دست کاربر)."
+    return "چنین بخشی در برنامۀ پژوهش نیست."
+
+
+def decide_plan_item(
+    account: str,
+    session_id: str,
+    key: str,
+    status: str,
+    edited: str = None,
+):
+    """Resolve ONE plan section by its stable key (decision 03) — the
+    per-item door beside the whole-plan decide: accept, reject, or
+    edit. Synchronous, no LLM; under the same write lock and decision
+    record as every decide, so a mid-turn item decision folds back over
+    the worker's older snapshot like any other. (result, None) or
+    (None, (status, Farsi detail))."""
+    if status not in ("accepted", "rejected"):
+        return None, (400, RESEARCH_PLAN_ITEM_DETAIL)
+    with research_store.session_save_lock(session_id):
+        session = research_store.load_session(session_id)
+        if session is None or session["account"] != account:
+            return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
+        state = ensure_state_shape(session["state"])
+        if state.get("closed"):
+            return None, (409, RESEARCH_SESSION_CLOSED_DETAIL)
+        record = {"kind": "plan_item", "key": key, "status": status, "edited": edited or ""}
+        decision = _apply_plan_item(state, record)
+        _add_decision(state, decision)
+        research_store.save_session(session_id, state, decision_record=record)
+    blocks = [{"type": "note", "text": decision}]
+    research_store.append_message(session_id, "assistant", blocks)
+    return (
+        {
+            "reply": blocks,
+            "suggestions": research_suggestions(state),
+            "research_state": research_state_summary(state),
+        },
+        None,
+    )
+
+
 def _apply_adjustment(state: dict, proposal: dict, choice: str) -> str:
     """The chosen adjustment lands (T6) and its decision line returns —
     the line the map's decisions index keeps. Narrow re-versions the
@@ -2712,6 +2994,13 @@ def _fold_decision_records(session_id: str, state: dict, records: list) -> dict:
     operator's decision. The transcript is not touched here: the
     decide's note message is already in it (append-only)."""
     for record in records:
+        if record.get("kind") == "plan_item":
+            # The plan-item door's own record shape (decision 03): the
+            # same single mutation the live call ran, replayed onto the
+            # worker's older snapshot.
+            decision = _apply_plan_item(state, record)
+            _add_decision(state, decision)
+            continue
         proposal = record.get("proposal") or {}
         state["pending_proposals"] = [
             item
@@ -2730,11 +3019,24 @@ def _fold_decision_records(session_id: str, state: dict, records: list) -> dict:
 research_store.on_stale_save = _fold_decision_records
 
 
-def abort_account_research(account: str) -> None:
-    """A new ask owns the sheet: the Account's in-flight research turns
-    abort cooperatively and their sessions close — a later message to a
-    closed session answers the closed detail, never resurrects the old
-    investigation beside the new ask."""
+# The pause queue (decision 04): session_id -> the paused turn's
+# message, set by pause_account_research and consumed by the resume
+# chip's runner path. In-memory by design, exactly like the registry
+# and the decision ledger — a restart empties it with the in-flight
+# turns, never with a session.
+_PAUSED_MESSAGES: dict[str, str] = {}
+
+
+def pause_account_research(account: str) -> None:
+    """A new ask PAUSES the Account's research (decision 04, the
+    research-mode v2 wayfinder map): the in-flight turn aborts
+    cooperatively and its message returns to the pause queue — the
+    session itself stays OPEN, its map, evidence, and plan intact, and
+    the very next research message (or the resume chip) continues the
+    same investigation. Closing is the user's word alone
+    (COMMAND_STOP). The queue is in-memory by design, exactly like the
+    turn registry: a restart loses only the queued re-run, never the
+    session. Another Account's research is never touched."""
     with RESEARCH_REGISTRY_LOCK:
         own = [
             turn
@@ -2742,12 +3044,38 @@ def abort_account_research(account: str) -> None:
             if turn.account == account and turn.state not in TURN_TERMINAL_STATES
         ]
     for turn in own:
-        if not abort_research_turn(turn):
-            continue
-        session = research_store.load_session(turn.session_id)
-        if session is not None and not session["state"].get("closed"):
-            session["state"]["closed"] = True
-            research_store.save_session(turn.session_id, session["state"])
+        if abort_research_turn(turn):
+            _PAUSED_MESSAGES[turn.session_id] = turn.message
+
+
+def resume_closed_session(account: str, session_id):
+    """The closed session's door (decision 04): fork one STOPPED
+    session into a fresh, open one carrying everything worth keeping —
+    the question's history, scope, open questions, evidence, claims,
+    gaps, decisions, the accepted plan, any standing brief — so a
+    stopped investigation continues without re-paying its journey. The
+    old row stays closed exactly as the user left it (a stop is
+    honest); the fork's first decision records the door's use.
+    ({"session_id"}, None) or (None, (status, Farsi detail)) — unknown
+    or foreign sessions 404, an open session 409 (it continues
+    itself)."""
+    session = research_store.load_session(session_id)
+    if session is None or session["account"] != account:
+        return None, (404, RESEARCH_SESSION_NOT_FOUND_DETAIL)
+    state = session["state"]
+    if not isinstance(state, dict) or not state.get("closed"):
+        return None, (409, RESEARCH_RESUME_OPEN_DETAIL)
+    fork = json.loads(json.dumps(state))
+    fork.pop("closed", None)
+    fork.pop("queued_message", None)
+    fork.pop(research_store.SAVE_BASE_VERSION, None)
+    _add_decision(fork, "ادامهٔ پژوهش از وضعیتِ پژوهشِ بسته‌شدهٔ قبلی آغاز شد.")
+    fork_id = uuid.uuid4().hex
+    research_store.create_session(fork_id, account, fork)
+    linked = research_store.chat_session_for(account, session_id)
+    if linked:
+        research_store.attach_chat_session(fork_id, account, linked)
+    return {"session_id": fork_id}, None
 
 
 def start_research_turn(account: str, session: dict, message: str):
@@ -2782,6 +3110,26 @@ def start_research_turn(account: str, session: dict, message: str):
         target=run_research_turn, args=(turn, session), daemon=True
     ).start()
     return turn, None
+
+
+def _settle_research_turn(turn, session, state, blocks) -> None:
+    """Settle one turn synchronously with a code-authored reply — the
+    resume chip's empty-queue answer (decision 04): a friendly note,
+    the state's own chips, the same store-and-transcript honesty as
+    every settled turn."""
+    result = {
+        "reply": blocks,
+        "suggestions": research_suggestions(state),
+        "research_state": research_state_summary(state),
+    }
+    with RESEARCH_REGISTRY_LOCK:
+        if turn.state in TURN_TERMINAL_STATES:
+            return
+        turn.result = result
+        turn.state = "done"
+        turn.events.append(RESEARCH_EVENT_DONE)
+    research_store.save_session(session["id"], state)
+    research_store.append_message(session["id"], "assistant", blocks)
 
 
 # --- the turn's operations -------------------------------------------------
@@ -2886,27 +3234,69 @@ def _apply_classify_updates(state: dict, classified: dict) -> None:
     # cooldown damps it, one plan waits at a time, and a plan whose
     # summary restates a past decision can never re-park.
     plan_sections = classified.get("brief_plan", [])
+    if may_propose and plan_sections:
+        _park_brief_plan(state, plan_sections)
+    # The corpus decision (decision 05, option B): a steering message
+    # that changes WHICH Books the research searches parks like every
+    # chart edit — exploration-only, its own cooldown, one at a time,
+    # never re-parking the set the session already searches. The engine
+    # has been corpus-blind since ADR-0010 pinned the list at creation;
+    # this is the mid-journey door (findings-05's facts: every searcher
+    # reads state["datasets"] at call time, so the decision alone
+    # suffices).
+    corpus = [
+        item for item in classified.get("corpus", []) if item in BOOK_DATASETS
+    ]
     if (
         may_propose
-        and plan_sections
-        and cooldowns.get("brief_plan", 0) <= 0
-        and "brief_plan" not in pending_kinds
+        and corpus
+        and cooldowns.get("corpus", 0) <= 0
+        and "corpus" not in pending_kinds
+        and set(corpus) != set(state.get("datasets") or [])
     ):
-        plan_text = _plan_proposal_text(plan_sections)
-        plan_key = normalize_for_match(plan_text)
-        plan_decided = any(
-            plan_key and plan_key in normalize_for_match(item.get("text", ""))
-            for item in state["decisions"]
+        state["pending_proposals"].append(
+            {
+                "id": _next_proposal_id(state),
+                "kind": "corpus",
+                "text": "دامنۀ کتاب‌ها: " + "، ".join(
+                    _BOOK_TITLES.get(item, item) for item in corpus
+                ),
+                "datasets": corpus,
+            }
         )
-        if not plan_decided:
-            state["pending_proposals"].append(
-                {
-                    "id": _next_proposal_id(state),
-                    "kind": "brief_plan",
-                    "text": plan_text,
-                    "sections": plan_sections,
-                }
-            )
+
+
+def _park_brief_plan(state: dict, sections: list) -> bool:
+    """Park one section plan as the pending brief_plan proposal under
+    the recorded gates (T7): the kind's own cooldown, one plan at a
+    time, and a plan whose summary restates a past decision never
+    re-parks. Whether it landed — the classify fold and the plan-request
+    chip's dedicated call share exactly this."""
+    cooldowns = state.setdefault("proposal_cooldowns", {})
+    pending_kinds = {item["kind"] for item in state["pending_proposals"]}
+    if (
+        cooldowns.get("brief_plan", 0) > 0
+        or "brief_plan" in pending_kinds
+        or not sections
+    ):
+        return False
+    plan_text = _plan_proposal_text(sections)
+    plan_key = normalize_for_match(plan_text)
+    plan_decided = any(
+        plan_key and plan_key in normalize_for_match(item.get("text", ""))
+        for item in state["decisions"]
+    )
+    if plan_decided:
+        return False
+    state["pending_proposals"].append(
+        {
+            "id": _next_proposal_id(state),
+            "kind": "brief_plan",
+            "text": plan_text,
+            "sections": sections,
+        }
+    )
+    return True
 
 
 def _plan_proposal_text(sections: list) -> str:
@@ -2987,6 +3377,19 @@ def _checkpoint_reply(state: dict) -> list:
             blocks.append(
                 {"type": "note", "text": f"دامنۀ پژوهش: {proposal['text']}"}
             )
+        elif proposal["kind"] == "corpus":
+            current = "، ".join(
+                _BOOK_TITLES.get(item, item)
+                for item in (state.get("datasets") or [])
+            )
+            blocks.append(
+                {
+                    "type": "note",
+                    "text": (
+                        f"دامنۀ کتاب‌ها از «{current}» به «{proposal['text']}»"
+                    ),
+                }
+            )
         elif proposal["kind"] == "adjustment":
             # The diagnosis replays as its named cause with the three
             # adjustments listed — the chips above carry the choice
@@ -3044,20 +3447,20 @@ def _checkpoint_reply(state: dict) -> list:
             # exact question or fog line the acceptance would remove —
             # the diff the user decides on, nothing vague.
             blocks.append(
-                {"type": "note", "text": f"پالایش نقشه: {proposal['text']}"}
+                {"type": "note", "text": f"مرتب‌کردن برنامه: {proposal['text']}"}
             )
             for name in proposal.get("question_names", []):
                 blocks.append(
                     {
                         "type": "note",
-                        "text": f"پرسش «{name}» از نقشه برداشته می‌شود.",
+                        "text": f"پرسش «{name}» از برنامه برداشته می‌شود.",
                     }
                 )
             for fog_text in proposal.get("fog_texts", []):
                 blocks.append(
                     {
                         "type": "note",
-                        "text": f"مهِ «{fog_text}» از نقشه برداشته می‌شود.",
+                        "text": f"مهِ «{fog_text}» از برنامه برداشته می‌شود.",
                     }
                 )
     return blocks
@@ -3278,11 +3681,11 @@ def _apply_map_cleanup(state: dict, proposal: dict) -> str:
         parts.append(
             "پرسش‌های "
             + "، ".join(f"«{name}»" for name in dropped_names)
-            + " از نقشه برداشته شد"
+            + " از برنامه برداشته شد"
         )
     if fog_dropped:
         parts.append(f"{_farsi_digits(fog_dropped)} مهِ قدیمی پاک شد")
-    return "نقشه پالایش شد: " + "؛ ".join(parts) + "."
+    return "برنامه مرتب شد: " + "؛ ".join(parts) + "."
 
 
 # --- the fog probe (T13, ADR-0012) -------------------------------------------
@@ -3416,7 +3819,7 @@ def _probe_fog(state: dict, turn: ResearchTurn, note: dict) -> list:
                 "type": "note",
                 "text": (
                     f"کاوشگر: مهِ «{text}» پربار بود، اما پرسش تازه‌ای "
-                    "روی نقشه جا نشد؛ مه سر جای خود ماند."
+                    "در برنامه جا نشد؛ نامشخص سر جای خود ماند."
                 ),
             }
         ]
@@ -3656,6 +4059,15 @@ def _brief(turn: ResearchTurn, state: dict, revise: bool = False) -> list:
     contracts = state.get("section_contracts") or _section_contracts_from_plan(
         state, (state.get("brief_plan") or {}).get("current", {}).get("sections", [])
     )
+    # Decision 03's per-item steering: rejected sections never write,
+    # and an all-rejected plan refuses as honestly as no plan at all.
+    contracts = [
+        contract
+        for contract in contracts
+        if contract.get("status", "accepted") != "rejected"
+    ]
+    if not contracts:
+        return [{"type": "note", "text": RESEARCH_BRIEF_NO_SECTIONS_DETAIL}]
     _turn_write(turn, "writing", RESEARCH_EVENT_BRIEF)
     document = state.setdefault("brief_document", {"complete": False, "sections": []})
     standing = {
@@ -4214,7 +4626,7 @@ def _mapping_turn(turn: ResearchTurn, state: dict):
             {
                 "type": "note",
                 "text": (
-                    "کتاب‌ها برای این پرسش چیزی برای نقشه‌برداری ندادند؛ "
+                    "کتاب‌ها برای این پرسش در آشنایی با کتاب چیزی ندادند؛ "
                     "مستقیم وارد گردآوری شواهد می‌شویم."
                 ),
             }
@@ -4269,7 +4681,7 @@ def _skip_reply(state: dict) -> list:
         return [
             {
                 "type": "note",
-                "text": "نقشه همین است؛ وارد گردآوری شواهد می‌شویم.",
+                "text": "وضعیت همین است؛ وارد جست‌وجو در کتاب می‌شویم.",
             }
         ]
     return [{"type": "note", "text": "ادامه می‌دهیم."}]
@@ -4283,7 +4695,7 @@ def _map_ready_reply(state: dict) -> list:
         f"«{item.get('name', '')}»" for item in _pending_questions(state)[:6]
     )
     return [
-        {"type": "note", "text": f"نقشۀ پژوهش آماده شد؛ پرسش‌های باز: {names}."},
+        {"type": "note", "text": f"وضعیت پژوهش آماده شد؛ پرسش‌های باز: {names}."},
         {
             "type": "note",
             "text": (
@@ -4304,7 +4716,7 @@ def _narration_facts(state: dict, move: str, searched: list, starved: list) -> d
     }
     return {
         "finished_move": {
-            "gather": "گردآوری شواهد",
+            "gather": "جست‌وجو در کتاب",
             "synthesize": "تحلیل و جمع‌بندی شواهد",
             "brief": "نوشتن خلاصۀ پژوهش",
         }.get(move, move),
@@ -4402,6 +4814,12 @@ def _run_research_skill(turn, state, classified, message, resolved, intent):
     # are.
     if resolved and resolved[0] == "stop":
         return _stop_reply(state), None, ""
+    # The plan-request chip (decision 03): an explicit command, so it
+    # EXECUTES even while a proposal waits (ADR-0011's rule) — one
+    # dedicated composer call parks the section plan the decide flow
+    # then owns.
+    if resolved and resolved[0] == "plan_request":
+        return _plan_request_turn(turn, state), None, ""
     # The work-mode rule (ADR-0011, the recorded planning
     # loop): a pending checkpoint shows on a FREE turn — an
     # explicit command (or the skip) is the user steering, and
@@ -4492,6 +4910,41 @@ SKILL_RUNNERS = {
 }
 
 
+# The resolved-command intents (W4, stage C): a deterministic chip's
+# move IS the intent — the classifier is never consulted for it.
+_COMMAND_INTENTS = {
+    "gather": "active_research",
+    "synthesize": "active_research",
+    "brief": "drafting",
+    # The Closing review's revise chip (T9): the failing sections rerun
+    # through the drafting skill.
+    "revise": "drafting",
+    "audit": "evidence_audit",
+    "skip": "research_exploration",
+    "guide": "research_exploration",
+    "stop": "research_exploration",
+    "plan_request": "research_exploration",
+    "resume": "research_exploration",
+    "map_keeper": "map_keeper",
+    "fog_probe": "fog_probe",
+}
+# The chip turns' classify fold: every working field empty — a chip
+# press mutates no concepts, questions, or chart.
+_EMPTY_CLASSIFIED = {
+    "rq_proposal": "",
+    "reason": "",
+    "answer_gist": "",
+    "concepts": [],
+    "subquestions": [],
+    "scope_in": [],
+    "scope_out": [],
+    "corpus": [],
+    "brief_plan": [],
+    "fog": [],
+    "new_open_questions": [],
+}
+
+
 # --- the turn worker -------------------------------------------------------
 
 
@@ -4538,41 +4991,72 @@ def run_research_turn(
     # or estimated, like every entry — and each cost leaves the Balance
     # through the ledger's single deduction path. The clear rides the
     # worker's own finally: tests drive this function on their thread,
-    # so the tap never outlives the turn.
-    set_meter(
-        lambda prompt, reply: record_composer_call(
-            turn.account, "turn", prompt, reply
-        )
+    # so the tap never outlives the turn. Stage C (findings-02 lever 5)
+    # adds the two meter halves the ledger was blind to: the journey's
+    # visible spend accumulates INTO the state (the session cap and the
+    # sheet's cost line read it), and every searcher lands its own
+    # zero-cost estimate row.
+    def _meter(prompt, reply):
+        row = record_composer_call(turn.account, "turn", prompt, reply)
+        if row and row.get("cost_toman"):
+            state["cost_toman"] = int(
+                (state.get("cost_toman") or 0) + row["cost_toman"]
+            )
+        return row
+
+    set_meter(_meter)
+    set_search_meter(
+        lambda query: record_search_estimate(turn.account, query)
     )
     try:
+        # The journey's own ceiling (stage C): a session whose visible
+        # spend reached the cap settles honestly before any work — the
+        # engine says enough itself, never a silent stop.
+        if (state.get("cost_toman") or 0) >= RESEARCH_SESSION_COST_CAP_TOMAN:
+            _settle_research_turn(
+                turn,
+                session,
+                state,
+                [{"type": "note", "text": RESEARCH_SESSION_COST_CAP_DETAIL}],
+            )
+            return
         state["turns"] = state.get("turns", 0) + 1
         message = turn.message
-        budget.require(1)  # the classify call
+        # The resume chip (decision 04): the paused turn's message swaps
+        # in for the chip text BEFORE the classifier — the re-run sees
+        # the user's own words, and the chip never pays a classify call.
+        # With nothing paused the chip settles honestly instead.
+        if resolve_command(message) == ("resume", None):
+            queued = _PAUSED_MESSAGES.pop(session["id"], None)
+            if queued is None:
+                _settle_research_turn(
+                    turn,
+                    session,
+                    state,
+                    [{"type": "note", "text": RESEARCH_RESUME_EMPTY_DETAIL}],
+                )
+                return
+            message = queued
+            turn.message = queued
         resolved = resolve_command(message)
-        classified = classify_message(message, state, session["messages"])
-        anomaly = classified.pop("router_anomaly", None)
-        if anomaly:
-            record_diagnosis(state, anomaly, classified["intent"])
+        if resolved is not None:
+            # W4 (findings-02, moved to stage C): a resolved command
+            # never pays the classifier — the deterministic move IS the
+            # intent, and the fold's working fields ride empty (a chip
+            # press must not mutate concepts or questions anyway). The
+            # pm journey alone burned ~4 of these per sitting.
+            intent = _COMMAND_INTENTS[resolved[0]]
+            classified = dict(_EMPTY_CLASSIFIED, intent=intent)
+        else:
+            budget.require(1)  # the classify call
+            classified = classify_message(message, state, session["messages"])
+            anomaly = classified.pop("router_anomaly", None)
+            if anomaly:
+                record_diagnosis(state, anomaly, classified["intent"])
+            intent = classified["intent"]
         budget.checkpoint()  # the first chain boundary
         if turn.cancel.is_set():
             return
-        intent = classified["intent"]
-        if resolved:
-            intent = {
-                "gather": "active_research",
-                "synthesize": "active_research",
-                "brief": "drafting",
-                # The Closing review's revise chip (T9): the failing
-                # sections rerun through the drafting skill, the review
-                # then facing the reassembled document again.
-                "revise": "drafting",
-                "audit": "evidence_audit",
-                "skip": "research_exploration",
-                "guide": "research_exploration",
-                "stop": "research_exploration",
-                "map_keeper": "map_keeper",
-                "fog_probe": "fog_probe",
-            }[resolved[0]]
         # The code disposes (ADR-0012): the picked row is validated
         # against the state — a rejected pick is a recorded diagnosis
         # falling back to the conversational skill, never a crash,
@@ -4680,6 +5164,7 @@ def run_research_turn(
             pass
     finally:
         set_meter(None)
+        set_search_meter(None)
         turn.done.set()
         # The reap (T11): the registry holds live turns only — a settled
         # turn's outcome is durable in the store, and the recent-settled

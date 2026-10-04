@@ -178,6 +178,40 @@ def record_composer_call(
     )
 
 
+def record_search_estimate(account: str, query: str) -> dict:
+    """One searcher-seam row (stage C, findings-02 lever 5): the hidden
+    Cognee side becomes VISIBLE — an estimate row per search with the
+    query's own tokens, metered like every estimate and costing
+    NOTHING: charging the hidden spend is a pricing decision the
+    operator has not made, and the meter never makes it for them."""
+    tokens = estimate_tokens(query)
+    with _LOCK:
+        con = _connect()
+        try:
+            con.execute(
+                "INSERT INTO usage_entries (account, ts, day, kind, metered,"
+                " input_tokens, output_tokens, cost_toman)"
+                " VALUES (?, ?, ?, ?, 0, ?, 0, 0)",
+                (
+                    account,
+                    time.strftime("%Y-%m-%d %H:%M:%S"),
+                    _today(),
+                    "search",
+                    tokens,
+                ),
+            )
+            con.commit()
+        finally:
+            con.close()
+    return {
+        "kind": "search",
+        "metered": False,
+        "input_tokens": tokens,
+        "output_tokens": 0,
+        "cost_toman": 0,
+    }
+
+
 def record_size_estimate(account: str, kind: str, input_bytes: int) -> dict:
     """The ask entry (T22): the gate knows only the request's size before
     the relay streams the answer — an input-side estimate, marked

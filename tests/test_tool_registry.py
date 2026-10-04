@@ -361,7 +361,7 @@ def test_a_gather_cites_graph_sourced_passages_end_to_end(tmp_path):
 
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply("active_research", subquestions=["زیرپرسش؟"]),
+            composer_reply(json.dumps(["زیرپرسش؟"])),
             composer_reply("این دورِ شواهد خوب پیش رفت."),
         ],
         recall_reply=recall,

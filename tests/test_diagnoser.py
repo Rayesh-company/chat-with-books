@@ -412,12 +412,15 @@ def test_the_stalled_session_is_offered_synthesize_and_stop(tmp_path):
     ]
     state["evidence"] = [{"id": "e1", "reference": "r", "passage": SENTENCE}]
     chips = research.research_suggestions(state)
+    # The plan-request chip (decision 03) rides beside the stall escape:
+    # the plan gate is exactly what a stalled session hits next.
     assert [chip["id"] for chip in chips] == [
         "gather",
         "synthesize",
         "stop",
+        "plan",
     ]
-    stop_chip = chips[-1]
+    stop_chip = chips[-2]
     assert stop_chip["text"] == research.COMMAND_STOP
 
 

@@ -558,7 +558,6 @@ def test_an_all_gap_brief_is_still_reviewed(tmp_path):
     )
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply("drafting"),
             junk,  # section one's write
             composer_reply("این اصلاً JSON نیست."),  # its one retry
             junk,  # section two's write
@@ -570,8 +569,9 @@ def test_an_all_gap_brief_is_still_reviewed(tmp_path):
     assert turn.state == "done"
     reply = turn.result["reply"]
     # No narration call ran (nothing was written), yet the verdict and
-    # the chips land.
-    assert len(composer_bodies(upstream)) == 6
+    # the chips land. W4 (stage C) took the chip turn's classify call:
+    # five composer calls, not six.
+    assert len(composer_bodies(upstream)) == 5
     assert [b["text"] for b in reply if b["type"] == "heading"] == [
         "شهود و ساحت",
         "جمع‌بندی",

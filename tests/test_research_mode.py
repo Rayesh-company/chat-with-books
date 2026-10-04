@@ -26,7 +26,7 @@ from tests.helpers import (
     with_gate,
 )
 
-from ui import dive, research, research_store, serve  # noqa: E402
+from ui import dive, ledger, research, research_store, serve  # noqa: E402
 
 PHONE = "09120000000"
 OTHER_PHONE = "09120000077"
@@ -355,7 +355,17 @@ def test_suggestions_lead_with_proposal_chips_then_the_moves():
     ]
     state["claims"] = [{"id": "c1", "text": "ادعا", "status": "direct_support"}]
     chips = research.research_suggestions(state)
-    assert {chip["id"] for chip in chips} == {"brief", "audit"}
+    # The plan-request chip (decision 03, the research-mode v2 map):
+    # while no plan is accepted and none waits, the chip-only user's
+    # exit from the plan gate rides beside the work moves.
+    assert {chip["id"] for chip in chips} == {"brief", "audit", "plan"}
+    # An accepted plan retires it.
+    state["brief_plan"] = {
+        "current": {"sections": [{"title": "بخش", "key": "k1", "status": "accepted"}]},
+        "versions": [],
+    }
+    chips = research.research_suggestions(state)
+    assert "plan" not in {chip["id"] for chip in chips}
 
 
 def test_classify_updates_park_consequential_changes_as_proposals():
@@ -579,9 +589,7 @@ def test_a_gather_turn_merges_evidence_and_reports_counts(tmp_path):
     # server-composed notes — no model prose to guard at all.
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply(
-                "active_research", subquestions=["زیرپرسش یک؟", "زیرپرسش دو؟"]
-            )
+            composer_reply(json.dumps(["زیرپرسش یک؟", "زیرپرسش دو؟"])),
         ],
         recall_reply=fed_by_query,
     )
@@ -733,16 +741,15 @@ def test_an_audit_turn_is_pure_code(tmp_path):
         {"id": "c1", "text": "ادعای نخست", "status": "direct_support"}
     ]
     state["gaps"] = [{"id": "g1", "text": "شکاف", "subquestion": "زیرپرسش", "turn": 1}]
-    upstream = ResearchUpstream(composer_replies=[classify_reply("evidence_audit")])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=state)
     turn = run_turn_sync(session, research.COMMAND_AUDIT, upstream, tmp_path)
     assert turn.state == "done"
     texts = [b.get("text", "") for b in turn.result["reply"]]
     assert any("[پشتوانهٔ مستقیم] ادعای نخست" in text for text in texts)
-    # The audit itself is pure code: exactly the one classify call, no
-    # writer and no searchers.
-    assert len(upstream.calls) == 1
-    assert "chat/completions" in upstream.calls[0]
+    # The audit itself is pure code — and W4 (stage C) took the chip's
+    # classify call with it: zero composer calls, zero searchers.
+    assert upstream.calls == []
 
 
 def test_an_rq_proposal_turn_is_a_checkpoint_not_a_change(tmp_path):
@@ -933,7 +940,6 @@ def test_the_orientation_offers_the_guide_chip_after_a_detour():
 def test_the_guide_command_asks_the_guided_question(tmp_path):
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply("casual_question"),
             grilling_reply("از این پژوهش چه می‌خواهید؟", ("مقایسه",)),
         ]
     )
@@ -1185,7 +1191,6 @@ def test_a_targeted_gather_chip_gathers_only_that_question(tmp_path):
 
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply("active_research"),
             composer_reply("این دورِ شواهد خوب پیش رفت."),
         ],
         recall_reply=recall,
@@ -1424,12 +1429,7 @@ def test_an_active_research_turn_parks_no_proposals(tmp_path):
     # parking a fresh RQ proposal and answering «پرسش پژوهش به‌روز شد».
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply(
-                "active_research",
-                subquestions=["زیرپرسش؟"],
-                rq_proposal="پرسش تازه‌تر؟",
-                scope_in=["دامنهٔ نو"],
-            )
+            composer_reply(json.dumps(["زیرپرسش؟"])),
         ],
         recall_reply=fed_by_query,
     )
@@ -1707,11 +1707,14 @@ def test_a_session_survives_the_server_and_continues(tmp_path):
     # continuing the first's ledger.
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply("active_research", subquestions=["زیرپرسش یک؟"]),
+            # W4 (stage C): a chip gather plans its own sub-questions —
+            # the reply is the planning call's JSON list now; classify
+            # never runs for a resolved command.
+            composer_reply(json.dumps(["زیرپرسش یک؟"])),
             # Each material gather ends with one narration call; an
             # empty narration reply narrates nothing.
             composer_reply(""),
-            classify_reply("active_research", subquestions=["زیرپرسش دو؟"]),
+            composer_reply(json.dumps(["زیرپرسش دو؟"])),
             composer_reply(""),
         ],
         recall_reply=fed_by_query,
@@ -1748,7 +1751,7 @@ def test_a_session_survives_the_server_and_continues(tmp_path):
 def test_the_turn_poll_gates_the_phone(tmp_path):
     gate = threading.Event()
     upstream = ResearchUpstream(
-        composer_replies=[classify_reply("active_research", subquestions=["زیرپرسش؟"])],
+        composer_replies=[],
         gate=gate,
     )
     base, server, original = with_gate(tmp_path, upstream)
@@ -1812,10 +1815,27 @@ def test_a_second_message_while_one_runs_is_rejected_farsi_busy(tmp_path):
     assert busy["detail"] == research.RESEARCH_BUSY_ACCOUNT_DETAIL
 
 
-def test_a_new_ask_aborts_the_turn_and_closes_the_session(tmp_path):
+def test_a_new_ask_pauses_research_without_closing_it(tmp_path):
+    # Decision 04 (the research-mode v2 wayfinder map): a new normal
+    # ask pauses the Account's in-flight research turn — cooperatively
+    # — and queues its message for the resume chip. The session itself
+    # stays OPEN: no close, no 409, the investigation lives beside the
+    # ask, and the chip re-runs the USER'S words, never its own text.
     gate = threading.Event()
+    paused_message = "تحلیل جامع نوآوری‌های کتاب را پیش ببر"
+    fed_pool = [
+        {
+            "reference": "chunk 1 of document tarhe-kolli (pages 10-12)",
+            "passage": SENTENCE,
+        },
+        {"reference": "chunk 29 of document tarhe-kolli", "passage": OTHER_SENTENCE},
+    ]
     upstream = ResearchUpstream(
-        composer_replies=[classify_reply("active_research", subquestions=["زیرپرسش؟"])],
+        composer_replies=[
+            classify_reply("research_exploration"),
+            classify_reply("casual_question"),
+            composer_reply(json.dumps(guarded_blocks(fed_pool), ensure_ascii=False)),
+        ],
         gate=gate,
     )
     base, server, original = with_gate(tmp_path, upstream)
@@ -1824,12 +1844,12 @@ def test_a_new_ask_aborts_the_turn_and_closes_the_session(tmp_path):
         _, body = post(
             base,
             "/research/message",
-            {"text": research.COMMAND_GATHER, "question": "پرسش؟"},
+            {"text": paused_message, "question": "پرسش؟"},
             phone=PHONE,
         )
         turn_id, session_id = body["turn_id"], body["session_id"]
-        # The new ask: phase 1 records the chat, and that same POST
-        # aborts the phone's in-flight turn and closes its session.
+        # The new ask: the in-flight turn aborts cooperatively — a
+        # pause, never a close.
         ask_status, _ = post(
             base, "/api/v1/recall", {"query": "پرسش جدید؟"}, phone=PHONE
         )
@@ -1839,30 +1859,100 @@ def test_a_new_ask_aborts_the_turn_and_closes_the_session(tmp_path):
         )
         assert poll_status == 200
         assert payload["state"] == "aborted"
-        # A later message to the closed session answers the closed
-        # detail — the old investigation never resumes beside the new
-        # ask.
-        closed_status, closed = post(
+        gate.set()
+        wait_turn_done(turn_id)
+        # The state endpoint answers 200 — the session never closed —
+        # and its chip row leads with the resume chip.
+        state_status, state = get(
+            base, f"/research/state?session={session_id}", phone=PHONE
+        )
+        assert state_status == 200
+        assert {
+            "kind": "move",
+            "id": "resume",
+            "text": research.COMMAND_RESUME,
+        } in state["suggestions"]
+        # The resume chip re-runs the paused message: the classifier
+        # sees the user's own words, never the chip text.
+        resume_status, resumed = post(
             base,
             "/research/message",
-            {"text": "ادامه", "session_id": session_id},
+            {"text": research.COMMAND_RESUME, "session_id": session_id},
             phone=PHONE,
         )
-        gate.set()
-        turn = wait_turn_done(turn_id)
+        assert resume_status == 202
+        turn = wait_turn_done(resumed["turn_id"])
+        assert turn.state == "done"
+        assert research._PAUSED_MESSAGES.get(session_id) is None
+        # Composer order: the paused turn's classify, the resumed
+        # turn's classify, its writer — the SECOND is the proof: the
+        # re-run classified the user's paused words, never the chip.
+        composer_at = [
+            i for i, call in enumerate(upstream.calls)
+            if "chat/completions" in call
+        ]
+        assert len(composer_at) >= 2, "no classify call reached the upstream"
+        resumed_request = json.loads(upstream.bodies[composer_at[1]])
+        resumed_prompt = " ".join(
+            message.get("content", "")
+            for message in resumed_request.get("messages", [])
+        )
+        # The swap's proof: the classify prompt's LATEST message is the
+        # user's paused words (the chip text may ride the transcript
+        # tail as history — that is where the sheet's own record put
+        # it).
+        assert f"Latest message: {paused_message}" in resumed_prompt
     finally:
         gate.set()
         stop_gate(server, original)
-    assert closed_status == 409
-    assert closed["detail"] == research.RESEARCH_SESSION_CLOSED_DETAIL
-    assert turn.state == "aborted"
-    assert turn.result is None
+    assert turn.result is not None
+
+
+def test_stop_closes_and_the_closed_door_forks_the_state(
+    tmp_path, monkeypatch
+):
+    # Decision 04's other half: closing is the user's word alone
+    # (COMMAND_STOP keeps its behavior), and the closed door
+    # (resume_closed_session) forks the stopped state into a fresh
+    # open session — evidence and decisions ride along, the old row
+    # stays closed, an open session never forks, and a foreign account
+    # never sees the door.
+    monkeypatch.setattr(
+        research.research_store, "RESEARCH_DB", tmp_path / "research.sqlite3"
+    )
+    state = research.new_research_state("هدف پژوهش")
+    state["evidence"].append(
+        {
+            "id": "e1",
+            "reference": "chunk 1 of document tarhe-kolli (pages 1-9)",
+            "passage": "متن شاهد",
+            "found_for": "هدف پژوهش",
+        }
+    )
+    state["closed"] = True
+    research.research_store.create_session("stopped", ACCOUNT, state)
+    research.research_store.create_session(
+        "open", ACCOUNT, research.new_research_state("هدف دوم")
+    )
+    forked, error = research.resume_closed_session(ACCOUNT, "stopped")
+    assert error is None and forked is not None
+    fork = research.research_store.load_session(forked["session_id"])
+    assert fork["account"] == ACCOUNT
+    assert not fork["state"].get("closed")
+    assert len(fork["state"]["evidence"]) == 1
+    assert "ادامهٔ پژوهش از وضعیت" in fork["state"]["decisions"][-1]["text"]
+    stopped = research.research_store.load_session("stopped")
+    assert stopped["state"].get("closed") is True
+    _, still_open = research.resume_closed_session(ACCOUNT, "open")
+    assert still_open == (409, research.RESEARCH_RESUME_OPEN_DETAIL)
+    _, foreign = research.resume_closed_session(OTHER_ACCOUNT, "stopped")
+    assert foreign == (404, research.RESEARCH_SESSION_NOT_FOUND_DETAIL)
 
 
 def test_a_new_ask_by_another_phone_never_aborts_someone_elses_turn(tmp_path):
     gate = threading.Event()
     upstream = ResearchUpstream(
-        composer_replies=[classify_reply("active_research", subquestions=["زیرپرسش؟"])],
+        composer_replies=[composer_reply(json.dumps(["زیرپرسش؟"]))],
         gate=gate,
     )
     base, server, original = with_gate(tmp_path, upstream)
@@ -1881,7 +1971,10 @@ def test_a_new_ask_by_another_phone_never_aborts_someone_elses_turn(tmp_path):
             base, f"/research/turn?turn={turn_id}", phone=PHONE
         )
         assert poll_status == 200
-        assert payload["state"] == "classifying"
+        # W4 (stage C): a chip turn's first upstream call is its own
+        # planning call now — the turn parks in "planning", not
+        # "classifying", while the gate holds it.
+        assert payload["state"] == "planning"
         gate.set()
         turn = wait_turn_done(turn_id)
     finally:
@@ -2009,3 +2102,224 @@ def test_an_abort_landing_before_the_next_write_is_never_overwritten():
     assert turn.state == "aborted"
     assert research.RESEARCH_EVENT_SEARCHING not in turn.events
     del research.RESEARCH_REGISTRY[turn.id]
+
+
+# --- stage B (research-mode v2): the steering doors -------------------------
+
+
+def test_a_corpus_change_parks_and_decides_as_its_own_checkpoint():
+    # Decision 05 (option B): a cross-Book message parks a corpus
+    # proposal — exploration-only, never the set the session already
+    # searches — and the decide flow flips state["datasets"], which
+    # every searcher reads at call time.
+    state = research.new_research_state("پرسش؟")
+    state["datasets"] = ["tarhe-kolli"]
+    research._apply_classify_updates(
+        state,
+        {
+            "intent": "research_exploration",
+            "corpus": ["tarhe-kolli", "70143-336"],
+        },
+    )
+    parked = [p for p in state["pending_proposals"] if p["kind"] == "corpus"]
+    assert len(parked) == 1
+    assert parked[0]["datasets"] == ["tarhe-kolli", "70143-336"]
+    # The same set never re-parks; a working turn never parks at all.
+    research._apply_classify_updates(
+        state,
+        {"intent": "research_exploration", "corpus": ["tarhe-kolli", "70143-336"]},
+    )
+    assert (
+        len([p for p in state["pending_proposals"] if p["kind"] == "corpus"]) == 1
+    )
+    fresh = research.new_research_state("پرسش؟")
+    fresh["datasets"] = ["tarhe-kolli"]
+    research._apply_classify_updates(
+        fresh,
+        {"intent": "active_research", "corpus": ["tarhe-kolli", "70143-336"]},
+    )
+    assert fresh["pending_proposals"] == []
+    # The decide applies the flip; the state summary carries the corpus
+    # the session searches (the engine's corpus-blindness ends).
+    state["pending_proposals"] = []
+    decision = research._apply_decision(state, parked[0], True)
+    assert state["datasets"] == ["tarhe-kolli", "70143-336"]
+    assert "دامنۀ کتاب‌های پژوهش به‌روز شد" in decision
+    assert research.research_state_summary(state)["datasets"] == [
+        "tarhe-kolli",
+        "70143-336",
+    ]
+
+
+def test_the_plan_request_chip_parks_a_plan_deterministically(tmp_path):
+    # Decision 03's deadlock exit: the chip resolves without the
+    # classifier's luck — one dedicated composer call asks ONLY for the
+    # section plan, and the plan parks as the checkpoint the decide
+    # flow owns.
+    plan_reply = composer_reply(
+        json.dumps(
+            {
+                "brief_plan": [
+                    {"title": "تز کتاب", "question": "یکی", "claims": []},
+                    {"title": "شواهد", "question": "دو", "claims": []},
+                ]
+            },
+            ensure_ascii=False,
+        )
+    )
+    upstream = ResearchUpstream(
+        composer_replies=[plan_reply]
+    )
+    session = make_session(tmp_path)
+    turn = run_turn_sync(
+        session, research.COMMAND_SUGGEST_PLAN, upstream, tmp_path
+    )
+    assert turn.state == "done"
+    loaded = research_store.load_session(session["id"])["state"]
+    parked = [
+        p for p in loaded["pending_proposals"] if p["kind"] == "brief_plan"
+    ]
+    assert len(parked) == 1
+    assert [s["title"] for s in parked[0]["sections"]] == ["تز کتاب", "شواهد"]
+    # The reply IS the checkpoint card, and the decide chips ride it.
+    assert any(
+        "یک تصمیم پیش روی شماست" in b.get("text", "")
+        for b in turn.result["reply"]
+        if isinstance(b, dict)
+    )
+    assert any(chip.get("id") == parked[0]["id"] for chip in turn.result["suggestions"])
+
+
+def test_the_plan_item_door_steers_sections_individually(tmp_path):
+    # Decision 03's per-item door: an accepted plan's sections are
+    # rejected, edited, and re-accepted by their stable keys — the
+    # contracts follow, and an all-rejected plan refuses the Brief as
+    # honestly as no plan at all.
+    session = make_session(tmp_path)
+    state = session["state"]
+    sections = [
+        {"title": "یکی", "question": "", "claims": [], "key": "k1", "status": "accepted"},
+        {"title": "دو", "question": "", "claims": [], "key": "k2", "status": "accepted"},
+    ]
+    state["brief_plan"] = {"current": {"sections": sections}, "versions": []}
+    state["section_contracts"] = research._section_contracts_from_plan(
+        state, sections
+    )
+    research_store.save_session(session["id"], state)
+    result, error = research.decide_plan_item(
+        PHONE, session["id"], "k2", "rejected"
+    )
+    assert error is None
+    assert "رد شد" in result["reply"][0]["text"]
+    loaded = research_store.load_session(session["id"])["state"]
+    statuses = {
+        s["key"]: s["status"]
+        for s in loaded["brief_plan"]["current"]["sections"]
+    }
+    assert statuses == {"k1": "accepted", "k2": "rejected"}
+    assert {
+        c["key"]: c["status"] for c in loaded["section_contracts"]
+    } == statuses
+    # The edit takes a new title and lands as its own decision kind.
+    result, error = research.decide_plan_item(
+        PHONE, session["id"], "k1", "accepted", edited="عنوان تازه"
+    )
+    assert error is None
+    loaded = research_store.load_session(session["id"])["state"]
+    first = loaded["brief_plan"]["current"]["sections"][0]
+    assert first["title"] == "عنوان تازه" and first["status"] == "edited"
+    assert loaded["section_contracts"][0]["title"] == "عنوان تازه"
+    # Bad status vocabulary is the door's own 400.
+    _, bad = research.decide_plan_item(PHONE, session["id"], "k1", "maybe")
+    assert bad == (400, research.RESEARCH_PLAN_ITEM_DETAIL)
+    # An all-rejected plan refuses the Brief before any writer call.
+    fresh = make_session(tmp_path)
+    fresh["state"]["claims"] = [
+        {"id": "c1", "text": "ادعا", "status": "direct_support"}
+    ]
+    rejected = [
+        {"title": "یکی", "question": "", "claims": [], "key": "k1", "status": "rejected"}
+    ]
+    fresh["state"]["brief_plan"] = {
+        "current": {"sections": rejected},
+        "versions": [],
+    }
+    fresh["state"]["section_contracts"] = research._section_contracts_from_plan(
+        fresh["state"], rejected
+    )
+    turn = research.ResearchTurn(PHONE, fresh["id"], "خلاصه")
+    blocks = research._brief(turn, fresh["state"])
+    assert blocks == [
+        {"type": "note", "text": research.RESEARCH_BRIEF_NO_SECTIONS_DETAIL}
+    ]
+
+
+def test_capped_question_ids_never_reissue_the_same_id():
+    # The pm incident's four q13s: length+1 re-mints the same id once
+    # the cap trims the list — the ledger's own id mint scans the
+    # survivors instead (stage C, spec §4's small-bug list).
+    state = research.new_research_state("پرسش؟")
+    for i in range(research.RESEARCH_MAX_SUBQUESTIONS + 3):
+        research._add_open_question(state, f"پرسش شمارۀ {i}؟")
+    ids = [item["id"] for item in state["subquestions"]]
+    assert len(ids) == len(set(ids)), ids
+    assert len(ids) == research.RESEARCH_MAX_SUBQUESTIONS
+
+
+def test_a_resolved_command_never_pays_the_classifier(tmp_path):
+    # W4 (findings-02, stage C): the deterministic move IS the intent —
+    # the chip turn's composer calls carry no intent-reader prompt at
+    # all; only the chip's own work (here: planning) runs.
+    upstream = ResearchUpstream(
+        composer_replies=[composer_reply(json.dumps(["زیرپرسش؟"]))],
+        recall_reply=fed_by_query,
+    )
+    session = make_session(tmp_path)
+    turn = run_turn_sync(session, research.COMMAND_GATHER, upstream, tmp_path)
+    assert turn.state == "done"
+    bodies = [b for b in upstream.bodies if isinstance(b, str)]
+    assert bodies, "the chip's own planning call should have run"
+    assert all("intent reader" not in body for body in bodies)
+
+
+def test_every_search_lands_its_own_zero_cost_estimate_row(tmp_path):
+    # Stage C (findings-02 lever 5): the hidden Cognee side becomes
+    # visible — one estimate row per searcher, metered like every
+    # estimate, costing nothing (charging hidden spend is a pricing
+    # decision, not the meter's).
+    import sqlite3
+
+    upstream = ResearchUpstream(
+        composer_replies=[composer_reply(json.dumps(["زیرپرسش؟"]))],
+        recall_reply=fed_by_query,
+    )
+    session = make_session(tmp_path)
+    turn = run_turn_sync(session, research.COMMAND_GATHER, upstream, tmp_path)
+    assert turn.state == "done"
+    con = sqlite3.connect(ledger.LEDGER_DB)
+    rows = con.execute(
+        "SELECT metered, cost_toman FROM usage_entries WHERE kind = 'search'"
+    ).fetchall()
+    con.close()
+    assert rows, "the gather's searchers left no estimate rows"
+    assert all(metered == 0 and cost == 0 for metered, cost in rows)
+
+
+def test_the_journey_cap_settles_honestly_before_any_work(tmp_path):
+    # The engine's own ceiling (stage C): a session whose visible spend
+    # reached the cap settles with the honest note before a single
+    # upstream call.
+    state = research.new_research_state("پرسش؟")
+    state["cost_toman"] = research.RESEARCH_SESSION_COST_CAP_TOMAN
+    upstream = ResearchUpstream(composer_replies=[])
+    session = make_session(tmp_path, state=state)
+    turn = run_turn_sync(session, research.COMMAND_GATHER, upstream, tmp_path)
+    assert turn.state == "done"
+    assert upstream.calls == []
+    texts = [b.get("text", "") for b in turn.result["reply"]]
+    assert research.RESEARCH_SESSION_COST_CAP_DETAIL in texts
+    # The summary carries the spend the cap read.
+    assert (
+        research.research_state_summary(state)["cost_toman"]
+        == research.RESEARCH_SESSION_COST_CAP_TOMAN
+    )

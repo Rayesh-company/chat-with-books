@@ -155,8 +155,10 @@ try:
         RESEARCH_TURN_NOT_FOUND_DETAIL,
         TURN_TERMINAL_STATES,
         ResearchTurn,
-        abort_account_research,
+        pause_account_research,
         abort_research_turn,
+        decide_plan_item,
+        resume_closed_session,
         build_classify_prompt,
         build_conversational_prompt,
         build_subquestions_prompt,
@@ -296,8 +298,10 @@ except ImportError:  # the container runs this file as a script beside the modul
         RESEARCH_TURN_NOT_FOUND_DETAIL,
         TURN_TERMINAL_STATES,
         ResearchTurn,
-        abort_account_research,
+        pause_account_research,
         abort_research_turn,
+        decide_plan_item,
+        resume_closed_session,
         build_classify_prompt,
         build_conversational_prompt,
         build_subquestions_prompt,
@@ -1400,10 +1404,12 @@ class SessionHandler(SimpleHTTPRequestHandler):
             account = self._gate_account()
             if account is None:
                 return
-            # A new ask owns the sheet exactly like the recall proxy
-            # before it (issue #26): the Account's in-flight research
-            # turns abort cooperatively and their sessions close.
-            abort_account_research(account)
+            # A new ask PAUSES the Account's research (decision 04, the
+            # research-mode v2 wayfinder map): the in-flight turn
+            # aborts cooperatively and its message queues for the
+            # resume chip — the session itself stays open, its map and
+            # evidence intact. Closing stays the user's word alone.
+            pause_account_research(account)
             # The ask's own ledger entry (T22): input-side size
             # estimate, like the recall POST always recorded.
             record_size_estimate(
@@ -1435,13 +1441,13 @@ class SessionHandler(SimpleHTTPRequestHandler):
             account = self._gate_account()
             if account is None:
                 return
-            # A new ask owns the sheet (issue #26): after the gate has
-            # recorded the chat, the Account's in-flight research
-            # turns abort — cooperatively; the worker exits at its next
-            # boundary — and their sessions close, so the new ask's
-            # Research Mode starts from a fresh investigation. Another
+            # A new ask PAUSES research (decision 04): after the gate
+            # has recorded the chat, the Account's in-flight research
+            # turn aborts — cooperatively; the worker exits at its next
+            # boundary — and its message queues for the resume chip.
+            # The session stays open beside the new ask; another
             # Account's research is never touched.
-            abort_account_research(account)
+            pause_account_research(account)
             # The ask's own entry (T22, GitLab #24): the gate knows the
             # request's size before the relay streams the answer — an
             # input-side estimate, marked estimated like every
@@ -1531,6 +1537,15 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 return
             self._research_message(account)
             return
+        if path == "/research/resume-from":
+            # The closed session's door (decision 04, the research-mode
+            # v2 wayfinder map): the same gate as the message start —
+            # bookkeeping only, no upstream call, nothing to meter.
+            account = self._research_account()
+            if account is None:
+                return
+            self._research_resume_from(account)
+            return
         if path == "/research/decide":
             # The same gate as the message start (ADR-0015): a
             # toggle-first conversation's proposals must be decidable
@@ -1540,6 +1555,16 @@ class SessionHandler(SimpleHTTPRequestHandler):
             if account is None:
                 return
             self._research_decide(account)
+            return
+        if path == "/research/plan-item":
+            # The per-item plan door (decision 03, the research-mode v2
+            # wayfinder map): one section accepted, rejected, or edited
+            # by its stable key — bookkeeping, the same gate as every
+            # research write.
+            account = self._research_account()
+            if account is None:
+                return
+            self._research_plan_item(account)
             return
         if path == "/next-tier-recall":
             if self._quoted_account() is None:
@@ -2571,6 +2596,27 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         self._send_json(202, {"turn_id": turn.id, "session_id": session["id"]})
 
+    def _research_resume_from(self, account: str) -> None:
+        """The closed session's fork door (decision 04): a STOPPED
+        investigation continues in a fresh session id carrying its
+        state — the old row never reopens, a stop stays honest. The
+        sheet adopts the returned session id as its research
+        conversation."""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            session_id = payload["session_id"]
+            if not isinstance(session_id, str) or not session_id.strip():
+                raise ValueError("session_id is required")
+        except (ValueError, KeyError, TypeError):
+            self._send_json(400, {"detail": "نشست پژوهشِ بسته را بفرستید."})
+            return
+        forked, error = resume_closed_session(account, session_id.strip())
+        if forked is None:
+            self._send_json(error[0], {"detail": error[1]})
+            return
+        self._send_json(200, forked)
+
     def _research_decide(self, account: str) -> None:
         """The checkpoint resolution: one pending proposal applied or
         dropped — the only path a research question or scope change
@@ -2603,6 +2649,41 @@ class SessionHandler(SimpleHTTPRequestHandler):
             proposal_id.strip(),
             accept,
             choice=(choice or None),
+        )
+        if result is None:
+            self._send_json(error[0], {"detail": error[1]})
+            return
+        self._send_json(200, result)
+
+    def _research_plan_item(self, account: str) -> None:
+        """The per-item plan door (decision 03): one accepted plan's
+        section is accepted, rejected, or edited by its stable key —
+        synchronous bookkeeping, no upstream call, nothing to meter. A
+        user's own steering never arms a cooldown."""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            session_id = payload["session_id"]
+            key = payload["key"]
+            status = payload["status"]
+            edited = payload.get("edited")
+            if not isinstance(session_id, str) or not session_id.strip():
+                raise ValueError("session_id is required")
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("key is required")
+            if not isinstance(status, str):
+                raise ValueError("status is required")
+            if edited is not None and not isinstance(edited, str):
+                raise ValueError("edited must be a string")
+        except (ValueError, KeyError, TypeError):
+            self._send_json(400, {"detail": "تصمیم بخش برنامه را بفرستید."})
+            return
+        result, error = decide_plan_item(
+            account,
+            session_id.strip(),
+            key.strip(),
+            status.strip(),
+            edited=(edited or None),
         )
         if result is None:
             self._send_json(error[0], {"detail": error[1]})
