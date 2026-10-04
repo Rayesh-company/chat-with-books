@@ -589,9 +589,7 @@ def test_a_gather_turn_merges_evidence_and_reports_counts(tmp_path):
     # server-composed notes — no model prose to guard at all.
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply(
-                "active_research", subquestions=["زیرپرسش یک؟", "زیرپرسش دو؟"]
-            )
+            composer_reply(json.dumps(["زیرپرسش یک؟", "زیرپرسش دو؟"])),
         ],
         recall_reply=fed_by_query,
     )
@@ -743,16 +741,15 @@ def test_an_audit_turn_is_pure_code(tmp_path):
         {"id": "c1", "text": "ادعای نخست", "status": "direct_support"}
     ]
     state["gaps"] = [{"id": "g1", "text": "شکاف", "subquestion": "زیرپرسش", "turn": 1}]
-    upstream = ResearchUpstream(composer_replies=[classify_reply("evidence_audit")])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=state)
     turn = run_turn_sync(session, research.COMMAND_AUDIT, upstream, tmp_path)
     assert turn.state == "done"
     texts = [b.get("text", "") for b in turn.result["reply"]]
     assert any("[پشتوانهٔ مستقیم] ادعای نخست" in text for text in texts)
-    # The audit itself is pure code: exactly the one classify call, no
-    # writer and no searchers.
-    assert len(upstream.calls) == 1
-    assert "chat/completions" in upstream.calls[0]
+    # The audit itself is pure code — and W4 (stage C) took the chip's
+    # classify call with it: zero composer calls, zero searchers.
+    assert upstream.calls == []
 
 
 def test_an_rq_proposal_turn_is_a_checkpoint_not_a_change(tmp_path):
@@ -943,7 +940,6 @@ def test_the_orientation_offers_the_guide_chip_after_a_detour():
 def test_the_guide_command_asks_the_guided_question(tmp_path):
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply("casual_question"),
             grilling_reply("از این پژوهش چه می‌خواهید؟", ("مقایسه",)),
         ]
     )
@@ -1195,7 +1191,6 @@ def test_a_targeted_gather_chip_gathers_only_that_question(tmp_path):
 
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply("active_research"),
             composer_reply("این دورِ شواهد خوب پیش رفت."),
         ],
         recall_reply=recall,
@@ -1434,12 +1429,7 @@ def test_an_active_research_turn_parks_no_proposals(tmp_path):
     # parking a fresh RQ proposal and answering «پرسش پژوهش به‌روز شد».
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply(
-                "active_research",
-                subquestions=["زیرپرسش؟"],
-                rq_proposal="پرسش تازه‌تر؟",
-                scope_in=["دامنهٔ نو"],
-            )
+            composer_reply(json.dumps(["زیرپرسش؟"])),
         ],
         recall_reply=fed_by_query,
     )
@@ -1717,11 +1707,14 @@ def test_a_session_survives_the_server_and_continues(tmp_path):
     # continuing the first's ledger.
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply("active_research", subquestions=["زیرپرسش یک؟"]),
+            # W4 (stage C): a chip gather plans its own sub-questions —
+            # the reply is the planning call's JSON list now; classify
+            # never runs for a resolved command.
+            composer_reply(json.dumps(["زیرپرسش یک؟"])),
             # Each material gather ends with one narration call; an
             # empty narration reply narrates nothing.
             composer_reply(""),
-            classify_reply("active_research", subquestions=["زیرپرسش دو؟"]),
+            composer_reply(json.dumps(["زیرپرسش دو؟"])),
             composer_reply(""),
         ],
         recall_reply=fed_by_query,
@@ -1758,7 +1751,7 @@ def test_a_session_survives_the_server_and_continues(tmp_path):
 def test_the_turn_poll_gates_the_phone(tmp_path):
     gate = threading.Event()
     upstream = ResearchUpstream(
-        composer_replies=[classify_reply("active_research", subquestions=["زیرپرسش؟"])],
+        composer_replies=[],
         gate=gate,
     )
     base, server, original = with_gate(tmp_path, upstream)
@@ -1959,7 +1952,7 @@ def test_stop_closes_and_the_closed_door_forks_the_state(
 def test_a_new_ask_by_another_phone_never_aborts_someone_elses_turn(tmp_path):
     gate = threading.Event()
     upstream = ResearchUpstream(
-        composer_replies=[classify_reply("active_research", subquestions=["زیرپرسش؟"])],
+        composer_replies=[composer_reply(json.dumps(["زیرپرسش؟"]))],
         gate=gate,
     )
     base, server, original = with_gate(tmp_path, upstream)
@@ -1978,7 +1971,10 @@ def test_a_new_ask_by_another_phone_never_aborts_someone_elses_turn(tmp_path):
             base, f"/research/turn?turn={turn_id}", phone=PHONE
         )
         assert poll_status == 200
-        assert payload["state"] == "classifying"
+        # W4 (stage C): a chip turn's first upstream call is its own
+        # planning call now — the turn parks in "planning", not
+        # "classifying", while the gate holds it.
+        assert payload["state"] == "planning"
         gate.set()
         turn = wait_turn_done(turn_id)
     finally:
@@ -2172,7 +2168,7 @@ def test_the_plan_request_chip_parks_a_plan_deterministically(tmp_path):
         )
     )
     upstream = ResearchUpstream(
-        composer_replies=[classify_reply("research_exploration"), plan_reply]
+        composer_replies=[plan_reply]
     )
     session = make_session(tmp_path)
     turn = run_turn_sync(
@@ -2256,3 +2252,31 @@ def test_the_plan_item_door_steers_sections_individually(tmp_path):
     assert blocks == [
         {"type": "note", "text": research.RESEARCH_BRIEF_NO_SECTIONS_DETAIL}
     ]
+
+
+def test_capped_question_ids_never_reissue_the_same_id():
+    # The pm incident's four q13s: length+1 re-mints the same id once
+    # the cap trims the list — the ledger's own id mint scans the
+    # survivors instead (stage C, spec §4's small-bug list).
+    state = research.new_research_state("پرسش؟")
+    for i in range(research.RESEARCH_MAX_SUBQUESTIONS + 3):
+        research._add_open_question(state, f"پرسش شمارۀ {i}؟")
+    ids = [item["id"] for item in state["subquestions"]]
+    assert len(ids) == len(set(ids)), ids
+    assert len(ids) == research.RESEARCH_MAX_SUBQUESTIONS
+
+
+def test_a_resolved_command_never_pays_the_classifier(tmp_path):
+    # W4 (findings-02, stage C): the deterministic move IS the intent —
+    # the chip turn's composer calls carry no intent-reader prompt at
+    # all; only the chip's own work (here: planning) runs.
+    upstream = ResearchUpstream(
+        composer_replies=[composer_reply(json.dumps(["زیرپرسش؟"]))],
+        recall_reply=fed_by_query,
+    )
+    session = make_session(tmp_path)
+    turn = run_turn_sync(session, research.COMMAND_GATHER, upstream, tmp_path)
+    assert turn.state == "done"
+    bodies = [b for b in upstream.bodies if isinstance(b, str)]
+    assert bodies, "the chip's own planning call should have run"
+    assert all("intent reader" not in body for body in bodies)

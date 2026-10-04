@@ -975,7 +975,10 @@ def _add_open_question(state: dict, text: str, name: str = "") -> bool:
         return False
     state["subquestions"].append(
         {
-            "id": f"q{len(state['subquestions']) + 1}",
+            # The ledger's own id mint (the pm incident's four q13s:
+            # length+1 re-mints the same id once the cap trims the
+            # list — _next_ledger_id scans the survivors' own ids).
+            "id": _next_ledger_id(state["subquestions"], "q"),
             "name": (str(name).strip() or _short_name(text))[:60],
             "text": text,
             "status": "pending",
@@ -4894,6 +4897,41 @@ SKILL_RUNNERS = {
 }
 
 
+# The resolved-command intents (W4, stage C): a deterministic chip's
+# move IS the intent — the classifier is never consulted for it.
+_COMMAND_INTENTS = {
+    "gather": "active_research",
+    "synthesize": "active_research",
+    "brief": "drafting",
+    # The Closing review's revise chip (T9): the failing sections rerun
+    # through the drafting skill.
+    "revise": "drafting",
+    "audit": "evidence_audit",
+    "skip": "research_exploration",
+    "guide": "research_exploration",
+    "stop": "research_exploration",
+    "plan_request": "research_exploration",
+    "resume": "research_exploration",
+    "map_keeper": "map_keeper",
+    "fog_probe": "fog_probe",
+}
+# The chip turns' classify fold: every working field empty — a chip
+# press mutates no concepts, questions, or chart.
+_EMPTY_CLASSIFIED = {
+    "rq_proposal": "",
+    "reason": "",
+    "answer_gist": "",
+    "concepts": [],
+    "subquestions": [],
+    "scope_in": [],
+    "scope_out": [],
+    "corpus": [],
+    "brief_plan": [],
+    "fog": [],
+    "new_open_questions": [],
+}
+
+
 # --- the turn worker -------------------------------------------------------
 
 
@@ -4965,33 +5003,25 @@ def run_research_turn(
                 return
             message = queued
             turn.message = queued
-        budget.require(1)  # the classify call
         resolved = resolve_command(message)
-        classified = classify_message(message, state, session["messages"])
-        anomaly = classified.pop("router_anomaly", None)
-        if anomaly:
-            record_diagnosis(state, anomaly, classified["intent"])
+        if resolved is not None:
+            # W4 (findings-02, moved to stage C): a resolved command
+            # never pays the classifier — the deterministic move IS the
+            # intent, and the fold's working fields ride empty (a chip
+            # press must not mutate concepts or questions anyway). The
+            # pm journey alone burned ~4 of these per sitting.
+            intent = _COMMAND_INTENTS[resolved[0]]
+            classified = dict(_EMPTY_CLASSIFIED, intent=intent)
+        else:
+            budget.require(1)  # the classify call
+            classified = classify_message(message, state, session["messages"])
+            anomaly = classified.pop("router_anomaly", None)
+            if anomaly:
+                record_diagnosis(state, anomaly, classified["intent"])
+            intent = classified["intent"]
         budget.checkpoint()  # the first chain boundary
         if turn.cancel.is_set():
             return
-        intent = classified["intent"]
-        if resolved:
-            intent = {
-                "gather": "active_research",
-                "synthesize": "active_research",
-                "brief": "drafting",
-                # The Closing review's revise chip (T9): the failing
-                # sections rerun through the drafting skill, the review
-                # then facing the reassembled document again.
-                "revise": "drafting",
-                "audit": "evidence_audit",
-                "skip": "research_exploration",
-                "guide": "research_exploration",
-                "stop": "research_exploration",
-                "plan_request": "research_exploration",
-                "map_keeper": "map_keeper",
-                "fog_probe": "fog_probe",
-            }[resolved[0]]
         # The code disposes (ADR-0012): the picked row is validated
         # against the state — a rejected pick is a recorded diagnosis
         # falling back to the conversational skill, never a crash,

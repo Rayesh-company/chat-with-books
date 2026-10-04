@@ -123,11 +123,11 @@ def test_a_fertile_probe_graduates_the_fog_into_an_open_question(tmp_path):
     # the passages join the ledger. The turn stays cheap: the classify
     # call plus exactly ONE search — no planning call, no re-search
     # round, no graph hop.
-    upstream = ResearchUpstream(composer_replies=[classify_reply()])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=foggy_state())
     turn = probe_turn(session, upstream, tmp_path)
     assert turn.state == "done"
-    assert len(composer_bodies(upstream)) == 1
+    assert len(composer_bodies(upstream)) == 0
     assert recall_call_count(upstream) == 1
     state = session["state"]
     graduated = [item for item in state["subquestions"] if item["id"] != "q1"]
@@ -212,11 +212,11 @@ def test_out_of_scope_fog_never_graduates_and_never_spends_a_search(tmp_path):
     # refusal. The verdict rides the reply in plain Persian.
     state = foggy_state()
     state["scope"]["out"] = ["نقش عدل در زندگی اجتماعی"]
-    upstream = ResearchUpstream(composer_replies=[classify_reply()])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=state)
     turn = probe_turn(session, upstream, tmp_path)
     assert turn.state == "done"
-    assert len(composer_bodies(upstream)) == 1
+    assert len(composer_bodies(upstream)) == 0
     assert recall_call_count(upstream) == 0
     state = session["state"]
     assert len(state["map"]["fog"]) == 1
@@ -265,11 +265,11 @@ def test_the_probe_runs_inside_the_per_turn_budget(tmp_path):
     # bounded step (T3): a cap the classify call alone exhausts stops
     # the turn at that boundary — the honest stop note, the note
     # unmarked, no search, no verdict faked.
-    upstream = ResearchUpstream(composer_replies=[classify_reply()])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=foggy_state())
-    turn = probe_turn(session, upstream, tmp_path, call_cap=1)
+    turn = probe_turn(session, upstream, tmp_path, call_cap=0)
     assert turn.state == "done"
-    assert len(composer_bodies(upstream)) == 1
+    assert len(composer_bodies(upstream)) == 0
     assert recall_call_count(upstream) == 0
     state = session["state"]
     assert state["map"]["fog"][0] == {"id": "f1", "text": FOG_TEXT}

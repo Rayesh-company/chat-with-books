@@ -412,13 +412,14 @@ def brief_ready_state():
 
 
 def test_the_brief_refuses_without_an_accepted_plan(tmp_path):
-    upstream = ResearchUpstream(composer_replies=[classify_reply("drafting")])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=brief_ready_state())
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)
     assert turn.state == "done"
-    # The refusal is honest and cheap: the classify call only — no
-    # writer ran without its plan.
-    assert len(composer_bodies(upstream)) == 1
+    # The refusal is honest and cheap (W4 took the chip's classify
+    # with it): no composer call at all — no writer ran without its
+    # plan.
+    assert len(composer_bodies(upstream)) == 0
     texts = [b.get("text", "") for b in turn.result["reply"]]
     assert any(research.RESEARCH_BRIEF_NEEDS_PLAN_DETAIL in text for text in texts)
 

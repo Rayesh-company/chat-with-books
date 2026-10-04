@@ -277,7 +277,6 @@ def test_a_contract_miss_retries_once_then_falls_back_honestly(tmp_path):
     state = brief_ready_state()
     upstream = ResearchUpstream(
         composer_replies=[
-            classify_reply("drafting"),
             section_reply(1, OTHER_SENTENCE),  # c1 needs e1; e2 quoted
             section_reply(1, OTHER_SENTENCE),  # the one retry misses too
             section_reply(1, OTHER_SENTENCE),  # c2 needs e2 — carried
@@ -289,9 +288,11 @@ def test_a_contract_miss_retries_once_then_falls_back_honestly(tmp_path):
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)
     assert turn.state == "done"
     bodies = composer_bodies(upstream)
-    assert len(bodies) == 6
+    # W4 (stage C): the chip's classify call is gone — five composer
+    # bodies now, and the retry pair leads them.
+    assert len(bodies) == 5
     # Exactly one retry, and it rides the SAME brief.
-    assert bodies[1]["messages"][0]["content"] == bodies[2]["messages"][0]["content"]
+    assert bodies[0]["messages"][0]["content"] == bodies[1]["messages"][0]["content"]
     reply = turn.result["reply"]
     assert [b["text"] for b in reply if b["type"] == "heading"] == [
         "شهود و ساحت",
@@ -397,11 +398,11 @@ def test_the_brief_refuses_without_an_accepted_plan(tmp_path):
     state = brief_ready_state()
     state["brief_plan"] = {"current": None, "versions": []}
     state["section_contracts"] = []
-    upstream = ResearchUpstream(composer_replies=[classify_reply("drafting")])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=state)
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)
     assert turn.state == "done"
-    assert len(composer_bodies(upstream)) == 1
+    assert len(composer_bodies(upstream)) == 0
     assert any(
         research.RESEARCH_BRIEF_NEEDS_PLAN_DETAIL in b.get("text", "")
         for b in turn.result["reply"]
@@ -413,11 +414,11 @@ def test_the_refuse_without_claims_rule_stands(tmp_path):
     # Brief — even with an accepted plan in hand.
     state = brief_ready_state()
     state["claims"] = []
-    upstream = ResearchUpstream(composer_replies=[classify_reply("drafting")])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=state)
     turn = run_turn_sync(session, research.COMMAND_BRIEF, upstream, tmp_path)
     assert turn.state == "done"
-    assert len(composer_bodies(upstream)) == 1
+    assert len(composer_bodies(upstream)) == 0
     assert any("ادعای مستندی" in b.get("text", "") for b in turn.result["reply"])
 
 

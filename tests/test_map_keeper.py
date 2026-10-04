@@ -225,13 +225,13 @@ def test_the_keeper_parks_one_cleanup_and_moves_nothing(tmp_path):
     # operator's decision.
     state = crowded_state()
     before = json.dumps(state["subquestions"]), json.dumps(state["map"]["fog"])
-    upstream = ResearchUpstream(composer_replies=[classify_reply("map_keeper")])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=state)
     turn = keeper_turn(session, upstream, tmp_path)
     assert turn.state == "done"
-    # The survey is free: the classify call was the turn's only
-    # upstream call.
-    assert len(composer_bodies(upstream)) == 1
+    # The survey is free — and W4 (stage C) took the chip's classify
+    # call: the turn's upstream footprint is exactly zero.
+    assert len(composer_bodies(upstream)) == 0
     proposal = session["state"]["pending_proposals"]
     assert [item["kind"] for item in proposal] == ["map_cleanup"]
     assert proposal[0]["drop_questions"] == ["q1", "d0"]
@@ -345,11 +345,13 @@ def test_a_clean_map_costs_one_honest_note(tmp_path):
     state["subquestions"] = [
         {"id": "q1", "name": "یکی", "text": "یکی؟", "status": "pending"}
     ]
-    upstream = ResearchUpstream(composer_replies=[classify_reply("map_keeper")])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=state)
     turn = keeper_turn(session, upstream, tmp_path)
     assert turn.state == "done"
-    assert len(composer_bodies(upstream)) == 1
+    # W4 (stage C): the chip turn's classify call is gone — the clean
+    # map's honest note costs zero composer calls.
+    assert len(composer_bodies(upstream)) == 0
     assert session["state"]["pending_proposals"] == []
     assert session["state"]["subquestions"][0]["id"] == "q1"
     notes = [block["text"] for block in turn.result["reply"]]

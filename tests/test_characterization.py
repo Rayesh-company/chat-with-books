@@ -100,13 +100,13 @@ def test_a_dead_narrator_silences_only_the_note(tmp_path):
     state["subquestions"] = [
         {"id": "q1", "name": "یکی", "text": "یکی؟", "status": "pending"}
     ]
-    upstream = ResearchUpstream(composer_replies=[classify_reply("active_research")])
+    upstream = ResearchUpstream(composer_replies=[])
     session = make_session(tmp_path, state=state)
     turn = run_turn_sync(session, research.COMMAND_GATHER, upstream, tmp_path)
     assert turn.state == "done"
     calls = composer_bodies(upstream)
-    assert len(calls) == 2
-    assert "You are the narrator" in calls[1]["messages"][0]["content"]
+    assert len(calls) == 1
+    assert "You are the narrator" in calls[0]["messages"][0]["content"]
     reply = turn.result["reply"]
     assert reply[0].get("type") == "note"
     assert "نقل‌قول تازه" in reply[0]["text"]
