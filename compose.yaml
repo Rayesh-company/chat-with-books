@@ -197,8 +197,8 @@ services:
       # tokens, config-held so a price change is an .env edit + restart,
       # never a code deploy. The defaults are the PM's starting numbers.
       LEDGER_DB: /data/usage_ledger.sqlite3
-      TARIFF_INPUT_TOMAN_PER_MTOK: ${TARIFF_INPUT_TOMAN_PER_MTOK:-30000}
-      TARIFF_OUTPUT_TOMAN_PER_MTOK: ${TARIFF_OUTPUT_TOMAN_PER_MTOK:-120000}
+      TARIFF_INPUT_TOMAN_PER_MTOK: ${TARIFF_INPUT_TOMAN_PER_MTOK:-20000}
+      TARIFF_OUTPUT_TOMAN_PER_MTOK: ${TARIFF_OUTPUT_TOMAN_PER_MTOK:-80000}
       # The admin audit log (T25, GitLab #26): the append-only record of
       # the Admin's actions, on the same persisted volume — an audit
       # that evaporates on a container rebuild is not an audit.

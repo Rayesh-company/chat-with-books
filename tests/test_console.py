@@ -121,10 +121,10 @@ def test_the_console_renders_the_system_for_the_admin():
         phone = "09120000001"
         account = ensure_account(phone)
         # One metered ask-path entry: 3000 in / 1500 out at the pinned
-        # tariff — 270 toman off the seeded 1,000,000 Balance today,
+        # tariff — 180 toman off the seeded 1,000,000 Balance today,
         # keyed by the Account's email (T21).
         record(account, "ask", 3000, 1500, metered=True)
-        assert cost_toman(3000, 1500) == 270
+        assert cost_toman(3000, 1500) == 180
         # One yesterday entry, landed directly with its own day: the
         # console's per-day read answers history, not just the live
         # day (the acceptance's "yesterday's per-account spend").
@@ -143,7 +143,7 @@ def test_the_console_renders_the_system_for_the_admin():
         finally:
             conn.close()
         assert ledger.day_total(account, yesterday) == 6
-        assert ledger.day_total(account, ledger._today()) == 270
+        assert ledger.day_total(account, ledger._today()) == 180
         quotas.record_chat(account)
         turn = seed_live_turn(account)
         failed = seed_settled_turn(
@@ -166,10 +166,10 @@ def test_the_console_renders_the_system_for_the_admin():
         assert f"{phone}@sheet.test" in html
         # The console speaks the shell's digit language (fa-IR): Persian
         # digits with the Persian thousands separator.
-        assert "۹۹۹٬۷۳۰" in html
+        assert "۹۹۹٬۸۲۰" in html
         assert "خرج دیروز (تومان)" in html
         assert '<td class="num">۶</td>' in html
-        assert "<td class=\"num\">۲۷۰</td>" in html
+        assert "<td class=\"num\">۱۸۰</td>" in html
         assert "۱ از ۵" in html
         assert ADMIN_EMAIL in html
         # The live turn rides with its id and its Farsi state.

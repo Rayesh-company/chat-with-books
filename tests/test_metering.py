@@ -30,11 +30,11 @@ from ui.ledger import (
     "input_tokens,output_tokens,expected",
     [
         (0, 0, 0),  # nothing spent, nothing billed
-        (1_000_000, 0, 30000),  # exactly one million input at the input rate
-        (0, 1_000_000, 120000),  # exactly one million output at the output rate
-        (500_000, 250_000, 45000),  # the halves sum: 15000 + 30000
-        (750_000, 125_000, 37500),  # mixed thirds at the two rates
-        (2_000_000, 1_000_000, 180000),  # the rates compose linearly
+        (1_000_000, 0, 20000),  # exactly one million input at the input rate
+        (0, 1_000_000, 80000),  # exactly one million output at the output rate
+        (500_000, 250_000, 30000),  # the halves sum: 10000 + 20000
+        (750_000, 125_000, 25000),  # mixed thirds at the two rates
+        (2_000_000, 1_000_000, 120000),  # the rates compose linearly
     ],
 )
 def test_the_tariff_is_pure_arithmetic(input_tokens, output_tokens, expected):
@@ -100,15 +100,15 @@ def test_the_ask_entry_is_an_input_side_estimate():
 
 def test_the_session_total_reanchors_on_each_ask():
     phone = "09120000000"
-    record_size_estimate(phone, "ask", 900)  # session one opens — 9 toman estimated
-    record(phone, "picker", 1_000_000, 0, metered=True)  # 30000
-    assert session_total(phone) == 30009
+    record_size_estimate(phone, "ask", 900)  # session one opens — 6 toman estimated
+    record(phone, "picker", 1_000_000, 0, metered=True)  # 20000
+    assert session_total(phone) == 20006
 
     record_size_estimate(phone, "ask", 900)  # session two opens — re-anchor
-    record(phone, "writer", 0, 250_000, metered=True)  # 30000 at the output rate
-    # 30000 for the writer + the ask entry's own estimate (300 tokens at
-    # the input rate rounds to 9): the anchor re-anchors, nothing bleeds.
-    assert session_total(phone) == 30009, "session one's spend never bleeds into session two"
+    record(phone, "writer", 0, 250_000, metered=True)  # 20000 at the output rate
+    # 20000 for the writer + the ask entry's own estimate (300 tokens at
+    # the input rate rounds to 6): the anchor re-anchors, nothing bleeds.
+    assert session_total(phone) == 20006, "session one's spend never bleeds into session two"
 
 
 def test_the_session_total_is_zero_before_any_ask():
