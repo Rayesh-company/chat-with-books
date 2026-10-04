@@ -15,6 +15,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+import threading
 import re
 from urllib.request import Request, urlopen
 
@@ -149,6 +150,29 @@ def parse_evidence_sources(text) -> list:
     return sources
 
 
+# The searcher-seam meter (stage C, findings-02 lever 5): thread-local
+# like the composer's own tap — the research worker parks a listener
+# for the turn's thread and clears it in its finally, so one turn can
+# never bill another's searches.
+_SEARCH_METER = threading.local()
+
+
+def set_search_meter(listener) -> None:
+    """Park this thread's search listener (None clears — the research
+    worker's finally always clears, mirroring composer.set_meter)."""
+    _SEARCH_METER.listener = listener
+
+
+def _notify_search(query: str) -> None:
+    listener = getattr(_SEARCH_METER, "listener", None)
+    if listener is None:
+        return
+    try:
+        listener(query)
+    except Exception:
+        pass  # the meter watches the search; it never breaks it
+
+
 def _recall_request(search_type: str, query: str, datasets: list) -> Request:
     """The recall POST every searcher shares — the shape pinned HERE,
     never in the browser: references on, the datasets the caller picked."""
@@ -196,6 +220,7 @@ def dive_recall(sub_question: str, datasets=None) -> list:
             payload = json.load(response)
     except (OSError, ValueError):
         return []
+    _notify_search(sub_question)
     if not isinstance(payload, list):
         return []
     sources = []
@@ -221,6 +246,12 @@ def run_dive_round(sub_questions, sources, seen, datasets=None) -> list:
         pools = list(
             pool.map(lambda question: dive_recall(question, datasets), sub_questions)
         )
+    # The searcher-seam meter, pool side: the fan-out's searchers run
+    # on POOL threads, where the worker's thread-local listener never
+    # lands — so the round itself notifies once per completed searcher,
+    # on the round's own (worker) thread.
+    for question in sub_questions:
+        _notify_search(question)
     for result in pools:
         for source in result:
             passage = source["passage"]

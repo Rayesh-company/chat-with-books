@@ -57,7 +57,7 @@ from urllib.request import urlopen
 
 try:
     from ui.composer import _composer_content, _composer_reply, set_meter
-    from ui.ledger import record_composer_call
+    from ui.ledger import record_composer_call, record_search_estimate
     from ui.dive import (
         BOOK_DATASETS,
         DIVE_MAX_SUB_QUESTIONS,
@@ -67,6 +67,7 @@ try:
         dive_retrieve,
         graph_hop,
         run_tool,
+        set_search_meter,
     )
     from ui.guard import (
         _BOOK_TITLES,
@@ -81,7 +82,7 @@ try:
     from ui import research_store
 except ImportError:  # the container runs serve.py as a script beside the modules
     from composer import _composer_content, _composer_reply, set_meter
-    from ledger import record_composer_call
+    from ledger import record_composer_call, record_search_estimate
     from dive import (
         BOOK_DATASETS,
         DIVE_MAX_SUB_QUESTIONS,
@@ -91,6 +92,7 @@ except ImportError:  # the container runs serve.py as a script beside the module
         dive_retrieve,
         graph_hop,
         run_tool,
+        set_search_meter,
     )
     from guard import (
         _BOOK_TITLES,
@@ -621,6 +623,13 @@ RESEARCH_PLAN_ITEM_DETAIL = "وضعیت بخش برنامه درست نیست؛ 
 RESEARCH_PLAN_REQUEST_BLOCKED_NOTE = (
     "برنامهٔ تازه‌ای الان پیشنهاد نمی‌کنم؛ یا برنامه‌ای در انتظار تصمیم شماست "
     "یا همین برنامه را همین اواخر تصمیم گرفتید."
+)
+# The journey's own cost ceiling (stage C, findings-02 lever 5): the
+# visible metered spend a session may accumulate before the engine
+# itself says enough — the honest note, never a silent stop.
+RESEARCH_SESSION_COST_CAP_TOMAN = 2000
+RESEARCH_SESSION_COST_CAP_DETAIL = (
+    "سقف هزینهٔ این پژوهش پر شده است؛ جمع‌بندی کن یا در پژوهشی تازه ادامه بده."
 )
 # A section's honest-gap fallback (T8): after the guard and exactly one
 # retry, a section its contract cannot feed is written AS a gap — the
@@ -1179,6 +1188,10 @@ def research_state_summary(state: dict) -> dict:
         "datasets": [
             str(item) for item in (state.get("datasets") or []) if item
         ][:6],
+        # The journey's visible spend so far (stage C): metered composer
+        # calls accumulated into the state — the sheet's cost line and
+        # the session cap both read it.
+        "cost_toman": int(state.get("cost_toman") or 0),
         "grilling": {
             "question": grilling.get("current_question", ""),
             "options": list(grilling.get("options", []))[:4],
@@ -4978,13 +4991,35 @@ def run_research_turn(
     # or estimated, like every entry — and each cost leaves the Balance
     # through the ledger's single deduction path. The clear rides the
     # worker's own finally: tests drive this function on their thread,
-    # so the tap never outlives the turn.
-    set_meter(
-        lambda prompt, reply: record_composer_call(
-            turn.account, "turn", prompt, reply
-        )
+    # so the tap never outlives the turn. Stage C (findings-02 lever 5)
+    # adds the two meter halves the ledger was blind to: the journey's
+    # visible spend accumulates INTO the state (the session cap and the
+    # sheet's cost line read it), and every searcher lands its own
+    # zero-cost estimate row.
+    def _meter(prompt, reply):
+        row = record_composer_call(turn.account, "turn", prompt, reply)
+        if row and row.get("cost_toman"):
+            state["cost_toman"] = int(
+                (state.get("cost_toman") or 0) + row["cost_toman"]
+            )
+        return row
+
+    set_meter(_meter)
+    set_search_meter(
+        lambda query: record_search_estimate(turn.account, query)
     )
     try:
+        # The journey's own ceiling (stage C): a session whose visible
+        # spend reached the cap settles honestly before any work — the
+        # engine says enough itself, never a silent stop.
+        if (state.get("cost_toman") or 0) >= RESEARCH_SESSION_COST_CAP_TOMAN:
+            _settle_research_turn(
+                turn,
+                session,
+                state,
+                [{"type": "note", "text": RESEARCH_SESSION_COST_CAP_DETAIL}],
+            )
+            return
         state["turns"] = state.get("turns", 0) + 1
         message = turn.message
         # The resume chip (decision 04): the paused turn's message swaps
@@ -5129,6 +5164,7 @@ def run_research_turn(
             pass
     finally:
         set_meter(None)
+        set_search_meter(None)
         turn.done.set()
         # The reap (T11): the registry holds live turns only — a settled
         # turn's outcome is durable in the store, and the recent-settled

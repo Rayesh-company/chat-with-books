@@ -4545,6 +4545,21 @@
           head.append(question);
           body.append(head);
         }
+        // Stage C (findings-02 lever 5): the journey's visible spend —
+        // the metered composer calls accumulated in the state. DRAFT
+        // label (the CONTEXT.md PM row owns the rename).
+        if (state.cost_toman) {
+          const costLine = document.createElement("p");
+          costLine.className = "map-question";
+          costLine.append(
+            document.createTextNode(
+              "هزینهٔ پژوهش تا اینجا: " +
+                toPersianDigits(state.cost_toman) +
+                " تومان"
+            )
+          );
+          body.append(costLine);
+        }
         const section = (key, label) => {
           const sec = document.createElement("div");
           sec.className = "map-sec";

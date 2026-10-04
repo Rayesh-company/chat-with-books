@@ -26,7 +26,7 @@ from tests.helpers import (
     with_gate,
 )
 
-from ui import dive, research, research_store, serve  # noqa: E402
+from ui import dive, ledger, research, research_store, serve  # noqa: E402
 
 PHONE = "09120000000"
 OTHER_PHONE = "09120000077"
@@ -2280,3 +2280,46 @@ def test_a_resolved_command_never_pays_the_classifier(tmp_path):
     bodies = [b for b in upstream.bodies if isinstance(b, str)]
     assert bodies, "the chip's own planning call should have run"
     assert all("intent reader" not in body for body in bodies)
+
+
+def test_every_search_lands_its_own_zero_cost_estimate_row(tmp_path):
+    # Stage C (findings-02 lever 5): the hidden Cognee side becomes
+    # visible — one estimate row per searcher, metered like every
+    # estimate, costing nothing (charging hidden spend is a pricing
+    # decision, not the meter's).
+    import sqlite3
+
+    upstream = ResearchUpstream(
+        composer_replies=[composer_reply(json.dumps(["زیرپرسش؟"]))],
+        recall_reply=fed_by_query,
+    )
+    session = make_session(tmp_path)
+    turn = run_turn_sync(session, research.COMMAND_GATHER, upstream, tmp_path)
+    assert turn.state == "done"
+    con = sqlite3.connect(ledger.LEDGER_DB)
+    rows = con.execute(
+        "SELECT metered, cost_toman FROM usage_entries WHERE kind = 'search'"
+    ).fetchall()
+    con.close()
+    assert rows, "the gather's searchers left no estimate rows"
+    assert all(metered == 0 and cost == 0 for metered, cost in rows)
+
+
+def test_the_journey_cap_settles_honestly_before_any_work(tmp_path):
+    # The engine's own ceiling (stage C): a session whose visible spend
+    # reached the cap settles with the honest note before a single
+    # upstream call.
+    state = research.new_research_state("پرسش؟")
+    state["cost_toman"] = research.RESEARCH_SESSION_COST_CAP_TOMAN
+    upstream = ResearchUpstream(composer_replies=[])
+    session = make_session(tmp_path, state=state)
+    turn = run_turn_sync(session, research.COMMAND_GATHER, upstream, tmp_path)
+    assert turn.state == "done"
+    assert upstream.calls == []
+    texts = [b.get("text", "") for b in turn.result["reply"]]
+    assert research.RESEARCH_SESSION_COST_CAP_DETAIL in texts
+    # The summary carries the spend the cap read.
+    assert (
+        research.research_state_summary(state)["cost_toman"]
+        == research.RESEARCH_SESSION_COST_CAP_TOMAN
+    )
