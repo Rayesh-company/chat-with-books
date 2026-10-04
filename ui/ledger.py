@@ -30,11 +30,15 @@ from pathlib import Path
 # are the PM's starting dials for glm-5.3-flash on AvalAI — they are
 # deliberately NOT measured market prices; the shape (config over code)
 # is the decision (ADR-0013 batch D), the numbers are one .env edit away.
+# The 2026-10-04 re-price: the ledger's own averages (picker ~1,800/740,
+# writer ~2,095/2,244) put an average ask at ~3,900 in / ~3,000 out —
+# 30,000/120,000 lands that ask at ~475 Toman, the PM's 400–550 band,
+# against a measured AvalAI cost of ~623 at $1 = 300,000 Toman.
 TARIFF_INPUT_TOMAN_PER_MTOK = int(
-    os.environ.get("TARIFF_INPUT_TOMAN_PER_MTOK", "2000")
+    os.environ.get("TARIFF_INPUT_TOMAN_PER_MTOK", "30000")
 )
 TARIFF_OUTPUT_TOMAN_PER_MTOK = int(
-    os.environ.get("TARIFF_OUTPUT_TOMAN_PER_MTOK", "8000")
+    os.environ.get("TARIFF_OUTPUT_TOMAN_PER_MTOK", "120000")
 )
 
 # The deduction wire (T23, GitLab #25): serve sets this once at import —

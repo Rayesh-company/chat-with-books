@@ -105,8 +105,8 @@ def test_every_recorded_entry_deducts_through_one_wire(tmp_path):
     before = accounts.get_balance(ACCOUNT)
     assert before == TEST_BALANCE_TOMAN
 
-    record(ACCOUNT, "picker", 1_000_000, 0, metered=True)  # 2000 at the input rate
-    assert accounts.get_balance(ACCOUNT) == before - 2000
+    record(ACCOUNT, "picker", 1_000_000, 0, metered=True)  # 30000 at the input rate
+    assert accounts.get_balance(ACCOUNT) == before - 30000
 
 
 def test_the_ask_gate_stops_an_empty_account_with_the_farsi_fix(tmp_path):

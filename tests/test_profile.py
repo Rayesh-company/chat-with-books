@@ -104,7 +104,11 @@ def test_the_history_caps_at_twenty_sessions_but_the_day_counts_all(
     groups = session_history(ACCOUNT)
     assert len(groups) == ledger.SESSION_HISTORY_CAP
     assert groups[0]["started"] >= groups[-1]["started"], "newest first"
-    assert today_total(ACCOUNT) == ledger.SESSION_HISTORY_CAP + 5
+    # Each ask's estimate (300 tokens) bills the same toman at the
+    # pinned tariff — the day's total counts all CAP + 5 of them.
+    assert today_total(ACCOUNT) == (ledger.SESSION_HISTORY_CAP + 5) * cost_toman(
+        300, 0
+    )
 
 
 def test_the_history_is_per_account(tmp_path, monkeypatch):
