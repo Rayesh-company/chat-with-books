@@ -1104,6 +1104,14 @@
         border-color: var(--ink);
       }
 
+      /* The guest cut (2026-10-04): an Account issued without research
+         keeps its toggle visible but inert — the mute, never the bad,
+         because a closed door is a fact of the Account, not a fault. */
+      .mode-toggle:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
       /* ===== Research Mode (ADR-0008/0009): one section per Session,
          appended to the thread when the ask arms it — the transcript,
          the chips, and the map rail keep their ids and behavior. */
@@ -8007,13 +8015,24 @@
         // The Admin's door: /auth/me names the role on load; only the
         // admin's topbar carries «میز مدیریت» (ADR-0013's role). A 401
         // (anonymous) or any miss keeps the link hidden — the overlay
-        // gate owns the not-logged-in case.
+        // gate owns the not-logged-in case. The same read carries the
+        // guest cut (2026-10-04): an Account issued without research
+        // disables the composer's toggle outright, so a guest never
+        // meets a 403 the button invited. The button's own note names
+        // whose door it is.
         fetch("/auth/me", { cache: "no-store" })
           .then((res) => (res.ok ? res.json() : null))
           .then((me) => {
             if (me && me.role === "admin") {
               const link = document.getElementById("admin-link");
               if (link) link.hidden = false;
+            }
+            if (me && me.research_enabled === false) {
+              const toggle = document.getElementById("research-mode-btn");
+              if (toggle) {
+                toggle.disabled = true;
+                toggle.title = "حالت پژوهش برای این حساب فعال نیست.";
+              }
             }
           })
           .catch(() => {});

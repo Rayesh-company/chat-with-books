@@ -59,6 +59,7 @@ _ACTION_LABELS = {
     "balance_topped": "شارژ اعتبار",
     "admin_seeded": "ساختن مدیر نخستین",
     "phone_attached": "پیوند شماره",
+    "research_access_changed": "تغییر دسترسی پژوهش",
 }
 
 # The refused writes' Farsi notes (T26), keyed by the whitelisted error
@@ -125,19 +126,27 @@ def _table(headers, rows_html) -> str:
 
 def _accounts_table(rows) -> str:
     """The Accounts mirror: one row per Account — the Balance (اعتبار),
-    yesterday's and today's spend off the ledger, and the day's chats
-    against the daily limit, each read by the caller from its own
-    store."""
+    yesterday's and today's spend off the ledger, the day's chats
+    against the daily limit, and the guest cut's پژوهش column (2026-10-04:
+    a guest chats on its Balance but never opens research), each read
+    by the caller from its own store."""
     rows_html = []
     for row in rows:
         phone = row.get("phone") or ""
         role = _ROLE_LABELS.get(str(row.get("role", "")), str(row.get("role", "")))
         chats = int(row.get("chats_today", 0))
         limit = int(row.get("quota_limit", 5))
+        research = row.get("research_enabled", True)
+        research_cell = (
+            '<span class="research-off">ندارد</span>'
+            if research is False
+            else "دارد"
+        )
         rows_html.append(
             "<tr>"
             f"<td class=\"email\">{_esc(row.get('email', ''))}</td>"
             f"<td>{_esc(role)}</td>"
+            f"<td>{research_cell}</td>"
             f"<td>{_esc(phone) if phone else '—'}</td>"
             f"<td class=\"num\">{_toman(row.get('balance_toman', 0))}</td>"
             f"<td class=\"num\">{_toman(row.get('yesterday_spend_toman', 0))}</td>"
@@ -149,6 +158,7 @@ def _accounts_table(rows) -> str:
         (
             "حساب",
             "نقش",
+            "پژوهش",
             "شمارۀ پیوند‌خورده",
             "اعتبار (تومان)",
             "خرج دیروز (تومان)",
@@ -229,8 +239,10 @@ def _audit_table(rows) -> str:
 
 
 def _write_forms(accounts_rows, error_note: str) -> str:
-    """The console's write side (T26, GitLab #28; T21's attach joins):
-    the issuance form, the top-up form, and the phone-attach form —
+    """The console's write side (T26, GitLab #28; T21's attach joins;
+    the guest cut's research flip follows, 2026-10-04): the issuance
+    form (with its research checkbox — unchecked issues a guest), the
+    top-up form, the phone-attach form, and the research-access form —
     plain HTML forms posting form-encoded bodies to serve.py's admin
     endpoints and getting a 303 back — post, redirect, get, no
     JavaScript and no framework. The select lists come from the same
@@ -254,6 +266,7 @@ def _write_forms(accounts_rows, error_note: str) -> str:
   <label>ایمیل <input type="email" name="email" required dir="ltr"></label>
   <label>گذرواژه <input type="password" name="password" required dir="ltr"></label>
   <label>شمارۀ پیوند‌خورده (اختیاری) <input type="text" name="phone" dir="ltr"></label>
+  <label class="check"><input type="checkbox" name="research" checked> حالت پژوهش داشته باشد</label>
   <button type="submit">ساختن حساب</button>
 </form>
 <form action="/admin/topup" method="post" class="write">
@@ -267,6 +280,15 @@ def _write_forms(accounts_rows, error_note: str) -> str:
   <label>حساب <select name="email" required>{options}</select></label>
   <label>شمارۀ پیوند‌خورده <input type="text" name="phone" dir="ltr"></label>
   <button type="submit">پیوند</button>
+</form>
+<form action="/admin/research-access" method="post" class="write">
+  <h3>دسترسی پژوهش</h3>
+  <label>حساب <select name="email" required>{options}</select></label>
+  <label>وضعیت <select name="state" required>
+    <option value="on">فعال</option>
+    <option value="off">غیرفعال</option>
+  </select></label>
+  <button type="submit">تغییر</button>
 </form>
 </div>"""
 
@@ -413,6 +435,11 @@ _STYLE = """
                       border: none; border-radius: 6px; padding: 7px 18px;
                       font-size: 14px; font-family: inherit; cursor: pointer; }
   form.write button:hover { background: var(--lapis-deep); }
+  /* The guest cut's mark (2026-10-04): a guest's «ندارد» wears the
+     mute, never the bad — a closed door is a fact, not a failure. */
+  .research-off { color: var(--mute); }
+  label.check { display: flex; align-items: center; gap: 8px; }
+  label.check input { width: auto; margin-top: 0; }
   footer.note { margin-top: 30px; font-size: 12.5px; color: var(--mute);
                 border-top: 1px solid var(--rule); padding-top: 10px; }
   /* The phone: the page's gutter narrows and the tables keep a

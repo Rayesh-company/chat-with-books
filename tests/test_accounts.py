@@ -102,6 +102,9 @@ def test_verify_login_round_trips_and_issuance_is_once(tmp_path):
             "email": "sara@sheet.test",
             "phone": "09123456789",
             "role": "operator",
+            # The guest cut (2026-10-04): every issuance carries its
+            # research state — on, unless the Admin cut it.
+            "research_enabled": True,
         }
         # An Account is issued once; a second issuance is refused, not
         # a silent overwrite.

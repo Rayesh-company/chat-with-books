@@ -32,12 +32,14 @@ AUDIT_DB = Path(
 
 # The action vocabulary (T25 wired the first one; T26 the console's
 # top-up and the deployment's first-admin seeding; T21 the attach the
-# migration maps by). Actions are stable wire strings — the console's
+# migration maps by; the guest cut (2026-10-04) the research flip).
+# Actions are stable wire strings — the console's
 # Farsi labels key off them, never off display text.
 ACCOUNT_CREATED = "account_created"
 BALANCE_TOPPED = "balance_topped"
 ADMIN_SEEDED = "admin_seeded"
 PHONE_ATTACHED = "phone_attached"
+RESEARCH_ACCESS_CHANGED = "research_access_changed"
 
 
 def _now() -> str:

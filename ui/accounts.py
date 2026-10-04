@@ -59,13 +59,22 @@ def _connect() -> sqlite3.Connection:
         "phone TEXT, "
         "role TEXT NOT NULL, "
         "created_at TEXT NOT NULL, "
-        "balance_toman INTEGER NOT NULL DEFAULT 0)"
+        "balance_toman INTEGER NOT NULL DEFAULT 0, "
+        "research_enabled INTEGER NOT NULL DEFAULT 1)"
     )
-    # The Balance (T23, GitLab #25) landed after the first Accounts did —
-    # an existing store migrates in place, idempotently, on first touch.
+    # The Balance (T23, GitLab #25) landed after the first Accounts did,
+    # and the guest cut (2026-10-04) landed after the Balance — an
+    # existing store migrates in place, idempotently, on first touch.
     try:
         conn.execute(
             "ALTER TABLE accounts ADD COLUMN balance_toman INTEGER NOT NULL DEFAULT 0"
+        )
+    except sqlite3.OperationalError:
+        pass  # the column is already there
+    try:
+        conn.execute(
+            "ALTER TABLE accounts ADD COLUMN research_enabled"
+            " INTEGER NOT NULL DEFAULT 1"
         )
     except sqlite3.OperationalError:
         pass  # the column is already there
@@ -115,17 +124,22 @@ def _row_to_account(row) -> dict:
         "phone": row[1],
         "role": row[2],
         "created_at": row[3],
+        "research_enabled": bool(row[4]),
     }
 
 
-def create_account(email, password, phone=None, role="operator"):
+def create_account(
+    email, password, phone=None, role="operator", research_enabled=True
+):
     """Issue one Account (the Admin's act — the HTTP layer enforces the
     role, the store enforces the uniqueness). Returns the account dict,
     or None when the email is already taken: an Account is issued once,
     and a second issuance is the Admin's mistake to see, not a silent
     overwrite. The phone is stored as attached (legacy data — the
     identity resolver normalizes on read); the password is hashed
-    here, never stored."""
+    here, never stored. research_enabled=False issues a guest (the
+    2026-10-04 cut): the Account chats on its Balance like any other,
+    but the research door never opens for it."""
     email = _normalize_email(email)
     if not email or not password or role not in ROLES:
         return None
@@ -134,15 +148,27 @@ def create_account(email, password, phone=None, role="operator"):
         try:
             conn.execute(
                 "INSERT INTO accounts (email, password_hash, phone, role,"
-                " created_at) VALUES (?, ?, ?, ?, ?)",
-                (email, hash_password(password), phone, role, _now()),
+                " created_at, research_enabled) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    email,
+                    hash_password(password),
+                    phone,
+                    role,
+                    _now(),
+                    1 if research_enabled else 0,
+                ),
             )
             conn.commit()
         except sqlite3.IntegrityError:
             return None
     finally:
         conn.close()
-    return {"email": email, "phone": phone, "role": role}
+    return {
+        "email": email,
+        "phone": phone,
+        "role": role,
+        "research_enabled": bool(research_enabled),
+    }
 
 
 def verify_login(email, password):
@@ -152,8 +178,8 @@ def verify_login(email, password):
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT email, password_hash, phone, role, created_at "
-            "FROM accounts WHERE email = ?",
+            "SELECT email, password_hash, phone, role, created_at,"
+            " research_enabled FROM accounts WHERE email = ?",
             (_normalize_email(email),),
         ).fetchone()
     finally:
@@ -161,7 +187,13 @@ def verify_login(email, password):
     if row is None or not verify_password(str(password or ""), row[1]):
         return None
     # The SELECT carries the hash at index 1; the account dict never does.
-    return {"email": row[0], "phone": row[2], "role": row[3], "created_at": row[4]}
+    return {
+        "email": row[0],
+        "phone": row[2],
+        "role": row[3],
+        "created_at": row[4],
+        "research_enabled": bool(row[5]),
+    }
 
 
 def account_by_email(email):
@@ -170,8 +202,8 @@ def account_by_email(email):
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT email, phone, role, created_at FROM accounts "
-            "WHERE email = ?",
+            "SELECT email, phone, role, created_at, research_enabled "
+            "FROM accounts WHERE email = ?",
             (_normalize_email(email),),
         ).fetchone()
     finally:
@@ -188,8 +220,8 @@ def list_accounts():
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT email, phone, role, created_at, balance_toman "
-            "FROM accounts ORDER BY rowid"
+            "SELECT email, phone, role, created_at, balance_toman,"
+            " research_enabled FROM accounts ORDER BY rowid"
         ).fetchall()
     finally:
         conn.close()
@@ -200,9 +232,27 @@ def list_accounts():
             "role": row[2],
             "created_at": row[3],
             "balance_toman": int(row[4]),
+            "research_enabled": bool(row[5]),
         }
         for row in rows
     ]
+
+
+def set_research_enabled(email, enabled: bool) -> bool:
+    """The Admin's guest-cut flip: research on or off for one standing
+    Account (the issuance-time flag is create_account's own door).
+    False when no Account carries this email — the console's refusal,
+    never a silent no-op."""
+    conn = _connect()
+    try:
+        cursor = conn.execute(
+            "UPDATE accounts SET research_enabled = ? WHERE email = ?",
+            (1 if enabled else 0, _normalize_email(email)),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
 
 
 def get_role(email):

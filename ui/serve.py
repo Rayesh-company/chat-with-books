@@ -68,6 +68,7 @@ try:
         ensure_admin,
         get_balance,
         list_accounts,
+        set_research_enabled,
         verify_login,
     )
     from ui import audit, migrate
@@ -208,6 +209,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         ensure_admin,
         get_balance,
         list_accounts,
+        set_research_enabled,
         verify_login,
     )
     import audit, migrate
@@ -384,6 +386,13 @@ AUTH_COOKIE = "cwb_auth"
 AUTH_TOKEN_TTL = 12 * 3600
 AUTH_LOGIN_401_DETAIL = "برای ادامه وارد شوید."
 AUTH_NOT_ADMIN_403_DETAIL = "ساختن حساب فقط از دست مدیر برمی‌آید."
+# The guest cut (2026-10-04): an Account the Admin issued without
+# research — the Balance still gates the ask, but the research door
+# answers 403 under its own name, so a guest never mistakes a closed
+# door for a spent one.
+RESEARCH_DISABLED_403_DETAIL = (
+    "حالت پژوهش برای این حساب فعال نیست؛ از مدیر بخواهید فعالش کند."
+)
 # The console's own refusal (T25): the mirror is the Admin's surface —
 # a logged-in operator's cookie reaches the endpoint but not the page,
 # and the Farsi note names whose door it is.
@@ -1191,19 +1200,27 @@ class SessionHandler(SimpleHTTPRequestHandler):
         return account
 
     def _research_account(self):
-        """The research gate (ADR-0015): the Account behind the login
-        cookie with a positive Balance — and nothing else. The old
-        minimum-of-one-chat precondition existed because research was
-        seeded from a prior ask's Evidence pool; the composer's research
-        toggle starts the conversation from the typed question alone
-        (the pool seed is optional), so the day's first act may be
-        research. The daily chat quota stays the normal ask's quota —
+        """The research gate (ADR-0015, widened by the guest cut,
+        2026-10-04): the Account behind the login cookie with a positive
+        Balance — and, since the cut, research left on the Account. The
+        old minimum-of-one-chat precondition existed because research
+        was seeded from a prior ask's Evidence pool; the composer's
+        research toggle starts the conversation from the typed question
+        alone (the pool seed is optional), so the day's first act may
+        be research. The daily chat quota stays the normal ask's quota —
         research turns record no chats and never burn it; the Balance
-        is the research spend's own prepaid stop."""
+        is the research spend's own prepaid stop. An Account issued
+        without research (a guest) answers 403 under its own name: the
+        door is closed, not spent, and the Balance gate above stays
+        the ask's own."""
         account = resolve_identity(self)
         if account is None:
             return None
         if not self._balance_gate(account):
+            return None
+        row = account_by_email(account)
+        if row is not None and row.get("research_enabled") is False:
+            self._json_error(403, RESEARCH_DISABLED_403_DETAIL)
             return None
         return account
 
@@ -1249,7 +1266,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
     def _auth_me(self) -> None:
         """The whoami read: the Account behind the cookie, or the same
         401 every gated endpoint answers — one shape, so the sheet's
-        overlay hook treats it one way."""
+        overlay hook treats it one way. research_enabled rides along
+        (the guest cut): the sheet's toggle learns its own Account's
+        door here, never from a guess."""
         account = resolve_account(self)
         if account is None:
             self._json_error(401, AUTH_LOGIN_401_DETAIL)
@@ -1260,6 +1279,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 "email": account["email"],
                 "role": account["role"],
                 "phone": account["phone"],
+                "research_enabled": account.get("research_enabled", True),
             },
         )
 
@@ -1282,12 +1302,15 @@ class SessionHandler(SimpleHTTPRequestHandler):
             email = payload["email"]
             password = payload["password"]
             phone = payload.get("phone")
+            research_enabled = payload.get("research_enabled", True)
             if not isinstance(email, str) or not email.strip():
                 raise ValueError("email is required")
             if not isinstance(password, str) or not password:
                 raise ValueError("password is required")
             if phone is not None and not isinstance(phone, str):
                 raise ValueError("phone must be a string")
+            if not isinstance(research_enabled, bool):
+                raise ValueError("research_enabled must be a boolean")
         except (ValueError, KeyError, TypeError):
             # The body is already read above, so _send_json is safe —
             # _json_error would drain a second time and block.
@@ -1302,7 +1325,13 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 return
         else:
             phone = None
-        created = create_account(email, password, phone=phone, role="operator")
+        created = create_account(
+            email,
+            password,
+            phone=phone,
+            role="operator",
+            research_enabled=research_enabled,
+        )
         if created is None:
             self._send_json(409, {"detail": AUTH_EMAIL_TAKEN_DETAIL})
             return
@@ -1311,11 +1340,16 @@ class SessionHandler(SimpleHTTPRequestHandler):
         # and the issued, appended only after the creation truly
         # succeeded. A refused creation (the 409 above, the bad body
         # before it) logs nothing: the log records what HAPPENED, never
-        # what was attempted.
+        # what was attempted. A guest issuance (research off, the
+        # 2026-10-04 cut) says so in its row — the cut is a fact of the
+        # Account, not a mode of the moment.
+        audit_detail = {"email": created["email"], "phone": created["phone"]}
+        if not research_enabled:
+            audit_detail["research_enabled"] = False
         audit_quiet(
             audit.ACCOUNT_CREATED,
             actor_email=account["email"],
-            detail={"email": created["email"], "phone": created["phone"]},
+            detail=audit_detail,
         )
         self._send_json(
             200,
@@ -1391,6 +1425,11 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # phone joins its Account, and the stores' pre-account rows
             # follow the mapping — audited, from the browser.
             self._admin_attach()
+            return
+        if path == "/admin/research-access":
+            # The console's guest-cut flip (2026-10-04): research on or
+            # off for a standing Account — audited, from the browser.
+            self._admin_research_access()
             return
         if path == "/api/v1/recall":
             account = self._gate_account()
@@ -2049,11 +2088,12 @@ class SessionHandler(SimpleHTTPRequestHandler):
 
     def _admin_create_account(self) -> None:
         """The console's issuance form (T26, GitLab #28) — account
-        creation moves into the console here: email, password, and the
-        optional legacy phone attach, posted from the page, audited
-        like /auth/accounts, and answered with a redirect back to the
-        fresh mirror. A refused write redirects with a whitelisted
-        error code and logs nothing."""
+        creation moves into the console here: email, password, the
+        optional legacy phone attach, and the guest cut's research
+        checkbox (checked = a normal Account, unchecked = a guest),
+        posted from the page, audited like /auth/accounts, and answered
+        with a redirect back to the fresh mirror. A refused write
+        redirects with a whitelisted error code and logs nothing."""
         account = self._admin_gate()
         if account is None:
             return
@@ -2061,6 +2101,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
         email = (form.get("email") or "").strip()
         password = form.get("password") or ""
         phone = (form.get("phone") or "").strip() or None
+        # An unchecked checkbox simply never rides the form body — the
+        # absence IS the guest cut.
+        research_enabled = bool(form.get("research"))
         if not email or not password:
             self._send_redirect(f"/admin?error={ADMIN_ERROR_BAD_BODY}")
             return
@@ -2069,14 +2112,50 @@ class SessionHandler(SimpleHTTPRequestHandler):
             if not phone:
                 self._send_redirect(f"/admin?error={ADMIN_ERROR_BAD_PHONE}")
                 return
-        created = create_account(email, password, phone=phone, role="operator")
+        created = create_account(
+            email,
+            password,
+            phone=phone,
+            role="operator",
+            research_enabled=research_enabled,
+        )
         if created is None:
             self._send_redirect(f"/admin?error={ADMIN_ERROR_EMAIL_TAKEN}")
             return
+        audit_detail = {"email": created["email"], "phone": created["phone"]}
+        if not research_enabled:
+            audit_detail["research_enabled"] = False
         audit_quiet(
             audit.ACCOUNT_CREATED,
             actor_email=account["email"],
-            detail={"email": created["email"], "phone": created["phone"]},
+            detail=audit_detail,
+        )
+        self._send_redirect("/admin")
+
+    def _admin_research_access(self) -> None:
+        """The console's guest-cut flip (2026-10-04): research on or off
+        for one standing Account — set_research_enabled writes the same
+        column the issuance set, the audit log carries the actor and
+        the new state, and the redirect re-renders the mirror with the
+        پژوهش column showing the change. The sheet learns it on the
+        Account's next /auth/me; a live guest research turn cannot
+        exist to disturb (the gate never opened one)."""
+        actor = self._admin_gate()
+        if actor is None:
+            return
+        form = self._read_form()
+        email = (form.get("email") or "").strip()
+        state = (form.get("state") or "").strip()
+        if not email or state not in ("on", "off"):
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_BAD_BODY}")
+            return
+        if not set_research_enabled(email, state == "on"):
+            self._send_redirect(f"/admin?error={ADMIN_ERROR_UNKNOWN_ACCOUNT}")
+            return
+        audit_quiet(
+            audit.RESEARCH_ACCESS_CHANGED,
+            actor_email=actor["email"],
+            detail={"email": email, "research_enabled": state == "on"},
         )
         self._send_redirect("/admin")
 
