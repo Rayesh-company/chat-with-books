@@ -40,6 +40,16 @@ BALANCE_TOPPED = "balance_topped"
 ADMIN_SEEDED = "admin_seeded"
 PHONE_ATTACHED = "phone_attached"
 RESEARCH_ACCESS_CHANGED = "research_access_changed"
+# The ticket system's actions (the ticket-system map, 2026-10-05): the
+# feedback loop is money-adjacent history — what was reported, who
+# answered, what closed — so every transition lands here like the
+# console's own writes.
+TICKET_FILED = "ticket_filed"
+TICKET_REPLIED = "ticket_replied"
+TICKET_CLOSED = "ticket_closed"
+TICKET_REOPENED = "ticket_reopened"
+TICKET_REPLY_EDITED = "ticket_reply_edited"
+TICKET_SOFT_CAP = "ticket_soft_cap"
 
 
 def _now() -> str:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 import base64
+import datetime
 import gzip
 import hashlib
 import hmac
@@ -94,6 +95,12 @@ try:
     from ui import ledger
     from ui import session_store
     from ui import note_store
+    from ui import ticket_store
+    from ui.tickets_admin import (
+        admin_inbox_html,
+        admin_ticket_html,
+        admin_transcript_html,
+    )
     from ui import research_store
     from ui.picker import (
         QUOTE_SELECTION_FLOOR,
@@ -220,6 +227,12 @@ except ImportError:  # the container runs this file as a script beside the modul
     from ask import ask_pool
     from chat_store import latest_chat
     import chat_store
+    import ticket_store
+    from tickets_admin import (
+        admin_inbox_html,
+        admin_ticket_html,
+        admin_transcript_html,
+    )
     from composer import (
         COMPOSER_MAX_TOKENS,
         COMPOSER_TIMEOUT,
@@ -401,6 +414,31 @@ RESEARCH_DISABLED_403_DETAIL = (
 # a logged-in operator's cookie reaches the endpoint but not the page,
 # and the Farsi note names whose door it is.
 ADMIN_CONSOLE_403_DETAIL = "میز مدیریت فقط از دست مدیر برمی‌آید."
+# The ticket system's Farsi answers (the ticket-system map, 2026-10-05;
+# the sheet mirrors its half — these are the SERVER's words). The
+# friendly refusals carry their own detail strings, never bare codes:
+# a soft cap is a nudge, a denied reopen is an explanation, and the
+# user never meets an English error.
+TICKET_NOT_FOUND_404_DETAIL = "تیکت پیدا نشد."
+TICKET_BAD_BODY_400_DETAIL = "دسته و توضیح تیکت را کامل بفرستید."
+TICKET_SHORT_BODY_DETAIL = (
+    "توضیح مشکل حداقل ۱۰ حرف باشد؛ دسته به‌تنهایی کافی نیست."
+)
+TICKET_BAD_IMAGE_DETAIL = (
+    "تصویر پیوست نامعتبر است؛ فقط PNG، JPEG، WebP یا GIF تا ۲ مگابایت."
+)
+TICKET_SOFT_CAP_DETAIL = (
+    "شمار تیکت‌های باز شما به سقف رسیده است؛ اول تیکت‌های باز را"
+    " دنبال کنید یا ببندید، بعد تیکت تازه بزنید."
+)
+TICKET_CLOSED_DETAIL = (
+    "این تیکت بسته است؛ برای پیگیری، همان تیکت را (تا ۷ روز) بازگشایی"
+    " کنید یا تیکت تازه بزنید."
+)
+TICKET_REOPEN_DENIED_DETAIL = (
+    "زمان یا سهمِ بازگشایی این تیکت تمام شده است؛ تیکت تازه بزنید."
+)
+TICKET_BAD_REPLY_DETAIL = "متن پاسخ خالی نیست."
 # How many audit rows the console shows (T25): a glance at the newest
 # actions, not the archive — the log itself keeps everything.
 ADMIN_AUDIT_ROWS = 20
@@ -696,6 +734,108 @@ def _gzipped_file(file_path: Path, mtime_ns: int) -> bytes:
     return body
 
 
+# --- the ticket snapshot's builders (the ticket-system map) -----------
+# The snapshot is the SERVER's word for what the user saw, built from
+# the Session store the moment the ticket is filed — the client sends
+# ids only, so nothing report-shaped can be forged. Everything here
+# fails soft: an unreadable payload answers its empty string, never a
+# refused ticket.
+
+_TICKET_SNAPSHOT_CAP = 1200
+
+
+def _ticket_snapshot_parts(
+    session: dict, message_id=None, ask_key=None
+) -> dict | None:
+    """The message the chip pointed at, as the snapshot's parts: the
+    answer itself (its connective text when the payload is blocks —
+    the same discipline _conversation_tail applies), the sitting's
+    last standing question before it, the book, a best-effort mode,
+    and the ask_key/ts the cost lookup wants. The pointer is the
+    message id OR the ask's ask_key — the sheet knows the key live
+    (it mints it) and the id only after a resume read; both name the
+    same settled row. None when neither names one of the Session's
+    assistant rows."""
+    messages = session.get("messages") or []
+    target = None
+    last_user = ""
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        payload = message.get("payload")
+        payload = payload if isinstance(payload, dict) else {}
+        if message.get("role") == "user":
+            text = payload.get("text")
+            if isinstance(text, str) and text.strip():
+                last_user = text.strip()
+        if message.get("role") != "assistant":
+            continue
+        if (
+            message.get("id") == message_id
+            if message_id is not None
+            else False
+        ) or (
+            ask_key is not None
+            and message.get("ask_key") == ask_key
+        ):
+            target = message
+            break
+    if target is None:
+        return None
+    payload = target.get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    answer = payload.get("text")
+    if not isinstance(answer, str) or not answer.strip():
+        answer = _article_connective_text(payload)
+    mode = (
+        "research"
+        if payload.get("research") or payload.get("mode") == "research"
+        else "chat"
+    )
+    model = payload.get("model")
+    snapshot = {
+        "question": last_user[:_TICKET_SNAPSHOT_CAP],
+        "answer": (answer or "").strip()[:_TICKET_SNAPSHOT_CAP],
+        "book": session.get("book") or "",
+        "mode": mode,
+        "model": model if isinstance(model, str) else None,
+    }
+    references = payload.get("references")
+    if isinstance(references, list) and references:
+        snapshot["extra"] = {"references": references[:12]}
+    return {
+        "snapshot": snapshot,
+        "ask_key": target.get("ask_key"),
+        "message_id": target.get("id"),
+        "ts": target.get("ts"),
+    }
+
+
+def _turn_cost_best_effort(account: str, message_ts) -> float | None:
+    """The turn's cost out of the ledger's ask groups (the map's
+    decision 01: silent capture, best-effort, never a refusal): the
+    newest ask group that opened at or before the message is the turn
+    the answer belongs to — its summed cost is the honest estimate. A
+    ledger that cannot answer (no groups, unreadable ts) stays NULL."""
+    try:
+        groups = ledger.session_history(account)
+    except Exception:
+        return None
+    if not isinstance(message_ts, str) or not message_ts:
+        return None
+    eligible = [
+        group
+        for group in groups
+        if isinstance(group, dict)
+        and isinstance(group.get("started"), str)
+        and group["started"] <= message_ts
+    ]
+    if not eligible:
+        return None
+    cost = eligible[0].get("cost_toman")
+    return float(cost) if isinstance(cost, (int, float)) else None
+
+
 class SessionHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(UI_DIR), **kwargs)
@@ -774,6 +914,46 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # panel's list, the caller's own notes only.
             self._notes_list()
             return
+        if path == "/tickets":
+            # The ticket panel's list (the ticket-system map): the
+            # caller's own tickets, newest first.
+            self._tickets_list()
+            return
+        if path == "/tickets/unread":
+            # The panel badge's number: the account's tickets holding
+            # an unread reply of the manager's — polled beside
+            # /usage/live.
+            self._tickets_unread()
+            return
+        if path.startswith("/tickets/"):
+            rest = path[len("/tickets/"):]
+            if rest.isdigit():
+                self._ticket_get(int(rest))
+                return
+            file_id = rest[: -len("/file")] if rest.endswith("/file") else ""
+            if file_id.isdigit():
+                self._ticket_file(int(file_id))
+                return
+        if path.startswith("/admin/tickets"):
+            # The manager's inbox (the ticket-system map): the console's
+            # sibling page, server-rendered, the role gate alone.
+            account = self._admin_gate()
+            if account is None:
+                return
+            rest = path[len("/admin/tickets"):]
+            if rest in ("", "/"):
+                self._admin_tickets_page(account)
+                return
+            detail = rest[1:] if rest.startswith("/") else rest
+            if detail.isdigit():
+                self._admin_ticket_page(account, int(detail))
+                return
+            transcript = detail[: -len("/transcript")] if detail.endswith(
+                "/transcript"
+            ) else ""
+            if transcript.isdigit():
+                self._admin_ticket_transcript(account, int(transcript))
+                return
         if path.startswith("/sessions/"):
             rest = path[len("/sessions/"):]
             if rest.isdigit():
@@ -1437,6 +1617,38 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # off for a standing Account — audited, from the browser.
             self._admin_research_access()
             return
+        if path == "/tickets":
+            # File one ticket (the ticket-system map): the client only
+            # points at the message — the snapshot is built here, from
+            # the Session store, so nothing report-shaped is forged.
+            self._ticket_create()
+            return
+        if path.startswith("/tickets/"):
+            rest = path[len("/tickets/"):]
+            ticket_id = rest.split("/", 1)[0]
+            action = rest[len(ticket_id) + 1 :] if "/" in rest else ""
+            if ticket_id.isdigit():
+                if action == "replies":
+                    self._ticket_reply(int(ticket_id))
+                    return
+                if action == "close":
+                    self._ticket_close(int(ticket_id))
+                    return
+                if action == "reopen":
+                    self._ticket_reopen(int(ticket_id))
+                    return
+        if path == "/admin/tickets/reply":
+            # The inbox's reply form (the ticket-system map): the
+            # manager's answer lands as a thread row and moves the
+            # ticket to پاسخ داده شد — form-encoded, 303 back, audited.
+            self._admin_ticket_reply()
+            return
+        if path == "/admin/tickets/close":
+            self._admin_ticket_close()
+            return
+        if path == "/admin/tickets/edit-reply":
+            self._admin_ticket_edit_reply()
+            return
         if path == "/api/v1/recall":
             account = self._gate_account()
             if account is None:
@@ -2069,6 +2281,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             quota_limit=DAILY_CHAT_LIMIT,
             generated=time.strftime("%Y-%m-%d %H:%M"),
             error_code=error_code,
+            open_tickets=ticket_store.open_count(),
         ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2476,6 +2689,360 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         deleted = note_store.delete_notes_many(account, ids)
         self._send_json(200, {"deleted": deleted})
+
+
+    # --- the ticket endpoints (the ticket-system map, 2026-10-05) ------
+    # The feedback loop: the sheet chips an answer, POSTs the pointer,
+    # and everything report-shaped is built HERE — the snapshot from
+    # the Session store, the cost from the ledger's ask groups, the
+    # attachment sniffed from magic bytes. The panel reads its own
+    # tickets; the inbox is the console's sibling page. Filing rides no
+    # balance and no quota: feedback is not spend.
+
+    def _tickets_list(self) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        self._send_json(
+            200, {"tickets": ticket_store.list_tickets(account=account)}
+        )
+
+    def _tickets_unread(self) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        self._send_json(200, {"unread_count": ticket_store.unread_count(account)})
+
+    def _ticket_get(self, ticket_id: int) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        ticket = ticket_store.get_ticket(ticket_id, account=account)
+        if ticket is None:
+            self._json_error(404, TICKET_NOT_FOUND_404_DETAIL)
+            return
+        # Opening the thread reads the manager's unread replies — the
+        # badge and the inbox's «خوانده‌نشده» ride the same column.
+        ticket_store.mark_admin_replies_read(ticket_id, account)
+        ticket = ticket_store.get_ticket(ticket_id, account=account)
+        self._send_json(200, {"ticket": ticket})
+
+    def _ticket_file(self, ticket_id: int) -> None:
+        """The attachment's one door: the owner or an Admin, never a
+        bare static path — the bytes answer with the sniffed type and a
+        private cache policy, and a ticket without an image is 404."""
+        email = resolve_identity(self)
+        if email is None:
+            return
+        ticket = ticket_store.get_ticket(ticket_id)
+        if ticket is None or (
+            ticket["account"] != email
+            and (account_by_email(email) or {}).get("role") != "admin"
+        ):
+            self._json_error(404, TICKET_NOT_FOUND_404_DETAIL)
+            return
+        image = ticket_store.read_image(ticket_id)
+        if image is None:
+            self._json_error(404, TICKET_NOT_FOUND_404_DETAIL)
+            return
+        data, mime = image
+        self._cache_policy = "private, max-age=600"
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _ticket_create(self) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            session_id = payload.get("session_id")
+            category = payload.get("category")
+            body = payload.get("body")
+            message_id = payload.get("message_id")
+            ask_key = payload.get("ask_key")
+            if not isinstance(session_id, int):
+                raise ValueError
+            if message_id is None and (
+                not isinstance(ask_key, str) or not ask_key.strip()
+            ):
+                # Neither pointer — nothing for the snapshot to name.
+                raise ValueError
+            if not isinstance(category, str) or not isinstance(body, str):
+                raise ValueError
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json(400, {"detail": TICKET_BAD_BODY_400_DETAIL})
+            return
+        session = session_store.get_session(account, session_id)
+        if session is None:
+            # The body is read — _send_json, never _json_error's second
+            # drain (the drain-twice rule).
+            self._send_json(404, {"detail": "نشست پیدا نشد."})
+            return
+        found = _ticket_snapshot_parts(
+            session,
+            message_id=message_id if isinstance(message_id, int) else None,
+            ask_key=ask_key,
+        )
+        if found is None:
+            self._send_json(404, {"detail": "پیام پیدا نشد."})
+            return
+        image = None
+        if payload.get("image_b64") is not None:
+            decoded = ticket_store.decode_image_b64(payload.get("image_b64"))
+            if isinstance(decoded, str):
+                self._send_json(400, {"detail": TICKET_BAD_IMAGE_DETAIL})
+                return
+            image = decoded
+        result = ticket_store.create_ticket(
+            account,
+            session_id,
+            found["message_id"],
+            category,
+            body,
+            found["snapshot"],
+            ask_key=found["ask_key"],
+            mode=found["snapshot"]["mode"],
+            turn_cost_toman=_turn_cost_best_effort(
+                account, found["ts"]
+            ),
+            image=image,
+        )
+        if isinstance(result, str):
+            if result == "soft_cap":
+                audit_quiet(
+                    audit.TICKET_SOFT_CAP,
+                    actor_email=account,
+                    detail={"open_count": ticket_store.SOFT_CAP},
+                )
+                self._send_json(429, {"detail": TICKET_SOFT_CAP_DETAIL})
+            elif result == "short_body":
+                self._send_json(400, {"detail": TICKET_SHORT_BODY_DETAIL})
+            elif result == "bad_image":
+                self._send_json(400, {"detail": TICKET_BAD_IMAGE_DETAIL})
+            else:
+                self._send_json(400, {"detail": TICKET_BAD_BODY_400_DETAIL})
+            return
+        audit_quiet(
+            audit.TICKET_FILED,
+            actor_email=account,
+            detail={
+                "ticket_id": result["id"],
+                "category": result["category"],
+                "session_id": session_id,
+                "message_id": result["message_id"],
+                "has_image": result["has_image"],
+            },
+        )
+        self._send_json(200, {"ticket": result})
+
+    def _ticket_reply(self, ticket_id: int) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            body = payload.get("body")
+            if not isinstance(body, str):
+                raise ValueError
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json(400, {"detail": TICKET_BAD_REPLY_DETAIL})
+            return
+        result = ticket_store.add_reply(
+            ticket_id, "user", account, body
+        )
+        if isinstance(result, str):
+            self._ticket_refusal(result)
+            return
+        audit_quiet(
+            audit.TICKET_REPLIED,
+            actor_email=account,
+            detail={"ticket_id": ticket_id, "role": "user"},
+        )
+        self._send_json(200, {"ticket": result})
+
+    def _ticket_close(self, ticket_id: int) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        result = ticket_store.close_ticket(
+            ticket_id, by_account=account
+        )
+        if isinstance(result, str):
+            self._ticket_refusal(result)
+            return
+        audit_quiet(
+            audit.TICKET_CLOSED,
+            actor_email=account,
+            detail={"ticket_id": ticket_id, "by": "user"},
+        )
+        self._send_json(200, {"ticket": result})
+
+    def _ticket_reopen(self, ticket_id: int) -> None:
+        account = resolve_identity(self)
+        if account is None:
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            body = payload.get("body")
+            if body is not None and not isinstance(body, str):
+                raise ValueError
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json(400, {"detail": TICKET_BAD_BODY_400_DETAIL})
+            return
+        result = ticket_store.reopen_ticket(
+            ticket_id, account, body or ""
+        )
+        if isinstance(result, str):
+            self._ticket_refusal(result)
+            return
+        audit_quiet(
+            audit.TICKET_REOPENED,
+            actor_email=account,
+            detail={"ticket_id": ticket_id},
+        )
+        self._send_json(200, {"ticket": result})
+
+    def _ticket_refusal(self, code: str) -> None:
+        """One mapper for the store's refusal codes — every branch
+        carries its own Farsi, none leaks a bare English code. The
+        body is already read by the callers (the drain-twice rule), so
+        this answers with _send_json, never _json_error."""
+        details = {
+            "not_found": (404, TICKET_NOT_FOUND_404_DETAIL),
+            "closed": (409, TICKET_CLOSED_DETAIL),
+            "not_closed": (409, "بازگشایی فقط برای تیکت بسته است."),
+            "reopen_denied": (409, TICKET_REOPEN_DENIED_DETAIL),
+            "bad_body": (400, TICKET_BAD_REPLY_DETAIL),
+        }
+        status, detail = details.get(code, (400, TICKET_BAD_BODY_400_DETAIL))
+        self._send_json(status, {"detail": detail})
+
+    # The inbox's pages and forms — the console's own conventions
+    # (server-rendered, form posts answered 303, everything audited).
+
+    def _send_html(self, document: str) -> None:
+        body = document.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _admin_tickets_page(self, account_row) -> None:
+        query = parse_qs(
+            self.path.split("?", 1)[1] if "?" in self.path else ""
+        )
+        category = (query.get("category") or [""])[0]
+        status = (query.get("status") or [""])[0]
+        days = (query.get("days") or [""])[0]
+        error_code = (query.get("error") or [""])[0]
+        since = None
+        if days.isdigit() and int(days) > 0:
+            since = (
+                datetime.datetime.now(datetime.timezone.utc)
+                - datetime.timedelta(days=int(days))
+            ).isoformat(timespec="seconds")
+        tickets = ticket_store.list_tickets(
+            account=None,
+            category=category or None,
+            status=status or None,
+            since=since,
+        )
+        self._send_html(
+            admin_inbox_html(
+                tickets, category, status, days, error_code=error_code
+            )
+        )
+
+    def _admin_ticket_page(self, account_row, ticket_id: int) -> None:
+        ticket = ticket_store.get_ticket(ticket_id)
+        if ticket is None:
+            self._json_error(404, TICKET_NOT_FOUND_404_DETAIL)
+            return
+        self._send_html(admin_ticket_html(ticket))
+
+    def _admin_ticket_transcript(self, account_row, ticket_id: int) -> None:
+        ticket = ticket_store.get_ticket(ticket_id)
+        if ticket is None:
+            self._json_error(404, TICKET_NOT_FOUND_404_DETAIL)
+            return
+        session = session_store.get_session(
+            ticket["account"], ticket["session_id"]
+        )
+        self._send_html(admin_transcript_html(ticket, session))
+
+    def _admin_ticket_reply(self) -> None:
+        actor = self._admin_gate()
+        if actor is None:
+            return
+        form = self._read_form()
+        raw_id = (form.get("ticket_id") or "").strip()
+        body = (form.get("body") or "").strip()
+        if not raw_id.isdigit() or not body:
+            self._send_redirect("/admin/tickets?error=bad_body")
+            return
+        result = ticket_store.add_reply(
+            int(raw_id), "admin", actor["email"], body
+        )
+        if isinstance(result, str):
+            self._send_redirect(f"/admin/tickets?error={result}")
+            return
+        audit_quiet(
+            audit.TICKET_REPLIED,
+            actor_email=actor["email"],
+            detail={"ticket_id": int(raw_id), "role": "admin"},
+        )
+        self._send_redirect(f"/admin/tickets/{raw_id}")
+
+    def _admin_ticket_close(self) -> None:
+        actor = self._admin_gate()
+        if actor is None:
+            return
+        form = self._read_form()
+        raw_id = (form.get("ticket_id") or "").strip()
+        if not raw_id.isdigit():
+            self._send_redirect("/admin/tickets?error=bad_body")
+            return
+        result = ticket_store.close_ticket(int(raw_id), by_admin=True)
+        if isinstance(result, str):
+            self._send_redirect(f"/admin/tickets?error={result}")
+            return
+        audit_quiet(
+            audit.TICKET_CLOSED,
+            actor_email=actor["email"],
+            detail={"ticket_id": int(raw_id), "by": "admin"},
+        )
+        self._send_redirect(f"/admin/tickets/{raw_id}")
+
+    def _admin_ticket_edit_reply(self) -> None:
+        actor = self._admin_gate()
+        if actor is None:
+            return
+        form = self._read_form()
+        raw_reply = (form.get("reply_id") or "").strip()
+        body = (form.get("body") or "").strip()
+        if not raw_reply.isdigit() or not body:
+            self._send_redirect("/admin/tickets?error=bad_body")
+            return
+        result = ticket_store.edit_reply(
+            int(raw_reply), actor["email"], body
+        )
+        if isinstance(result, str):
+            self._send_redirect(f"/admin/tickets?error={result}")
+            return
+        audit_quiet(
+            audit.TICKET_REPLY_EDITED,
+            actor_email=actor["email"],
+            detail={"reply_id": int(raw_reply)},
+        )
+        self._send_redirect(f"/admin/tickets/{result['id']}")
 
 
     def _research_report(self) -> None:

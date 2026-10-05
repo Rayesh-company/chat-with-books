@@ -60,6 +60,15 @@ _ACTION_LABELS = {
     "admin_seeded": "ساختن مدیر نخستین",
     "phone_attached": "پیوند شماره",
     "research_access_changed": "تغییر دسترسی پژوهش",
+    # The ticket system's transitions (the ticket-system map,
+    # 2026-10-05) — the console's audit mirror labels them like every
+    # other action; all DRAFT with the roster.
+    "ticket_filed": "ثبت تیکت",
+    "ticket_replied": "پاسخ تیکت",
+    "ticket_closed": "بستن تیکت",
+    "ticket_reopened": "بازگشایی تیکت",
+    "ticket_reply_edited": "ویرایش پاسخ تیکت",
+    "ticket_soft_cap": "سقف نرم تیکت",
 }
 
 # The refused writes' Farsi notes (T26), keyed by the whitelisted error
@@ -301,6 +310,7 @@ def console_html(
     quota_limit,
     generated: str = "",
     error_code: str = "",
+    open_tickets: int = 0,
 ) -> str:
     """The «میز مدیریت» page over its inputs — pure, so the tests drive
     it with plain dicts. `accounts_rows` carries one dict per Account
@@ -323,6 +333,13 @@ def console_html(
     stamp = f" · {_fa_digits(_esc(generated))}" if generated else ""
     error_note = _ERROR_NOTES.get(str(error_code or ""), "")
     writes = _write_forms(accounts_rows, error_note)
+    # The ticket inbox's standing link (the ticket-system map,
+    # 2026-10-05): the queue lives on its own sibling page; the console
+    # carries the open count so a new report is visible from the desk.
+    tickets_link = (
+        f'<a class="tickets-link" href="/admin/tickets">صندوق تیکت‌ها'
+        f"<span class=\"tickets-count\">{_fa_digits(open_tickets)}</span></a>"
+    )
     return f"""<!DOCTYPE html>
 <html dir="rtl" lang="fa">
 <head>
@@ -338,6 +355,7 @@ def console_html(
       <span class="draft" title="نام پیش‌نویس؛ منتظر تأیید مدیر محصول">پیش‌نویس</span></h1>
   <div class="meta">آینۀ سیستم{stamp} · هر کنش مدیر در دفتر رخدادها ثبت می‌شود؛
   این صفحه چیزی را بی‌ثبت تغییر نمی‌دهد.</div>
+  {tickets_link}
 </header>
 
 <h2>حساب‌ها</h2>
@@ -393,6 +411,14 @@ _STYLE = """
   .draft { font-size: 12px; background: var(--gold-soft); color: var(--gold);
            border: 1px dashed var(--gold); border-radius: 8px;
            padding: 1px 10px; vertical-align: middle; }
+  .tickets-link { display: inline-block; margin-top: 8px; font-size: 14px;
+           color: var(--lapis); text-decoration: none;
+           background: var(--raised); border: 1px solid var(--rule);
+           border-radius: 10px; padding: 3px 14px; }
+  .tickets-link:hover { border-color: var(--gold); }
+  .tickets-count { display: inline-block; min-width: 22px; text-align: center;
+           margin-inline-start: 8px; background: var(--bad); color: #fff;
+           border-radius: 999px; font-size: 12px; padding: 0 6px; }
   h2 { font-size: 18px; color: var(--lapis-deep); border-right: 4px solid var(--gold);
        padding-right: 10px; margin: 26px 0 8px; }
   .append-only { font-size: 12px; background: rgba(62, 107, 79, 0.12); color: #3e6b4f;

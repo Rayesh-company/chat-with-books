@@ -30,6 +30,7 @@ from ui import (  # noqa: E402
     research_store,
     serve,
     session_store,
+    ticket_store,
 )
 
 
@@ -387,6 +388,8 @@ def with_gate(tmp_path, upstream):
     research_store.RESEARCH_DB = tmp_path / "research.sqlite3"
     chat_store.CHAT_DB = tmp_path / "chats.sqlite3"
     session_store.SESSIONS_DB = tmp_path / "sessions.sqlite3"
+    ticket_store.TICKETS_DB = tmp_path / "tickets.sqlite3"
+    ticket_store.TICKET_FILES_DIR = str(tmp_path / "ticket_files")
     patch_accounts(tmp_path)
     research.RESEARCH_REGISTRY.clear()
     originals = [

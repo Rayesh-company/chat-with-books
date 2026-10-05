@@ -2,14 +2,14 @@
 # the sheet it serves and the modules serve.py facades (guard, quotas,
 # composer, picker, dive, ask, chat_store, research, research_store,
 # recall_more, page_resolver, accounts, audit, console, migrate, report,
-# ledger, session_store, note_store).
+# ledger, session_store, note_store, ticket_store, tickets_admin).
 # COGNEE_URL / NEXT_TIER_URL are set in compose to the container-network
 # service names; the sheet must bind 0.0.0.0 to be reachable through the
 # published port.
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY serve.py guard.py quotas.py composer.py picker.py dive.py ask.py chat_store.py research.py research_store.py recall_more.py page_resolver.py accounts.py audit.py console.py migrate.py report.py ledger.py session_store.py note_store.py index.html ./
+COPY serve.py guard.py quotas.py composer.py picker.py dive.py ask.py chat_store.py research.py research_store.py recall_more.py page_resolver.py accounts.py audit.py console.py migrate.py report.py ledger.py session_store.py note_store.py ticket_store.py tickets_admin.py index.html ./
 # The reader's client-side PDF engine (pdf.js, Apache-2.0) — vendored so
 # the sheet works on a LAN with no CDN (ADR-0007).
 COPY vendor /app/vendor

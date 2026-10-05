@@ -224,6 +224,11 @@ services:
       # this the notes land in /app inside the container and every
       # image rebuild throws them away.
       NOTES_DB: /data/notes.sqlite3
+      # The Ticket store (the ticket-system map, 2026-10-05): reported
+      # problems and their reply threads, with the image attachments in
+      # /data/ticket_files beside the DB — the same persisted volume, so
+      # a rebuild never throws a report away.
+      TICKETS_DB: /data/tickets.sqlite3
     volumes:
       - session_quota:/data
       # The Book set's PDFs + page indexes (ADR-0007), served by

@@ -281,10 +281,11 @@ def get_session(
         if row is None:
             return None
         messages = [
-            {"role": m_role, "payload": json.loads(m_payload), "ts": m_ts}
-            for m_role, m_payload, m_ts in con.execute(
-                "SELECT role, payload, ts FROM session_messages"
-                " WHERE session_id = ? ORDER BY id",
+            {"id": m_id, "role": m_role, "payload": json.loads(m_payload),
+             "ts": m_ts, "ask_key": m_ask_key}
+            for m_id, m_role, m_payload, m_ts, m_ask_key in con.execute(
+                "SELECT id, role, payload, ts, ask_key FROM"
+                " session_messages WHERE session_id = ? ORDER BY id",
                 (session_id,),
             )
         ]
