@@ -651,6 +651,169 @@
         gap: 0.5rem;
         position: relative;
       }
+      /* The ticket surfaces (the ticket-system map, 2026-10-05): the
+         chip rides each assistant article's foot; the panel and modal
+         reuse the notebook's slide-over language. Status colors are the
+         sheet's own tokens (--bad/--gold/--ok), never new hues. */
+      .ticket-actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 0.2rem;
+      }
+      .ticket-chip {
+        font: inherit;
+        font-size: 0.78rem;
+        color: var(--bad);
+        background: var(--surface);
+        border: 1px solid var(--rule);
+        border-radius: 999px;
+        padding: 0.1rem 0.8rem;
+        cursor: pointer;
+      }
+      .ticket-chip:hover { border-color: var(--bad); }
+      .tickets-badge {
+        display: inline-grid;
+        place-items: center;
+        min-width: 1.25rem;
+        height: 1.25rem;
+        margin-inline-start: 0.35rem;
+        background: var(--bad);
+        color: #fff;
+        border-radius: 999px;
+        font-size: 0.72rem;
+      }
+      #tickets-panel {
+        position: fixed;
+        inset-block: 0;
+        inset-inline-end: 0;
+        width: min(420px, 92vw);
+        z-index: 45;
+        background: var(--surface);
+        border-inline-start: 2px solid var(--gold);
+        box-shadow: -12px 0 32px var(--shadow);
+        display: flex;
+        flex-direction: column;
+      }
+      .tk-list { overflow-y: auto; padding: 0.9rem; flex: 1; }
+      .tk-item {
+        background: var(--raised);
+        border: 1px solid var(--rule);
+        border-radius: 12px;
+        padding: 0.55rem 0.8rem;
+        margin-bottom: 0.55rem;
+        cursor: pointer;
+      }
+      .tk-item:hover { border-color: var(--gold); }
+      .tk-top { display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap; }
+      .tk-cat {
+        font-size: 0.72rem;
+        background: var(--clay-soft);
+        color: var(--clay);
+        border-radius: 8px;
+        padding: 0 0.5rem;
+      }
+      .tk-st {
+        font-size: 0.7rem;
+        border-radius: 8px;
+        padding: 0 0.5rem;
+        border: 1px solid var(--rule);
+        color: var(--mute);
+      }
+      .tk-st.open { color: var(--bad); border-color: var(--bad); }
+      .tk-st.answered { color: var(--gold); border-color: var(--gold); }
+      .tk-st.closed { color: var(--ok); border-color: var(--ok); }
+      .tk-unread { font-size: 0.7rem; color: var(--bad); font-weight: 700; }
+      .tk-snippet {
+        font-size: 0.78rem;
+        color: var(--mute);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .tk-thread .tk-msg {
+        border-radius: 10px;
+        border: 1px solid var(--rule);
+        padding: 0.5rem 0.7rem;
+        margin-bottom: 0.5rem;
+        font-size: 0.84rem;
+      }
+      .tk-thread .tk-msg.user { background: var(--clay-soft); }
+      .tk-thread .tk-msg.admin { background: var(--gold-soft); border-color: var(--gold); }
+      .tk-thread .tk-who { font-size: 0.7rem; color: var(--mute); margin-bottom: 0.15rem; }
+      .tk-thread textarea {
+        width: 100%;
+        min-height: 64px;
+        font: inherit;
+        color: var(--ink);
+        background: var(--raised);
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        padding: 0.45rem 0.6rem;
+        resize: vertical;
+      }
+      .tk-actions { display: flex; gap: 0.45rem; flex-wrap: wrap; margin: 0.4rem 0; }
+      .tk-btn {
+        font: inherit;
+        font-size: 0.8rem;
+        cursor: pointer;
+        color: var(--clay);
+        background: var(--raised);
+        border: 1px solid var(--rule);
+        border-radius: 999px;
+        padding: 0.15rem 0.9rem;
+      }
+      .tk-btn.primary { background: var(--clay); color: var(--surface); border-color: var(--clay); }
+      .tk-btn.danger { color: var(--bad); }
+      .tk-back { font: inherit; font-size: 0.8rem; background: none; border: none; color: var(--clay); cursor: pointer; padding: 0; }
+      .tk-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        background: var(--backdrop, rgba(28, 20, 10, 0.5));
+        display: grid;
+        place-items: start center;
+        padding: 8vh 1rem 2rem;
+      }
+      .tk-card {
+        width: min(520px, 100%);
+        background: var(--raised);
+        border: 1px solid var(--gold);
+        border-radius: 14px;
+        padding: 1rem 1.2rem;
+      }
+      .tk-card h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+      .tk-chips { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0.4rem 0 0.7rem; }
+      .tk-chip {
+        font: inherit;
+        font-size: 0.78rem;
+        cursor: pointer;
+        border-radius: 999px;
+        border: 1px solid var(--rule);
+        background: var(--surface);
+        color: var(--ink);
+        padding: 0.1rem 0.75rem;
+      }
+      .tk-chip[aria-pressed="true"] { background: var(--gold); border-color: var(--gold); color: #fff; }
+      .tk-card textarea {
+        width: 100%;
+        min-height: 76px;
+        font: inherit;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        padding: 0.5rem 0.65rem;
+        resize: vertical;
+      }
+      .tk-hint { font-size: 0.72rem; color: var(--mute); margin-top: 0.25rem; }
+      .tk-attach-row { display: flex; gap: 0.5rem; align-items: center; font-size: 0.78rem; color: var(--mute); }
+      .tk-attach-row img {
+        max-width: 90px;
+        max-height: 90px;
+        border-radius: 8px;
+        border: 1px solid var(--rule);
+      }
+      .tk-formrow { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
       .msg-assistant::after {
         /* the stacked sheet peeking under the assistant's paper */
         content: "";
@@ -2658,6 +2821,11 @@
                  markup stays string-free so a PM rename lands in one
                  line. -->
             <button type="button" id="notebook-open" class="browse-btn" aria-controls="notebook" aria-expanded="false"></button>
+            <!-- The tickets' door (the ticket-system map, 2026-10-05):
+                 «تیکت‌های من» — the user's own reports and the manager's
+                 replies. Label + badge ride the draft table; the markup
+                 stays string-free like the notebook's door. -->
+            <button type="button" id="tickets-toggle" class="browse-btn" aria-expanded="false" aria-controls="tickets-panel" hidden><span id="tickets-label"></span><span id="tickets-badge" class="tickets-badge" hidden></span></button>
             <!-- The profile toggle (T24, GitLab #27): «پروفایل» is the
                  Account's own view of its Balance and its Sessions' spend
                  (the Account glossary row names it so). DRAFT label,
@@ -2852,6 +3020,22 @@
       <div class="nb-list" id="nb-list"></div>
     </aside>
 
+    <!-- The tickets' panel (the ticket-system map, 2026-10-05): the
+         user's own reports and the manager's replies — a slide-over
+         beside the notebook, string-free markup like every panel that
+         rides the draft table. -->
+    <aside id="tickets-panel" hidden aria-label="تیکت‌های من">
+      <header class="nb-head">
+        <h2 id="tickets-panel-title"></h2>
+        <button type="button" id="tickets-close" aria-label="بستن">✕</button>
+      </header>
+      <div class="tk-list" id="tk-list"></div>
+    </aside>
+
+    <!-- The filing modal: category chips + the mandatory text + the
+         optional image — built entirely by openTicketModal(). -->
+    <div id="ticket-modal" class="tk-modal" hidden></div>
+
     <!-- The in-book chat (variant A, ticket 03): a drawer over the
          reader — the selection's own Q&A surface. Every ask is a REAL
          Session in the store; the handoff jumps the main thread into
@@ -2986,6 +3170,43 @@
       const IN_BOOK_CHAT_TITLE = "پرسش از متن";
       const NB_CHAT_PREFILL = "این متن یعنی چه؟";
       const NB_CHAT_HANDOFF = "ادامه در چت اصلی";
+      // The ticket system (the ticket-system map, 2026-10-05): every
+      // NEW draft string of the feedback loop, pinned here for the PM
+      // batch — «ثبت مشکل» deliberately steps OUTSIDE the «گزارش»
+      // family so it never collides with «گزارش نشست» (the naming
+      // gate); a rename back to «گزارش مشکل» is this one constant.
+      // The category roster mirrors ticket_store.CATEGORIES one-to-one
+      // (server labels are the inbox's own; these are the sheet's).
+      const TICKET_CHIP = "ثبت مشکل";
+      const TICKETS_PANEL_TITLE = "تیکت‌های من";
+      const TICKETS_EMPTY = "تیکتی ثبت نکرده‌اید.";
+      const TICKET_FORM_TITLE = "ثبت مشکل";
+      const TICKET_FORM_HINT =
+        "حداقل ۱۰ حرف. نشست، زمان و متنِ همین پاسخ خودکار ضبط می‌شود.";
+      const TICKET_FORM_SEND = "ثبت مشکل";
+      const TICKET_FORM_CANCEL = "بی‌خیال";
+      const TICKET_FILED_TOAST = "ثبت شد — پیگیری از «تیکت‌های من».";
+      const TICKET_REPLY_BTN = "پاسخ";
+      const TICKET_CLOSE_USER = "مشکل حل شد";
+      const TICKET_REOPEN = "بازگشایی";
+      const TICKET_BACK_LIST = "→ همهٔ تیکت‌ها";
+      const TICKET_ATTACH_LABEL = "تصویر (اختیاری، تا ۲ مگابایت)";
+      const TICKET_ATTACH_BAD =
+        "فقط تصویر PNG، JPEG، WebP یا GIF تا ۲ مگابایت.";
+      const TICKET_CATEGORIES = [
+        ["off_book", "خارج از کتاب"],
+        ["bad_ref", "ارجاع نادرست"],
+        ["garbled", "متن ناخوانا"],
+        ["language", "خطای نگارش"],
+        ["cost", "هزینه و اعتبار"],
+        ["slow", "کندی یا قطعی"],
+        ["other", "سایر"],
+      ];
+      const TICKET_STATUS_LABELS = {
+        open: "باز",
+        answered: "پاسخ داده شد",
+        closed: "بسته",
+      };
 
       const BOOK_TITLES = {
         "tarhe-kolli": "طرح کلی اندیشۀ اسلامی در قرآن",
@@ -2997,6 +3218,383 @@
 
       const shellEl = document.getElementById("shell");
       const sidebarEl = document.getElementById("session-list");
+
+      // ===== The ticket surface (the ticket-system map, 2026-10-05):
+      // the chip under each assistant article files a report about THAT
+      // answer; «تیکت‌های من» lists them and carries the manager's
+      // replies. The client only ever POINTS (ask_key live, message id
+      // on resumed history) — the server builds the snapshot, so
+      // nothing report-shaped is forged here. The badge rides the
+      // sheet's existing polling rhythm plus a quiet minute timer.
+      const ticketsToggleEl = document.getElementById("tickets-toggle");
+      const ticketsLabelEl = document.getElementById("tickets-label");
+      const ticketsBadgeEl = document.getElementById("tickets-badge");
+      const ticketsPanelEl = document.getElementById("tickets-panel");
+      const ticketsPanelTitleEl = document.getElementById("tickets-panel-title");
+      const ticketsCloseEl = document.getElementById("tickets-close");
+      const tkListEl = document.getElementById("tk-list");
+      const ticketModalEl = document.getElementById("ticket-modal");
+      ticketsLabelEl.textContent = TICKETS_PANEL_TITLE;
+      ticketsPanelTitleEl.textContent = TICKETS_PANEL_TITLE;
+
+      function makeTicketChip(pointer) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "ticket-chip";
+        chip.textContent = TICKET_CHIP;
+        chip.addEventListener("click", () => openTicketModal(pointer));
+        return chip;
+      }
+
+      function ticketStatusChip(status) {
+        const span = document.createElement("span");
+        span.className = `tk-st ${status}`;
+        span.textContent = TICKET_STATUS_LABELS[status] || status;
+        return span;
+      }
+
+      async function refreshTicketsUnread() {
+        try {
+          const res = await fetch("/tickets/unread", { cache: "no-store" });
+          if (!res.ok) return;
+          const data = await res.json();
+          const count = Number(data.unread_count) || 0;
+          ticketsBadgeEl.textContent = toPersianDigits(count);
+          ticketsBadgeEl.hidden = count === 0;
+        } catch {}
+      }
+
+      function closeTicketsPanel() {
+        ticketsPanelEl.hidden = true;
+        ticketsToggleEl.setAttribute("aria-expanded", "false");
+      }
+
+      ticketsToggleEl.addEventListener("click", () => {
+        const open = ticketsPanelEl.hidden;
+        ticketsPanelEl.hidden = !open;
+        ticketsToggleEl.setAttribute("aria-expanded", String(open));
+        if (open) renderTkList();
+      });
+      ticketsCloseEl.addEventListener("click", closeTicketsPanel);
+
+      async function renderTkList() {
+        tkListEl.replaceChildren();
+        const note = document.createElement("p");
+        note.className = "tk-hint";
+        note.textContent = "…";
+        tkListEl.append(note);
+        let tickets = null;
+        try {
+          const res = await fetch("/tickets", { cache: "no-store" });
+          tickets = res.ok ? (await res.json()).tickets : null;
+        } catch {}
+        tkListEl.replaceChildren();
+        if (!tickets) {
+          const err = document.createElement("p");
+          err.className = "tk-hint";
+          err.textContent = "تیکت‌ها در دسترس نیستند.";
+          tkListEl.append(err);
+          return;
+        }
+        if (!tickets.length) {
+          const empty = document.createElement("p");
+          empty.className = "tk-hint";
+          empty.textContent = TICKETS_EMPTY;
+          tkListEl.append(empty);
+          return;
+        }
+        for (const ticket of tickets) {
+          const item = document.createElement("div");
+          item.className = "tk-item";
+          const top = document.createElement("div");
+          top.className = "tk-top";
+          const cat = document.createElement("span");
+          cat.className = "tk-cat";
+          cat.textContent =
+            (TICKET_CATEGORIES.find(([key]) => key === ticket.category) ||
+              [null, ticket.category_label])[1];
+          top.append(cat, ticketStatusChip(ticket.status));
+          if (ticket.unread_for_user) {
+            const unread = document.createElement("span");
+            unread.className = "tk-unread";
+            unread.textContent = "●";
+            top.append(unread);
+          }
+          const spacer = document.createElement("span");
+          spacer.style.flex = "1";
+          const id = document.createElement("span");
+          id.className = "tk-hint";
+          id.textContent = `#${toPersianDigits(ticket.id)} · ${toPersianDigits(
+            (ticket.created_at || "").slice(0, 10)
+          )}`;
+          top.append(spacer, id);
+          const snippet = document.createElement("div");
+          snippet.className = "tk-snippet";
+          snippet.textContent = ticket.snippet || "";
+          item.append(top, snippet);
+          item.addEventListener("click", () => renderTkThread(ticket.id));
+          tkListEl.append(item);
+        }
+      }
+
+      async function renderTkThread(ticketId) {
+        tkListEl.replaceChildren();
+        const back = document.createElement("button");
+        back.type = "button";
+        back.className = "tk-back";
+        back.textContent = TICKET_BACK_LIST;
+        back.addEventListener("click", renderTkList);
+        tkListEl.append(back);
+        let ticket = null;
+        try {
+          const res = await fetch(`/tickets/${ticketId}`, {
+            cache: "no-store",
+          });
+          ticket = res.ok ? (await res.json()).ticket : null;
+        } catch {}
+        if (!ticket) {
+          const err = document.createElement("p");
+          err.className = "tk-hint";
+          err.textContent = "تیکت پیدا نشد.";
+          tkListEl.append(err);
+          return;
+        }
+        refreshTicketsUnread(); // opening the thread read the replies
+        const wrap = document.createElement("div");
+        wrap.className = "tk-thread";
+        const top = document.createElement("div");
+        top.className = "tk-top";
+        const cat = document.createElement("span");
+        cat.className = "tk-cat";
+        cat.textContent =
+          (TICKET_CATEGORIES.find(([key]) => key === ticket.category) ||
+            [null, ticket.category_label])[1];
+        top.append(cat, ticketStatusChip(ticket.status));
+        wrap.append(top);
+        const snap = document.createElement("details");
+        const snapSummary = document.createElement("summary");
+        snapSummary.textContent = "پاسخی که درباره‌اش گزارش دادید:";
+        const snapBody = document.createElement("p");
+        snapBody.className = "tk-snippet";
+        snapBody.style.whiteSpace = "normal";
+        snapBody.textContent =
+          (ticket.snapshot && ticket.snapshot.answer) || "—";
+        snap.append(snapSummary, snapBody);
+        if (ticket.has_image) {
+          const img = document.createElement("img");
+          img.src = `/tickets/${ticket.id}/file`;
+          img.alt = "تصویر پیوست";
+          img.style.maxWidth = "100%";
+          snap.append(img);
+        }
+        wrap.append(snap);
+        for (const reply of ticket.replies || []) {
+          const msg = document.createElement("div");
+          msg.className = `tk-msg ${reply.author_role}`;
+          const who = document.createElement("div");
+          who.className = "tk-who";
+          who.textContent =
+            (reply.author_role === "user" ? "شما" : "پاسخ مدیر") +
+            " — " +
+            toPersianDigits((reply.created_at || "").slice(0, 16).replace("T", " ")) +
+            (reply.edited_at ? " (ویرایش‌شده)" : "");
+          msg.append(who, document.createTextNode(reply.body));
+          wrap.append(msg);
+        }
+        const actions = document.createElement("div");
+        actions.className = "tk-actions";
+        if (ticket.status !== "closed") {
+          const box = document.createElement("textarea");
+          box.placeholder = "پیام شما…";
+          const send = document.createElement("button");
+          send.type = "button";
+          send.className = "tk-btn";
+          send.textContent = TICKET_REPLY_BTN;
+          send.addEventListener("click", async () => {
+            const body = box.value.trim();
+            if (!body) return;
+            send.disabled = true;
+            try {
+              const res = await fetch(`/tickets/${ticket.id}/replies`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ body }),
+              });
+              if (res.ok) renderTkThread(ticket.id);
+              else if (res.status === 409)
+                showToast((await res.json()).detail || "");
+            } catch {}
+            send.disabled = false;
+          });
+          const close = document.createElement("button");
+          close.type = "button";
+          close.className = "tk-btn danger";
+          close.textContent = TICKET_CLOSE_USER;
+          close.addEventListener("click", async () => {
+            try {
+              const res = await fetch(`/tickets/${ticket.id}/close`, {
+                method: "POST",
+              });
+              if (res.ok) renderTkThread(ticket.id);
+            } catch {}
+          });
+          actions.append(box, send, close);
+          box.style.width = "100%";
+        } else {
+          const closedNote = document.createElement("span");
+          closedNote.className = "tk-hint";
+          const reopen = document.createElement("button");
+          reopen.type = "button";
+          reopen.className = "tk-btn";
+          reopen.textContent = TICKET_REOPEN;
+          reopen.addEventListener("click", async () => {
+            try {
+              const res = await fetch(`/tickets/${ticket.id}/reopen`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({}),
+              });
+              if (res.ok) renderTkThread(ticket.id);
+              else if (res.status === 409)
+                showToast((await res.json()).detail || "");
+            } catch {}
+          });
+          actions.append(closedNote, reopen);
+        }
+        wrap.append(actions);
+        tkListEl.append(wrap);
+      }
+
+      function openTicketModal(pointer) {
+        ticketModalEl.replaceChildren();
+        const card = document.createElement("div");
+        card.className = "tk-card";
+        const title = document.createElement("h3");
+        title.textContent = TICKET_FORM_TITLE;
+        const catNote = document.createElement("p");
+        catNote.className = "tk-hint";
+        catNote.textContent = "دستهٔ مشکل:";
+        const chips = document.createElement("div");
+        chips.className = "tk-chips";
+        let picked = TICKET_CATEGORIES[0][0];
+        for (const [key, label] of TICKET_CATEGORIES) {
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "tk-chip";
+          chip.textContent = label;
+          chip.setAttribute("aria-pressed", String(key === picked));
+          chip.addEventListener("click", () => {
+            picked = key;
+            for (const other of chips.children)
+              other.setAttribute(
+                "aria-pressed",
+                String(other === chip)
+              );
+          });
+          chips.append(chip);
+        }
+        const box = document.createElement("textarea");
+        box.placeholder = "مشکل را بگویید…";
+        const hint = document.createElement("p");
+        hint.className = "tk-hint";
+        hint.textContent = TICKET_FORM_HINT;
+        // The optional image (the 2026-10-05 amendment): one file,
+        // client-checked before the ride — size and type by the file's
+        // own bytes' extension family; the server sniffs the magic
+        // anyway, so a lie never lands.
+        const attachRow = document.createElement("div");
+        attachRow.className = "tk-attach-row";
+        const fileInput = document.createElement("input");
+        fileInput.type = "file";
+        fileInput.accept = "image/png,image/jpeg,image/webp,image/gif";
+        const attachLabel = document.createElement("span");
+        attachLabel.textContent = TICKET_ATTACH_LABEL;
+        const preview = document.createElement("img");
+        preview.hidden = true;
+        let imageB64 = null;
+        fileInput.addEventListener("change", () => {
+          imageB64 = null;
+          preview.hidden = true;
+          const file = fileInput.files && fileInput.files[0];
+          if (!file) return;
+          if (file.size > 2 * 1024 * 1024) {
+            showToast(TICKET_ATTACH_BAD);
+            fileInput.value = "";
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = String(reader.result || "");
+            const comma = result.indexOf(",");
+            if (comma < 0) return;
+            imageB64 = result.slice(comma + 1);
+            preview.src = result;
+            preview.hidden = false;
+          };
+          reader.readAsDataURL(file);
+        });
+        attachRow.append(fileInput, attachLabel, preview);
+        const formRow = document.createElement("div");
+        formRow.className = "tk-formrow";
+        const send = document.createElement("button");
+        send.type = "button";
+        send.className = "tk-btn primary";
+        send.textContent = TICKET_FORM_SEND;
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "tk-btn";
+        cancel.textContent = TICKET_FORM_CANCEL;
+        cancel.addEventListener("click", () => {
+          ticketModalEl.hidden = true;
+        });
+        send.addEventListener("click", async () => {
+          const body = box.value.trim();
+          if (body.length < 10) {
+            showToast("توضیح حداقل ۱۰ حرف باشد.");
+            return;
+          }
+          const payload = {
+            session_id: sessionState.storeId,
+            category: picked,
+            body,
+          };
+          if (pointer.askKey) payload.ask_key = pointer.askKey;
+          if (pointer.messageId) payload.message_id = pointer.messageId;
+          if (imageB64) payload.image_b64 = imageB64;
+          send.disabled = true;
+          try {
+            const res = await fetch("/tickets", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+            if (res.ok) {
+              ticketModalEl.hidden = true;
+              showToast(TICKET_FILED_TOAST);
+              refreshTicketsUnread();
+            } else {
+              const data = await res.json().catch(() => null);
+              showToast((data && data.detail) || "ثبت نشد؛ دوباره بکوشید.");
+            }
+          } catch {
+            showToast("ثبت نشد؛ دوباره بکوشید.");
+          }
+          send.disabled = false;
+        });
+        formRow.append(send, cancel);
+        card.append(
+          title, catNote, chips, box, hint, attachRow, formRow
+        );
+        ticketModalEl.replaceChildren(card);
+        ticketModalEl.hidden = false;
+      }
+      ticketModalEl.addEventListener("click", (event) => {
+        if (event.target === ticketModalEl) ticketModalEl.hidden = true;
+      });
+      // The badge's quiet heartbeat: the usage poll is settle-driven,
+      // a manager's reply is not — a minute keeps the dot honest
+      // without a websocket the sheet has no room for.
+      setInterval(refreshTicketsUnread, 60000);
       const slToggleEl = document.getElementById("sl-toggle");
       const slCloseEl = document.getElementById("sl-close");
       const slBackdropEl = document.getElementById("sl-backdrop");
@@ -3308,6 +3906,18 @@
                 article.append(pool);
               }
             }
+            // The report chip (the ticket-system map): the resumed
+            // article carries the store's own ids — message id primary,
+            // ask_key for the rows that settled with one.
+            const ticketActions = document.createElement("div");
+            ticketActions.className = "ticket-actions";
+            ticketActions.append(
+              makeTicketChip({
+                messageId: message.id,
+                askKey: message.ask_key || null,
+              })
+            );
+            article.append(ticketActions);
             threadListEl.append(article);
           }
         }
@@ -3533,6 +4143,12 @@
       let recallMoreRow = null;
       let recallMoreBtn = null;
       let recallMoreStatus = null;
+      // The live ask's report chip (the ticket-system map): hidden until
+      // the pipeline settles — there is nothing to report about an
+      // answer that does not exist; the ask_key lands on it the moment
+      // the ask mints its settle key.
+      let ticketChipEl = null;
+      let ticketPointer = null;
       let citationRun = 0; // In-flight phase 2 fetches; aborted when a new ask starts.
       let quotedAbort = null;
       // The current ask's own state for «جست‌وجوی بیشتر» (ADR-0010):
@@ -3647,13 +4263,22 @@
         elapsedEl.hidden = true;
         meta.append(ttftEl, elapsedEl);
 
+        ticketChipEl = makeTicketChip(
+          (ticketPointer = { askKey: null, messageId: null })
+        );
+        ticketChipEl.hidden = true; // revealed when the pipeline settles
+        const ticketActions = document.createElement("div");
+        ticketActions.className = "ticket-actions";
+        ticketActions.append(ticketChipEl);
+
         article.append(
           phaseRow,
           phaseNowEl,
           answerEl,
           evidencePoolEl,
           quotedDocEl,
-          meta
+          meta,
+          ticketActions
         );
         threadListEl.append(row, article);
 
@@ -4929,6 +5554,9 @@
       // one; a nonzero spend keeps a sliver of fill so the ribbon
       // never reads as empty against an exact ~0٪.
       async function refreshUsageLive() {
+        // The badge rides the same settle-driven rhythm (the
+        // ticket-system map): one extra quiet read beside the meter's.
+        refreshTicketsUnread();
         try {
           const res = await fetch("/usage/live");
           if (!res.ok) return;
@@ -5724,6 +6352,10 @@
         // The store (T27 stage 3): the sitting opens on its first ask,
         // the operator's turn appends — fire-and-forget, never a gate.
         currentAskKey = "ask-" + Date.now();
+        // The report chip points by the settle key (the ticket-system
+        // map): the sheet mints the key, the server resolves it to the
+        // settled assistant row when the ticket is filed.
+        if (ticketPointer) ticketPointer.askKey = currentAskKey;
         ensureStoreSession(query).then((id) => {
           if (id) storeAppend("user", { text: query });
         });
@@ -5757,6 +6389,10 @@
           const seconds = Math.round((Date.now() - started) / 1000);
           elapsedEl.textContent = `${seconds} ثانیه`;
           stopBtn.hidden = true;
+          // The pipeline settled — the answer exists in the store, so
+          // the report chip exists for it (the ticket-system map).
+          if (ticketChipEl && ticketChipEl.isConnected)
+            ticketChipEl.hidden = false;
         };
 
         setPhaseState(1, "running");
@@ -8327,6 +8963,13 @@
             if (me && me.role === "admin") {
               const link = document.getElementById("admin-link");
               if (link) link.hidden = false;
+            }
+            // Any authenticated Account can report and follow up —
+            // the guests' pilot feedback is the map's whole point.
+            if (me) {
+              const door = document.getElementById("tickets-toggle");
+              if (door) door.hidden = false;
+              refreshTicketsUnread();
             }
             if (me && me.research_enabled === false) {
               const toggle = document.getElementById("research-mode-btn");
