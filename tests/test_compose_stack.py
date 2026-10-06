@@ -48,17 +48,17 @@ def test_compose_pins_postgres_demo_for_the_graph():
     assert graph in {"postgres_demo", "${GRAPH_DATABASE_PROVIDER:-postgres_demo}"}
 
 
-def test_compose_pins_chat_and_embeddings_on_avalai():
-    # Chat joined embeddings on AvalAI 2026-09-13: the Z.AI coding-plan
-    # weekly quota was exhausted (error 1310, reset 2026-09-15 17:06).
-    # AvalAI serves the GLM family on its 250 RPM / 4M TPM budget; the
-    # chat key rides .env as LLM_API_KEY. To return chat to Z.AI after
-    # the reset, flip LLM_ENDPOINT back to the coding endpoint here, in
-    # cognee-next-tier, and in the session's composer env.
+def test_compose_pins_chat_on_zai_and_embeddings_on_avalai():
+    # Chat moved back to Z.AI direct 2026-10-06 (the operator's key,
+    # coding endpoint): AvalAI's wallet drained mid-day and every ask
+    # died on 429 quota_exceeded (cognee retry storm, recall 422, the
+    # sheet's unanswered card). AvalAI keeps the embedder —
+    # text-embedding-3-large/3072 is frozen into the ingested pgvector
+    # tables — and the chat key rides .env as LLM_API_KEY.
     compose = _load_compose()
     env = compose["services"]["cognee"]["environment"]
     assert env["LLM_PROVIDER"] == "custom"
-    assert env["LLM_ENDPOINT"] == "https://api.avalai.ir/v1"
+    assert env["LLM_ENDPOINT"] == "https://api.z.ai/api/coding/paas/v4"
     assert env["LLM_MODEL"] == "openai/glm-5.3-flash"
     assert env["EMBEDDING_PROVIDER"] == "openai_compatible"
     assert env["EMBEDDING_ENDPOINT"] == "https://api.avalai.ir/v1"
@@ -168,7 +168,7 @@ def test_compose_runs_next_tier_cot_on_its_own_cognee_service():
     env = next_tier["environment"]
     assert env["LLM_PROVIDER"] == "custom"
     assert env["LLM_MODEL"] == "openai/glm-5.3-flash"
-    assert env["LLM_ENDPOINT"] == "https://api.avalai.ir/v1"
+    assert env["LLM_ENDPOINT"] == "https://api.z.ai/api/coding/paas/v4"
 
     volumes = [str(item) for item in next_tier.get("volumes", [])]
     assert any("enable_farsi_evidence.py" in item for item in volumes)
