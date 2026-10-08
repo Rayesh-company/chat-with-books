@@ -232,7 +232,57 @@ def test_book_page_route_missing_pdf_is_404_not_500(tmp_path):
         serve.RENDER_CACHE_DIR = original_cache
 
 
-def test_book_page_route_rejects_bad_input(tmp_path):
+@pytest.mark.skipif(
+    not REAL_PDF.exists() or serve._pdfium is None,
+    reason="books/ PDFs are provisioned, not committed; pypdfium2 required",
+)
+def test_book_page_route_webp_on_accept_png_fallback(tmp_path):
+    # The transfer budget (2026-10-08): a reference click's dominant cost
+    # is the raster's bytes over a thin client pipe — a full-width PNG
+    # runs 0.4-2.4 MB and the pipe measured ~50 KB/s, so the page took
+    # 8-25s to paint while the server render itself cost milliseconds.
+    # A client advertising image/webp (every browser the sheet serves)
+    # gets the WebP encode — a third or less of the bytes at the same
+    # width — while a client that does not (curl, the older test above)
+    # keeps the PNG path byte-for-byte. Same URL for both: negotiation
+    # rides the Accept header, so the response must Vary on it.
+    cache = tmp_path / "render-cache"
+    original_cache = serve.RENDER_CACHE_DIR
+    serve.RENDER_CACHE_DIR = cache
+    base, server, originals = with_gate(tmp_path, None)
+    try:
+        status, headers, body = _conditional_raw(
+            base,
+            "/books/tarhe-kolli/page/14.png?w=640",
+            {
+                "Accept": (
+                    "image/avif,image/webp,image/apng,"
+                    "image/svg+xml,image/*,*/*;q=0.8"
+                )
+            },
+        )
+        assert status == 200
+        assert headers["Content-Type"] == "image/webp"
+        assert body[:4] == b"RIFF" and body[8:12] == b"WEBP"
+        assert headers.get("Vary") == "Accept"
+        assert (cache / "tarhe-kolli-p14-w640.webp").exists()
+        # the warm webp hit: identical bytes off the format-keyed cache
+        status2, _, body2 = _conditional_raw(
+            base, "/books/tarhe-kolli/page/14.png?w=640", {"Accept": "image/webp"}
+        )
+        assert status2 == 200
+        assert body2 == body
+        # a client that never advertises webp keeps the PNG encode
+        status3, headers3, body3 = _get_raw(
+            base, "/books/tarhe-kolli/page/14.png?w=640"
+        )
+        assert status3 == 200
+        assert headers3["Content-Type"] == "image/png"
+        assert body3[:4] == b"\x89PNG"
+        assert (cache / "tarhe-kolli-p14-w640.png").exists()
+    finally:
+        stop_gate(server, originals)
+        serve.RENDER_CACHE_DIR = original_cache
     books = tmp_path / "books"
     books.mkdir()
     original_dir = serve.BOOKS_DIR

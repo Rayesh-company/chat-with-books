@@ -972,6 +972,20 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return
         cache_key = f"{dataset}-p{page_number}-w{width}.png"
         cache_file = RENDER_CACHE_DIR / cache_key
+        # The wire format rides the Accept header (2026-10-08): every
+        # browser the sheet serves advertises image/webp, and the WebP
+        # encode cuts a raster to a third or less of the PNG's bytes —
+        # the dominant cost of a reference click on a thin client pipe
+        # (a full-width PNG measured 0.4-2.4 MB against ~50 KB/s). A
+        # client that does not advertise webp — curl, healthchecks,
+        # scripts — keeps the PNG path byte-for-byte under the same
+        # URL, and the reply varies on Accept so no shared cache can
+        # mix the two encodes of one address.
+        served_format = (
+            "webp" if "image/webp" in (self.headers.get("Accept") or "") else "png"
+        )
+        if served_format == "webp":
+            cache_file = cache_file.with_suffix(".webp")
         started = time.monotonic()
         try:
             body = cache_file.read_bytes()
@@ -981,18 +995,25 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # The fast path's own witness (ADR-0017): a warm cache hit
             # answers here, before the lock, and is logged like a miss.
             sys.stderr.write(
-                f"render {dataset} p{page_number} w{width}"
+                f"render {dataset} p{page_number} w{width} {served_format}"
                 f" hit {time.monotonic() - started:.3f}s\n"
             )
         else:
-            body = self._render_book_page(dataset, page_number, width, cache_file)
-            if body is None:
+            rendered = self._render_book_page(
+                dataset, page_number, width, cache_file
+            )
+            if rendered is None:
                 self._drain_request_body()
                 self.send_error(404, "Not found")
                 return
+            body, served_format = rendered
         self._cache_policy = "max-age=604800, immutable"
         self.send_response(200)
-        self.send_header("Content-Type", "image/png")
+        self.send_header(
+            "Content-Type",
+            "image/webp" if served_format == "webp" else "image/png",
+        )
+        self.send_header("Vary", "Accept")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1028,7 +1049,9 @@ class SessionHandler(SimpleHTTPRequestHandler):
         and only when the cap is crossed — the hit path never pays for
         it."""
         try:
-            entries = list(RENDER_CACHE_DIR.glob("*.png"))
+            entries = sorted(
+                {*RENDER_CACHE_DIR.glob("*.png"), *RENDER_CACHE_DIR.glob("*.webp")}
+            )
             total = sum(e.stat().st_size for e in entries)
             if total <= RENDER_CACHE_CAP:
                 return
@@ -1046,11 +1069,12 @@ class SessionHandler(SimpleHTTPRequestHandler):
 
     @staticmethod
     def _render_book_page(dataset, page_number, width, cache_file):
-        """One page raster, cached atomically; None when the page does
-        not exist or the PDF is unreadable. Every answer logs its cost —
-        hit/miss and milliseconds — so a slow page has a witness, and a
-        miss reuses the open-document cache instead of re-parsing the
-        whole file (ADR-0017)."""
+        """One page raster, cached atomically; ``(body, format)`` for the
+        cache file's own suffix — webp when the client advertised it —
+        or None when the page does not exist or the PDF is unreadable.
+        Every answer logs its cost — hit/miss and milliseconds — so a
+        slow page has a witness, and a miss reuses the open-document
+        cache instead of re-parsing the whole file (ADR-0017)."""
         source = BOOKS_DIR / f"{dataset}.pdf"
         if not source.exists():
             return None
@@ -1071,9 +1095,11 @@ class SessionHandler(SimpleHTTPRequestHandler):
             if body is not None:
                 sys.stderr.write(
                     f"render {dataset} p{page_number} w{width}"
+                    f" {cache_file.suffix.lstrip('.')}"
                     f" hit {time.monotonic() - started:.3f}s\n"
                 )
-                return body
+                return body, cache_file.suffix.lstrip(".")
+            fmt = cache_file.suffix.lstrip(".").upper() or "PNG"
             try:
                 pdf = SessionHandler._pdf_doc_handle(source)
                 if page_number > len(pdf):
@@ -1082,20 +1108,49 @@ class SessionHandler(SimpleHTTPRequestHandler):
                 bitmap = page.render(scale=width / page.get_width())
                 image = bitmap.to_pil()
                 tmp = cache_file.with_suffix(f".tmp{threading.get_ident()}")
-                image.save(tmp, format="PNG")
+                image.save(
+                    tmp,
+                    format=fmt,
+                    **({"quality": 82, "method": 4} if fmt == "WEBP" else {}),
+                )
                 os.replace(tmp, cache_file)
                 body = cache_file.read_bytes()
             except Exception:
+                if fmt == "WEBP":
+                    # The exotic-Pillow escape hatch: a build without
+                    # WebP must not mislabel PNG bytes or 404 the page —
+                    # encode the PNG under its own cache name and say so.
+                    try:
+                        png_file = cache_file.with_suffix(".png")
+                        try:
+                            body = png_file.read_bytes()
+                        except OSError:
+                            tmp = png_file.with_suffix(
+                                f".tmp{threading.get_ident()}"
+                            )
+                            image.save(tmp, format="PNG")
+                            os.replace(tmp, png_file)
+                            body = png_file.read_bytes()
+                        sys.stderr.write(
+                            f"render {dataset} p{page_number} w{width} png"
+                            f" miss {time.monotonic() - started:.3f}s"
+                            " (webp unsupported)\n"
+                        )
+                        SessionHandler._prune_render_cache()
+                        return body, "png"
+                    except Exception:
+                        pass
                 sys.stderr.write(
                     f"render failed: {dataset} p{page_number}\n"
                 )
                 return None
         sys.stderr.write(
             f"render {dataset} p{page_number} w{width}"
+            f" {cache_file.suffix.lstrip('.')}"
             f" miss {time.monotonic() - started:.3f}s\n"
         )
         SessionHandler._prune_render_cache()
-        return body
+        return body, cache_file.suffix.lstrip(".")
 
     def _drain_request_body(self) -> None:
         """Read the body Content-Length promised before answering and
