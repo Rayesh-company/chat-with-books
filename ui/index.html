@@ -6073,6 +6073,8 @@
         observer: null,
         pagesIndex: null, // fetched /books/<doc>.pages.json, per doc
         pagesIndexDoc: null,
+        pagesIndexPromise: null, // the in-flight index fetch, per doc
+        pagesIndexPromiseDoc: null,
         normCache: new Map(), // page number -> normalized page text
         pending: null, // {first, last, text} from the latest citation click
         lib: null, // the lazily imported pdf.js module
@@ -6265,6 +6267,14 @@
         openReaderPanel();
         reader.pending =
           first && text ? { first, last: last || first, text } : null;
+        if (reader.pending) {
+          // The provenance index is its own ~0.5 MB download (ADR-0017);
+          // start it at the click so its bytes ride beside the page
+          // raster and the pdf.js parse, instead of queueing behind
+          // them — on a thin pipe the highlight used to wait one full
+          // extra serial download. locatePending joins this fetch.
+          ensurePagesIndex(doc).catch(() => {});
+        }
         await openBook(doc, first || 1);
         if (!reader.pending) {
           showReaderNote(
@@ -7883,25 +7893,50 @@
 
       // ---- Location: which page of the chunk's range holds the quote,
       // and where on that page.
-      async function ensurePagesIndex() {
-        if (reader.pagesIndexDoc === reader.doc && reader.pagesIndex) {
+      async function ensurePagesIndex(targetDoc) {
+        const doc = targetDoc || reader.doc;
+        if (reader.pagesIndexDoc === doc && reader.pagesIndex) {
           return reader.pagesIndex;
         }
-        try {
-          const res = await fetch(
-            `/books/${encodeURIComponent(reader.doc)}.pages.json`,
-            // Revalidation, not bypass (ADR-0017): the ETag turns this
-            // 1.95 MB index into a 304 on every open after the first —
-            // `no-store` here refetched it whole, every time.
-            { cache: "default" }
-          );
-          if (!res.ok) throw new Error("no index");
-          reader.pagesIndex = (await res.json()).pages;
-          reader.pagesIndexDoc = reader.doc;
-          return reader.pagesIndex;
-        } catch {
-          return null;
+        // The in-flight fetch is the shared one (2026-10-08): the
+        // citation click starts the index download before the reader
+        // has even switched docs, so locatePending must join it rather
+        // than fire a second identical fetch. Keyed by doc — a click on
+        // another Book while one index rides starts its own.
+        if (reader.pagesIndexPromise && reader.pagesIndexPromiseDoc === doc) {
+          return reader.pagesIndexPromise;
         }
+        let promise;
+        promise = (async () => {
+          try {
+            const res = await fetch(
+              `/books/${encodeURIComponent(doc)}.pages.json`,
+              // Revalidation, not bypass (ADR-0017): the ETag turns this
+              // 1.95 MB index into a 304 on every open after the first —
+              // `no-store` here refetched it whole, every time.
+              { cache: "default" }
+            );
+            if (!res.ok) throw new Error("no index");
+            const pages = (await res.json()).pages;
+            // Land only on the doc that asked for it — a Book switch
+            // mid-flight must not adopt a stranger's page index.
+            if (reader.doc === doc) {
+              reader.pagesIndex = pages;
+              reader.pagesIndexDoc = doc;
+            }
+            return pages;
+          } catch {
+            return null;
+          } finally {
+            if (reader.pagesIndexPromise === promise) {
+              reader.pagesIndexPromise = null;
+              reader.pagesIndexPromiseDoc = null;
+            }
+          }
+        })();
+        reader.pagesIndexPromise = promise;
+        reader.pagesIndexPromiseDoc = doc;
+        return promise;
       }
 
       function normalizedPageFromIndex(index, n) {
