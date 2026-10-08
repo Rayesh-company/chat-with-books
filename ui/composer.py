@@ -14,9 +14,19 @@ import threading
 from urllib.request import Request, urlopen
 
 try:
-    from ui.guard import _numbered_passages, guard_blocks, parse_quoted_reply
+    from ui.guard import (
+        _numbered_passages,
+        guard_blocks,
+        iter_complete_array_objects,
+        parse_quoted_reply,
+    )
 except ImportError:  # the container runs serve.py as a script beside the modules
-    from guard import _numbered_passages, guard_blocks, parse_quoted_reply
+    from guard import (
+        _numbered_passages,
+        guard_blocks,
+        iter_complete_array_objects,
+        parse_quoted_reply,
+    )
 
 # Quoted-answer composer: asks the chat model twice to produce the
 # interleaved document (paragraphs of AI text with embedded verbatim Book
@@ -396,6 +406,157 @@ def compose_quoted_answer(
         question, answer, sources, plan, conversation_tail
     )
     return blocks, truncated
+
+
+def stream_writer_reply(message: str, on_block_text=None):
+    """One STREAMED composer POST — the writer's exact shape plus
+    ``"stream": True`` — returning the same reply dict the blocking
+    `_composer_reply` builds, so the guard, the finish_reason read, and
+    the ledger tap all stay shared paths.
+
+    The content arrives as SSE chunks; after every chunk the
+    accumulated text is re-scanned (guard.iter_complete_array_objects)
+    and each NEWLY closed top-level block object rides `on_block_text`
+    as its raw JSON — the streaming sheet paints the document while it
+    is still being written. Usage rides the final chunk when the
+    endpoint sends it (metered exactly); its absence is the ledger's
+    own estimated shape, never an error. Raises on any failure like
+    `_composer_reply` does."""
+    payload = {
+        "model": COMPOSER_MODEL,
+        "max_tokens": COMPOSER_MAX_TOKENS,
+        "messages": [{"role": "user", "content": message}],
+        "stream": True,
+    }
+    payload.update(_thinking_fields("disabled"))
+    request = Request(
+        COMPOSER_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.environ['LLM_API_KEY']}",
+        },
+        method="POST",
+    )
+    parts: list = []
+    finish_reason = None
+    usage = None
+    emitted = 0
+    with urlopen(request, timeout=COMPOSER_TIMEOUT) as response:
+        for raw in response:
+            line = raw.decode("utf-8", "replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except ValueError:
+                continue
+            if isinstance(chunk, dict):
+                chunk_usage = chunk.get("usage")
+                if isinstance(chunk_usage, dict):
+                    usage = chunk_usage
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            piece = (choices[0].get("delta") or {}).get("content")
+            if isinstance(piece, str) and piece:
+                parts.append(piece)
+            if choices[0].get("finish_reason"):
+                finish_reason = choices[0]["finish_reason"]
+            if on_block_text is not None:
+                accumulated = "".join(parts)
+                for obj_text in iter_complete_array_objects(accumulated)[emitted:]:
+                    emitted += 1
+                    on_block_text(obj_text)
+    reply = {
+        "choices": [
+            {"message": {"content": "".join(parts)}, "finish_reason": finish_reason or "stop"}
+        ]
+    }
+    if usage is not None:
+        reply["usage"] = usage
+    # The same tap, the same honesty: a listener crash can never take
+    # the answer down, and the reply's usage block decides metered vs
+    # estimated exactly as the blocking call's does.
+    listener = getattr(_METER, "listener", None)
+    if listener is not None:
+        try:
+            listener(message, reply)
+        except Exception:
+            pass
+    return reply
+
+
+def compose_quoted_answer_streaming(
+    question: str, answer: str, sources, conversation_tail: str = "", on_block=None
+):
+    """The streaming twin of compose_quoted_answer — same planner, same
+    writer rules, same guard, same one retry — with one difference: the
+    writer call streams, and every block that closes AND survives a
+    per-block guard ride `on_block(dict)` as it lands, so the sheet can
+    paint the document progressively while the write continues.
+
+    The per-block previews are informational: the return value stays
+    the one authority (guard_blocks over the whole document, the swap
+    threshold included), and the sheet re-renders it at settle."""
+    plan = plan_quoted_document(question, sources, conversation_tail)
+    blocks, truncated = _write_quoted_once_streaming(
+        question, answer, sources, plan, conversation_tail, on_block
+    )
+    if blocks:
+        return blocks, truncated
+    blocks, truncated = _write_quoted_once_streaming(
+        question, answer, sources, plan, conversation_tail, on_block
+    )
+    return blocks, truncated
+
+
+def _write_quoted_once_streaming(
+    question, answer, sources, plan, conversation_tail, on_block
+):
+    """One streamed writer attempt: call, per-block guard on the way
+    out, then the shared parse / continuation / full-document guard of
+    `_write_quoted_once`. ([]  , False) on call failure — the retry's
+    unit, exactly like the blocking shape."""
+    def emit(obj_text: str) -> None:
+        if on_block is None:
+            return
+        try:
+            block = json.loads(obj_text)
+        except ValueError:
+            return
+        if not isinstance(block, dict):
+            return
+        # Paragraphs only: each is self-contained under the per-block
+        # guard (threshold off — the document it belongs to has not
+        # streamed yet), while headings ride the settle re-render where
+        # their section's survival is known.
+        if block.get("type") != "paragraph":
+            return
+        for kept in guard_blocks([block], sources, threshold=False):
+            try:
+                on_block(kept)
+            except Exception:
+                pass
+
+    try:
+        reply = stream_writer_reply(
+            build_quoted_prompt(question, answer, sources, plan, conversation_tail),
+            on_block_text=emit,
+        )
+        content = _composer_content(reply)
+    except (KeyError, ValueError, OSError):
+        return [], False
+    blocks = parse_quoted_reply(content)
+    if reply["choices"][0].get("finish_reason") != "length":
+        return guard_blocks(blocks, sources), False
+    blocks, truncated = continue_quoted_document(
+        question, answer, sources, plan, blocks
+    )
+    return guard_blocks(blocks, sources), truncated
 
 
 def _write_quoted_once(

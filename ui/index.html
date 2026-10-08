@@ -787,8 +787,12 @@
       /* The streaming draft (issue #28 revisited, 2026-09-28): the
          deltas paint here while the run bills, visibly subordinate —
          the settle's Quote selection / quoted-answer renderers retire
-         it and remain the only paths that present prose as the answer. */
-      .answer.draft-stream {
+         it and remain the only paths that present prose as the answer.
+         The quoted-answer document gets the same treatment while its
+         streamed blocks preview (the early-pool + streamed-writer
+         sheet, 2026-10-08): the settle re-render is the authority. */
+      .answer.draft-stream,
+      .quoted-doc.draft-stream {
         opacity: 0.72;
       }
 
@@ -3546,6 +3550,13 @@
       // server settles BOTH into the SAME assistant row — the snapshot
       // upgrading to the article. New ask, new key.
       let currentAskKey = null;
+      // The early-pool sheet's per-ask flags (2026-10-08): whether the
+      // retrieval-only /ask leg already started the picker + phase 2
+      // pair, and whether the first answer has settled (the draft's
+      // delta paints stand down the moment it has). Module scope — the
+      // phase renderers read them; the ask flow resets both per ask.
+      let earlyPoolStarted = false;
+      let firstAnswerSettled = false;
       // The current ask's question and Evidence pool — the seed of the
       // Research Mode session the first message creates (ADR 0008).
       let researchQuery = null;
@@ -3985,6 +3996,22 @@
         return note;
       }
 
+      // One guarded Quoted-answer block as DOM — the builder the settle
+      // render and the streamed block events share, so a preview block
+      // and its settled twin render identically.
+      function quotedBlockNode(block) {
+        if (block.type === "heading") {
+          const heading = document.createElement("h3");
+          heading.className = "doc-heading";
+          heading.textContent = block.text;
+          return heading;
+        }
+        if (block.type === "paragraph") {
+          return paragraphNode(block);
+        }
+        return null;
+      }
+
       async function renderQuotedAnswer(question, answer, citations, onSettled) {
         const run = citationRun;
         const sources = evidenceSources(citations);
@@ -4010,13 +4037,18 @@
             // The sitting's id and this ask's key let the SERVER settle
             // the assistant turn (vanishing-content fix, 2026-09-24):
             // the store write no longer waits for this page to report
-            // it, so a reload mid-compose keeps the answer.
+            // it, so a reload mid-compose keeps the answer. The stream
+            // flag asks for the streamed twin: guarded blocks ride SSE
+            // `block` events while the writer still writes, and the
+            // authoritative document lands on `final` — the ~180s
+            // compose no longer shows as a frozen pulse (2026-10-08).
             body: JSON.stringify({
               question,
               answer,
               sources,
               session_id: sessionState.storeId || undefined,
               ask_key: currentAskKey || undefined,
+              stream: true,
             }),
             signal: quotedAbort.signal,
           });
@@ -4027,6 +4059,62 @@
           if (!res.ok) {
             failQuotedPhase();
             onSettled();
+            return;
+          }
+          const ctype = res.headers.get("Content-Type") || "";
+          if (ctype.includes("text/event-stream")) {
+            // The streamed preview paints subordinate
+            // (.quoted-doc.draft-stream) and the settle re-render —
+            // the server's full-document guard — is the one authority.
+            quotedDocEl.classList.add("draft-stream");
+            let settled = false;
+            const settle = (payload) => {
+              if (settled) return;
+              settled = true;
+              quotedDocEl.classList.remove("draft-stream");
+              const blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
+              if (!blocks.length) {
+                failQuotedPhase();
+                onSettled();
+                return;
+              }
+              const doc = document.createDocumentFragment();
+              if (payload.truncated) {
+                doc.append(truncatedNote());
+              }
+              for (const block of blocks) {
+                const node = quotedBlockNode(block);
+                if (node) doc.append(node);
+              }
+              quotedDocEl.replaceChildren(doc);
+              setPhaseState(2, "done");
+              stopPhaseTimer(2);
+              setRunningPhase(null);
+              selectPhase(2);
+              onSettled();
+            };
+            await readSse(res, (name, data) => {
+              if (run !== citationRun) {
+                return;
+              }
+              if (name === "block") {
+                // Each guarded block replaces the pulsing status as it
+                // lands — the document grows while the write continues.
+                if (status.isConnected) status.remove();
+                const node = quotedBlockNode(JSON.parse(data));
+                if (node) quotedDocEl.append(node);
+              } else if (name === "final") {
+                settle(JSON.parse(data));
+              }
+            });
+            if (!settled) {
+              // The stream died before its final: no authoritative
+              // document ever arrived — the honest fallback, never a
+              // half document presented as done.
+              quotedDocEl.classList.remove("draft-stream");
+              failQuotedPhase();
+              onSettled();
+            }
             return;
           }
           const payload = await res.json();
@@ -4046,14 +4134,8 @@
             doc.append(truncatedNote());
           }
           for (const block of blocks) {
-            if (block.type === "heading") {
-              const heading = document.createElement("h3");
-              heading.className = "doc-heading";
-              heading.textContent = block.text;
-              doc.append(heading);
-            } else if (block.type === "paragraph") {
-              doc.append(paragraphNode(block));
-            }
+            const node = quotedBlockNode(block);
+            if (node) doc.append(node);
           }
           quotedDocEl.replaceChildren(doc);
           // The settled article rides the store SERVER-SIDE now
@@ -4090,12 +4172,40 @@
       async function renderQuoteSelection(question, prose, citations) {
         const run = citationRun;
         const sources = evidenceSources(citations);
-        answerEl.replaceChildren();
-        const status = document.createElement("p");
-        status.className = "composer-status";
-        status.textContent = "در حال انتخاب نقل‌قول‌ها…";
-        answerEl.append(status);
+        // The early-pool sheet can start this picker while the draft
+        // still streams: the «انتخاب نقل‌قول‌ها» status then rides the
+        // citations section, because replacing the answer section
+        // mid-stream would tear down the very life-sign the draft
+        // exists for (issue #28 revisited). Post-stream starts keep
+        // the status in the answer section, as always.
+        let poolStatus = null;
+        if (answerEl.classList.contains("draft-stream")) {
+          poolStatus = document.createElement("p");
+          poolStatus.className = "composer-status";
+          poolStatus.textContent = "در حال انتخاب نقل‌قول‌ها…";
+          citationsEl.append(poolStatus);
+        } else {
+          answerEl.replaceChildren();
+          const status = document.createElement("p");
+          status.className = "composer-status";
+          status.textContent = "در حال انتخاب نقل‌قول‌ها…";
+          answerEl.append(status);
+        }
+        const settleFirstAnswer = () => {
+          // The first answer exists from this moment — the draft's
+          // delta paints stand down (firstAnswerSettled) and phase 1's
+          // marker is done even when the stream died before its own
+          // final (the early-pool sheet's dead-stream path).
+          firstAnswerSettled = true;
+          setPhaseState(1, "done");
+          setPhaseState(3, "ready");
+        };
+        const dropPoolStatus = () => {
+          if (poolStatus && poolStatus.isConnected) poolStatus.remove();
+        };
         const fallbackToProse = () => {
+          dropPoolStatus();
+          settleFirstAnswer();
           answerEl.className = "answer";
           renderMarkdown(answerEl, prose);
           const note = document.createElement("p");
@@ -4157,6 +4267,8 @@
             }
             doc.append(sentence);
           }
+          dropPoolStatus();
+          settleFirstAnswer();
           answerEl.className = "answer";
           answerEl.replaceChildren(doc);
           if (nearBottom()) scrollThreadEnd();
@@ -5803,6 +5915,75 @@
           }
         }
 
+        // The early pool (2026-10-08): the retrieval-only /ask door
+        // fires BESIDE the recall stream, so the pool the picker and
+        // phase 2 read lands in seconds (~2s measured) instead of
+        // riding the streamed completion's `final` (~45s+). Whichever
+        // lane delivers a pool first starts the phase-2 + picker pair;
+        // the other lane's pool is then ignored. The draft stream keeps
+        // its UX role either way. The /ask leg records the ask's ONE
+        // daily chat; the recall body carries the same ask_key and the
+        // server skips the count there (two counts would burn two of
+        // the day's five per ask).
+        earlyPoolStarted = false;
+        firstAnswerSettled = false;
+        let preview = "";
+        const startPoolPhases = (prose, lines) => {
+          if (earlyPoolStarted) return;
+          earlyPoolStarted = true;
+          for (const item of lines) {
+            const p = document.createElement("p");
+            p.className = "cite";
+            p.textContent = cleanFarsi(item);
+            citationsEl.append(p);
+          }
+          armResearch(query, evidenceSources(lines));
+          askState = {
+            question: query,
+            prose,
+            answer: prose,
+            lines,
+            datasets: selectedDatasets(),
+            askKey: currentAskKey,
+          };
+          showRecallMore();
+          // Phase 2 starts right here on the same pool (its exact
+          // payload) and runs in PARALLEL with the picker (issue #28).
+          renderQuotedAnswer(query, prose, lines, stopTimer);
+          // The Quote selection replaces the prose as the first
+          // answer (issue #28).
+          renderQuoteSelection(query, prose, lines);
+        };
+
+        // The early-pool lane: one /ask POST beside the stream. The
+        // draft's streamed-so-far prose rides as the picker's fallback
+        // frame; a failure here is silent — the stream's own Evidence
+        // block remains the pool path it always was.
+        {
+          fetch("/ask", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({
+              query,
+              datasets: selectedDatasets(),
+              session_id: sessionState.storeId || undefined,
+              ask_key: currentAskKey || undefined,
+            }),
+          })
+            .then((res) => (res.ok ? res.json() : null))
+            .then((payload) => {
+              if (run !== citationRun || !payload) return;
+              const sources = Array.isArray(payload.sources)
+                ? payload.sources
+                : [];
+              if (!sources.length || earlyPoolStarted) return;
+              const lines = sources.map((s) => `${s.reference}: "${s.passage}"`);
+              citationsEl.replaceChildren();
+              startPoolPhases(preview, lines);
+            })
+            .catch(() => {});
+        }
+
         const renderFinal = (text) => {
           if (!text) {
             throw new Error("پاسخ خالی برگشت.");
@@ -5818,6 +5999,13 @@
           // conversation is the operator's call, never automatic (the
           // dive's rule, kept; ADR 0008).
           setPhaseState(3, "ready");
+          if (earlyPoolStarted) {
+            // The early pool already started the picker and phase 2:
+            // the stream's Evidence block is a second copy of the same
+            // retrieval lanes, never a restart, and the pool section
+            // keeps what the running phases read.
+            return;
+          }
           citationsEl.replaceChildren();
           if (!citations.length) {
             // No Evidence block in the stream: the pinned searcher gets
@@ -5922,11 +6110,15 @@
               // rides to Cognee, and the displayed question stays the
               // user's own words.
               session_id: sessionState.storeId || undefined,
+              // The early pool's companion key: the /ask leg recorded
+              // this ask's one daily chat; the server skips the count
+              // on this leg when the key rides (the two legs are ONE
+              // ask, and double-counting burns two of the five).
+              ask_key: currentAskKey || undefined,
             }),
           });
           const ctype = res.headers.get("Content-Type") || "";
           if (ctype.includes("text/event-stream")) {
-            let preview = "";
             let draftTimer = null;
             let streamError = null;
             let gotFinal = false;
@@ -5946,6 +6138,11 @@
               answerEl.classList.remove("draft-stream");
             };
             const paintDraft = () => {
+              // The settled first answer owns the section from the
+              // moment it lands: the early pool can settle the picker
+              // (or its prose fallback) while the stream still runs,
+              // and a late delta paint must never paint over it.
+              if (firstAnswerSettled) return;
               answerEl.classList.add("draft-stream");
               renderMarkdown(answerEl, preview);
               // Follow the growth only while the reader already sits at
@@ -5959,6 +6156,7 @@
             };
             await readSse(res, (name, data) => {
               if (name === "stage") {
+                if (firstAnswerSettled) return;
                 setText(
                   answerEl,
                   JSON.parse(data).stage === "generating"
@@ -5979,6 +6177,7 @@
                 }, 200);
               } else if (name === "reset") {
                 preview = "";
+                if (firstAnswerSettled) return;
                 retireDraft();
                 setText(answerEl, "در حال تولید پاسخ…", "empty");
               } else if (name === "error") {
@@ -6012,7 +6211,7 @@
             note.className = "empty";
             note.textContent = "هزینۀ بخش روان‌شده در پروفایل می‌ماند.";
             answerEl.append(note);
-          } else {
+          } else if (!earlyPoolStarted) {
             setText(
               answerEl,
               err.message === "Failed to fetch"
@@ -6021,14 +6220,22 @@
               "error"
             );
           }
-          setPhaseState(1, "failed");
-          setRunningPhase(null);
-          citationsEl.replaceChildren();
-          const missing = document.createElement("p");
-          missing.className = "empty";
-          missing.textContent = "بدون استناد.";
-          citationsEl.append(missing);
-          stopTimer();
+          if (!earlyPoolStarted || (quotedAbort && quotedAbort.signal.aborted)) {
+            // The early pool owning the ask changes the failure's
+            // shape: the picker's answer is phase 1's business and
+            // settles on its own, the running phases keep the pool
+            // they were started with, and the clock belongs to the
+            // settle that is still to come. Only an aborted ask (the
+            // stop button kills every lane) tears the surface down.
+            setPhaseState(1, "failed");
+            setRunningPhase(null);
+            citationsEl.replaceChildren();
+            const missing = document.createElement("p");
+            missing.className = "empty";
+            missing.textContent = "بدون استناد.";
+            citationsEl.append(missing);
+            stopTimer();
+          }
         } finally {
           if (firstTokenAt === null) {
             ttftEl.hidden = true;

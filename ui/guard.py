@@ -230,7 +230,7 @@ def guard_sentences(selections, sources):
     return kept
 
 
-def guard_blocks(blocks, sources, commentary=False):
+def guard_blocks(blocks, sources, commentary=False, threshold=True):
     """Turn composer blocks into renderable Quoted answer blocks.
 
     Every paragraph is one unit — AI text with embedded verbatim quotes,
@@ -243,6 +243,10 @@ def guard_blocks(blocks, sources, commentary=False):
     the swap threshold —
     at least two quoting paragraphs, or one plus a heading — so the sheet
     swaps the streamed answer only for a real Quoted answer (ADR-0003).
+    `threshold=False` (the streamed preview's per-block guard, 2026-10-08)
+    keeps the per-block drops and skips only that document-level call —
+    a single paragraph guarded in isolation must not vanish because the
+    document it belongs to has not streamed yet.
 
     With `commentary` on (the Host's side answers, ADR-0012 T5) the
     guard gains a visibly distinct channel and nothing else changes: a
@@ -327,6 +331,8 @@ def guard_blocks(blocks, sources, commentary=False):
                     }
                 )
     kept = prune_empty_sections(kept)
+    if not threshold:
+        return kept
     paragraphs = sum(1 for block in kept if block["type"] == "paragraph")
     headings = sum(1 for block in kept if block["type"] == "heading")
     return kept if paragraphs and (paragraphs >= 2 or headings) else []
@@ -516,6 +522,73 @@ def parse_quoted_reply(content):
     if salvaged:
         return salvaged
     return []
+
+
+def iter_complete_array_objects(text: str) -> list:
+    """The complete array-element objects in a partially streamed writer
+    reply, in order, as raw JSON texts — pure scanning, no I/O.
+
+    A streamed reply paints `{"blocks": [ … ` progressively; the only
+    frames the sheet can act on are the objects that have CLOSED. The
+    scanner walks the text with a container stack, string-state aware
+    (braces inside quoted Farsi never count), and returns every `{…}`
+    whose parent is the first `[` seen — the blocks array's own
+    elements. `{"parts": [ … ]}` objects nested inside a block sit one
+    level deeper and never match; a closed root or a closed first array
+    stops the scan. An object yields only once its closing brace
+    arrived, so a malformed half never appears here."""
+    stack = []  # (open_char, start_index) for every open container
+    first_array = None  # stack index of the blocks array
+    in_string = False
+    escaped = False
+    found = []
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append((ch, i))
+            if ch == "[" and first_array is None:
+                first_array = len(stack) - 1
+        elif ch in "}]":
+            if not stack:
+                continue
+            open_char, start = stack.pop()
+            if (
+                ch == "}"
+                and first_array is not None
+                and len(stack) == first_array + 1
+                and stack[first_array][0] == "["
+            ):
+                found.append(text[start : i + 1])
+            if not stack or (
+                ch == "]" and first_array is not None and len(stack) == first_array
+            ):
+                break
+    return found
+
+
+def parse_streamed_blocks(content: str) -> list:
+    """The writer reply's completed block objects, parsed; non-dict
+    entries skipped. The streaming twin of parse_quoted_reply's prefix
+    salvage — the same objects, read off the accumulated text as each
+    closes instead of once at the end."""
+    blocks = []
+    for obj_text in iter_complete_array_objects(content):
+        try:
+            block = json.loads(obj_text)
+        except ValueError:
+            continue
+        if isinstance(block, dict):
+            blocks.append(block)
+    return blocks
 
 
 def _numbered_passages(sources) -> str:

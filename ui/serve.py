@@ -80,6 +80,7 @@ try:
         build_planner_prompt,
         build_quoted_prompt,
         compose_quoted_answer,
+        compose_quoted_answer_streaming,
         rewrite_followup_query,
         set_meter,
     )
@@ -227,6 +228,7 @@ except ImportError:  # the container runs this file as a script beside the modul
         build_planner_prompt,
         build_quoted_prompt,
         compose_quoted_answer,
+        compose_quoted_answer_streaming,
         rewrite_followup_query,
         set_meter,
     )
@@ -1100,7 +1102,12 @@ class SessionHandler(SimpleHTTPRequestHandler):
         closing. Closing with bytes unread makes the kernel answer RST,
         not FIN, and the response we just wrote can be lost to the reset
         (WinError 10054 flaking the gate tests; through nginx the same
-        reset can surface as a 502 instead of the gate's 429)."""
+        reset can surface as a 502 instead of the gate's 429). A body
+        the cached read (`_peek_ask_key`'s leg) already consumed needs
+        no drain — a second read here would block forever on bytes that
+        already moved."""
+        if getattr(self, "_peeked_body", None) is not None:
+            return
         length = int(self.headers.get("Content-Length", "0") or "0")
         while length > 0:
             chunk = self.rfile.read(min(length, 65536))
@@ -1169,23 +1176,55 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return False
         return True
 
-    def _gate_account(self):
-        """The ask gate (ADR-0013): the Account behind the login
-        cookie — resolved, never client-supplied — with chats left
-        today; records the chat. The identity resolver answers 401
-        itself and returns None when rejected; the quota bounds per
-        Account through the email the store keys by (T21)."""
+    def _quota_check(self, account: str) -> bool:
+        """The daily-cap leg (T21): 429 when the Account's chats are
+        spent today. The /ask door calls this and then records; the
+        early-pool recall leg calls it ALONE when the companion ask_key
+        says the /ask leg already did — the cap is checked on both
+        legs (a refusal must not be smuggled past), the increment on
+        only one."""
+        if chats_today(account) >= DAILY_CHAT_LIMIT:
+            self._json_error(
+                429, "شمار گفتگوهای امروز این حساب پر شده است؛ فردا بیایید."
+            )
+            return False
+        return True
+
+    def _gate_account_pre(self):
+        """The ask gate's auth legs only — identity then Balance, no
+        body read, no quota: the recall dispatch's first step, so an
+        unauthenticated request still gets its 401 with the body
+        untouched (the early-pool ask_key peek reads the body and must
+        never run before the auth has answered)."""
         account = resolve_identity(self)
         if account is None:
             return None
         if not self._balance_gate(account):
             return None
-        if chats_today(account) >= DAILY_CHAT_LIMIT:
-            self._json_error(
-                429, "شمار گفتگوهای امروز این حساب پر شده است؛ فردا بیایید."
-            )
+        return account
+
+    def _gate_account(self, record: bool = True):
+        """The ask gate (ADR-0013): the Account behind the login
+        cookie — resolved, never client-supplied — with chats left
+        today; records the chat. The identity resolver answers 401
+        itself and returns None when rejected; the quota bounds per
+        Account through the email the store keys by (T21).
+
+        `record=False` (the early-pool sheet, 2026-10-08): the
+        ask's ONE chat was recorded by its companion /ask call — both
+        legs carry the same ask_key, and recording on both would burn
+        two of the day's five per ask. The cap is still CHECKED (a
+        refusal must not be smuggled past); only the increment is the
+        companion's."""
+        account = resolve_identity(self)
+        if account is None:
             return None
-        record_chat(account)
+        if not self._balance_gate(account):
+            return None
+        if not self._quota_check(account):
+            return None
+        if record:
+            record_chat(account)
         return account
 
     def _quoted_account(self):
@@ -1438,9 +1477,27 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self._admin_research_access()
             return
         if path == "/api/v1/recall":
-            account = self._gate_account()
+            # The early-pool sheet (2026-10-08) fires /ask and /recall
+            # together, both carrying this ask's ask_key; the /ask door
+            # records the ask's one chat, so a recall leg with an
+            # ask_key checks the daily cap but skips the increment
+            # (double-recording would burn two of the day's five per
+            # ask). A body without the key — the reference flow, an
+            # operator probe — records exactly as always. The body is
+            # read once and cached: the peek and the relay share it.
+            # Auth first, body second: an unauthenticated request gets
+            # its 401 with rfile untouched.
+            account = self._gate_account_pre()
             if account is None:
                 return
+            ask_key_hint = self._peek_ask_key()
+            companion_counted = isinstance(ask_key_hint, str) and bool(
+                ask_key_hint.strip()
+            )
+            if not self._quota_check(account):
+                return
+            if not companion_counted:
+                record_chat(account)
             # A new ask PAUSES research (decision 04): after the gate
             # has recorded the chat, the Account's in-flight research
             # turn aborts — cooperatively; the worker exits at its next
@@ -1623,9 +1680,14 @@ class SessionHandler(SimpleHTTPRequestHandler):
         # (its parts are quotes only), so the parallel picker's row,
         # if it settled first, never pollutes the writer's context.
         tail = _conversation_tail(account, session_id)
-        blocks, truncated = compose_quoted_answer(
-            question, answer, sources, conversation_tail=tail
-        )
+        if payload.get("stream") is True:
+            blocks, truncated = self._quoted_answer_streamed(
+                question, answer, sources, tail
+            )
+        else:
+            blocks, truncated = compose_quoted_answer(
+                question, answer, sources, conversation_tail=tail
+            )
         # The settle is gated on a written document (the other half of
         # the arrive-order race, 2026-09-27 operator report): a failed
         # phase 2 used to settle empty blocks and erase the snapshot
@@ -1657,6 +1719,10 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # write guarded by the owner's key, so a foreign chat_id
             # lands nowhere.
             chat_store.update_quoted(chat_id, account, blocks, truncated)
+        if payload.get("stream") is True:
+            # The streamed reply already wrote its own headers and its
+            # `final` event — nothing but the close follows here.
+            return
         body = json.dumps(
             {"blocks": blocks, "truncated": truncated}, ensure_ascii=False
         ).encode("utf-8")
@@ -1665,6 +1731,47 @@ class SessionHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _quoted_answer_streamed(self, question, answer, sources, tail):
+        """The streamed twin of the blocking compose above (2026-10-08):
+        same planner, same writer, same guard, same settle — but the
+        reply is text/event-stream, so the sheet paints the document
+        while the writer still writes it instead of staring at a pulsing
+        status for the whole ~180s compose (the live baseline's «گیر
+        کرده» window).
+
+        Events: `block` — one guarded block, as it closed (the sheet
+        renders these subordinate); `final` — the authoritative
+        {"blocks", "truncated"} the settle stored, after the blocking
+        path's own full-document guard. A client gone mid-stream never
+        fails the compose: its socket errors swallow here and the
+        settle still runs. Returns (blocks, truncated) for the shared
+        settle."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.end_headers()
+
+        def emit(name: str, obj) -> None:
+            try:
+                frame = (
+                    f"event: {name}\n"
+                    f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+                )
+                self.wfile.write(frame.encode("utf-8"))
+                self.wfile.flush()
+            except OSError:
+                # Broken pipe on an aborted fetch — the compose runs on.
+                pass
+
+        blocks, truncated = compose_quoted_answer_streaming(
+            question,
+            answer,
+            sources,
+            conversation_tail=tail,
+            on_block=lambda block: emit("block", block),
+        )
+        emit("final", {"blocks": blocks, "truncated": truncated})
+        return blocks, truncated
 
     def _ask(self, account: str) -> None:
         """The retrieval-only ask (ADR-0014): the first answer's Evidence
@@ -1690,6 +1797,15 @@ class SessionHandler(SimpleHTTPRequestHandler):
             # The body is already read above, so _send_json is safe.
             self._send_json(400, {"detail": "پرسش را بنویسید."})
             return
+        # The early-pool sheet's first leg (2026-10-08): this door now
+        # runs beside the recall stream on EVERY sheet ask, so a
+        # follow-up's pool must retrieve on the same self-contained
+        # query the recall leg sees — the sitting's tail rides the
+        # shared rewrite (ADR-0015/ADR-0019); every failure leaves the
+        # raw question. The ask_key rides the body for the gate's
+        # companion bookkeeping and is never relayed upstream.
+        session_id = payload.get("session_id")
+        query = self._contextual_query(account, session_id, query)
         sources = ask_pool(query.strip(), datasets)
         chat_id = secrets.token_hex(8)
         chat_store.create_chat(chat_id, account, query.strip(), datasets, sources)
@@ -2775,6 +2891,29 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(message)
 
+    def _cached_body(self) -> bytes:
+        """The request body, read once and cached: the early-pool
+        dispatch peeks the recall body's ask_key before the gate, and
+        the relay that follows reuses the same bytes — a second
+        rfile.read would block forever on an already-drained stream."""
+        cached = getattr(self, "_peeked_body", None)
+        if cached is None:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            cached = self.rfile.read(length) if length else b""
+            self._peeked_body = cached
+        return cached
+
+    def _peek_ask_key(self) -> str:
+        """The recall body's ask_key, "" when absent or malformed —
+        a best-effort peek for the quota's companion semantics; the
+        authoritative parse stays in _validated_recall_body."""
+        try:
+            payload = json.loads(self._cached_body() or b"{}")
+            key = payload.get("ask_key")
+            return key if isinstance(key, str) else ""
+        except (ValueError, AttributeError):
+            return ""
+
     def _proxy(self, method: str, account: str = "") -> None:
         path = self.path.split("?", 1)[0]
         sys.stderr.write("%s - proxy %s %s\n" % (self.address_string(), method, path))
@@ -2783,8 +2922,7 @@ class SessionHandler(SimpleHTTPRequestHandler):
             self._drain_request_body()
             self.send_error(404, "Not found")
             return
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        body = self.rfile.read(length) if length else None
+        body = self._cached_body() or None
         if method == "POST" and path == "/api/v1/recall":
             # The recall body is validated, not forwarded blind
             # (ADR-0010): the query is required and the datasets are the
@@ -2844,6 +2982,10 @@ class SessionHandler(SimpleHTTPRequestHandler):
             return None
         session_id = payload.pop("session_id", None)
         payload.pop("history", None)
+        # The early-pool sheet's companion key: it steered the gate's
+        # count above and never rides to Cognee (the upstream knows
+        # nothing of ask keys).
+        payload.pop("ask_key", None)
         query = self._contextual_query(account, session_id, query)
         payload["query"] = query
         datasets = validated_datasets(payload.get("datasets"))
