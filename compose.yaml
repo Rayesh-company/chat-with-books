@@ -42,10 +42,10 @@ services:
       ENABLE_BACKEND_ACCESS_CONTROL: "false"
       LLM_PROVIDER: custom
       LLM_MODEL: openai/glm-5.3-flash
-      # Chat routes through AvalAI since 2026-09-13 — the Z.AI coding-plan
-      # weekly quota was exhausted (error 1310, reset 2026-09-15 17:06).
-      # AvalAI carries the GLM family; the key rides .env as LLM_API_KEY.
-      LLM_ENDPOINT: https://api.avalai.ir/v1
+      # Chat routes through Z.AI direct since 2026-10-06 (the operator's key,
+      # coding endpoint) — AvalAI's wallet drained mid-day and killed every
+      # ask (429 quota_exceeded). AvalAI keeps the embedder; LLM_API_KEY rides .env.
+      LLM_ENDPOINT: https://api.z.ai/api/coding/paas/v4
       EMBEDDING_PROVIDER: openai_compatible
       # The embedder is frozen into the ingested pgvector tables — a
       # stack whose data predates ADR 0004 pins small/1536 in .env
@@ -113,8 +113,8 @@ services:
       ENABLE_BACKEND_ACCESS_CONTROL: "false"
       LLM_PROVIDER: custom
       LLM_MODEL: openai/glm-5.3-flash
-      # Same AvalAI routing as cognee (2026-09-13, quota exhaustion).
-      LLM_ENDPOINT: https://api.avalai.ir/v1
+      # Same Z.AI routing as cognee (2026-10-06, AvalAI credit outage).
+      LLM_ENDPOINT: https://api.z.ai/api/coding/paas/v4
       EMBEDDING_PROVIDER: openai_compatible
       # The embedder is frozen into the ingested pgvector tables — a
       # stack whose data predates ADR 0004 pins small/1536 in .env
@@ -164,10 +164,10 @@ services:
     environment:
       LLM_API_KEY: ${LLM_API_KEY}
       # The composer (picker, phase-2 writer, dive calls) builds its URL
-      # from LLM_ENDPOINT — routed to AvalAI with the services above
-      # (2026-09-13, Z.AI quota exhaustion). Its default fallback in
+      # from LLM_ENDPOINT — routed to Z.AI with the services above
+      # (2026-10-06, AvalAI credit outage). Its default fallback in
       # composer.py stays the Z.AI coding endpoint.
-      LLM_ENDPOINT: https://api.avalai.ir/v1
+      LLM_ENDPOINT: https://api.z.ai/api/coding/paas/v4
       LLM_MODEL: ${LLM_MODEL:-openai/glm-5.3-flash}
       COGNEE_URL: http://cognee:8000
       # The next-tier service listens on its CONTAINER port 8000 — 8001 is
